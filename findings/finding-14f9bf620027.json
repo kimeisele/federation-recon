@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-14f9bf620027",
+  "lifecycle_state": "observed",
+  "statement": "REPO_BOUNDARIES.md last audited 2026-03-15 — source document may be stale relative to current observations",
+  "evidence_refs": ["evidence/ev-d8903dd8cd82.json"],
+  "domain": "cross_repository_boundaries",
+  "severity": "info",
+  "created_at": "2026-07-23T16:28:40Z"
+}

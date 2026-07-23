@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-83051e6f6d92",
+  "repository_pin": "pins/steward-protocol.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_count",
+  "value": "{\"char_count\": 17011, \"section_count\": 33}", "paths": ["CONSTITUTION.md"]
+}

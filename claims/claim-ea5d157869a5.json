@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-ea5d157869a5",
+  "source_repository": "kimeisele/agent-city",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/agent-city/.well-known/agent-federation.json asserts owner_boundary=\"agent_city_surface\" (kind=\"agent_federation_descriptor\")",
+  "observed_at": "2026-07-23T16:28:02Z",
+  "repository_pin": "pin-agent-city-9e16df3d5891"
+}

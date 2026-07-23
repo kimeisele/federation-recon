@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-265cabb8cf9f",
+  "lifecycle_state": "observed",
+  "statement": "Self-observation: run completed successfully with all 7/7 repositories observed, outputs written, digest fresh",
+  "evidence_refs": ["coverage/cov-a9484fb45076.json", "coverage/cov-894de2deb783.json", "coverage/cov-cfe72523a974.json", "coverage/cov-2f4cd94a7027.json", "coverage/cov-3eb9f7a6cd90.json", "coverage/cov-60cf691a2182.json", "coverage/cov-d25402482d18.json"],
+  "domain": "recon_self_observation",
+  "severity": "info",
+  "created_at": "2026-07-23T16:28:41Z"
+}

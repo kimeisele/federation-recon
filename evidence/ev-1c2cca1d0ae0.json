@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-1c2cca1d0ae0",
+  "repository_pin": "pins/agent-world.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_count",
+  "value": 9, "paths": ["docs/REPO_BOUNDARIES.md"], "hashes": {"sha256": "19581e27de7ced00ff1ce50b2047e7a567c76b1cbaebabe5ef03f7c3017bb5b7"}
+}

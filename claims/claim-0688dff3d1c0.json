@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-0688dff3d1c0",
+  "source_repository": "kimeisele/steward",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/steward/.well-known/agent-federation.json asserts owner_boundary=\"steward_surface\" (kind=\"agent_federation_descriptor\")",
+  "observed_at": "2026-07-23T16:28:02Z",
+  "repository_pin": "pin-steward-6156d07833b8"
+}

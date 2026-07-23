@@ -1,0 +1,8 @@
+{
+  "repository": "kimeisele/steward-federation",
+  "requested_ref": "main",
+  "resolved_commit_sha": "2ce22177d911d2e2635628aec6b87ed1907f9e03",
+  "observation_timestamp": "2026-07-23T16:28:02Z",
+  "acquisition_method": "gh-api",
+  "dirty_state_assertion": false
+}
