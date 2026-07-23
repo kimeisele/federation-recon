@@ -1,0 +1,46 @@
+name: Nightly — reproduce determinism
+
+# Proves the committed artifact set IS a reproduce fixpoint: re-running the full
+# --reproduce pipeline against the committed pins must not change a single byte.
+# This is the deep FR-CON-012 / F-01 guard. It needs network + gh (it fetches
+# pinned repository contents), so it runs on a schedule rather than per-PR.
+
+on:
+  schedule:
+    - cron: '30 5 * * *'   # daily 05:30 UTC, before the census commit at 06:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-fixpoint:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Reproduce from committed pins
+        run: |
+          RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
+          RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce
+          bash scripts/compose-digest.sh
+
+      - name: Assert committed artifacts are byte-identical to reproduce
+        run: |
+          if ! git diff --quiet -- pins claims evidence drift findings coverage digest STATE.md; then
+            echo "::error::Reproduce diverged from committed artifacts — determinism (FR-CON-012 / F-01) regression"
+            git --no-pager diff --stat -- pins claims evidence drift findings coverage digest STATE.md
+            exit 1
+          fi
+          echo "OK: committed artifacts are a stable reproduce fixpoint"
+
+      - name: Strict artifact validation
+        run: bash scripts/validate-artifacts.sh --strict
