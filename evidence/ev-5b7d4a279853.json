@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-5b7d4a279853",
+  "repository_pin": "pins/hermes-sankhya-25.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-19T05:55:47Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

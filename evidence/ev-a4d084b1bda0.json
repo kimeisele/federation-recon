@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-a4d084b1bda0",
+  "repository_pin": "pins/federation-recon.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "file_existence",
+  "value": false, "paths": [".well-known/agent-federation.json"]
+}

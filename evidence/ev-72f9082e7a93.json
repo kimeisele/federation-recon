@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-72f9082e7a93",
+  "repository_pin": "pins/agent-village.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-21T17:58:52Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

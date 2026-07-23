@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-7b14d3eb365e",
+  "repository_pin": "pins/agent-red-team.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "file_existence",
+  "value": true, "paths": ["docs/authority/charter.md"]
+}

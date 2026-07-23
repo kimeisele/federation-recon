@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-ba7582684e13",
+  "lifecycle_state": "observed",
+  "statement": "Node kimeisele/agent-template-proof-node-01 is OK — descriptor present, role=agent_federation_descriptor, tier=node, charter=true, last commit 2026-07-20T18:53:02Z",
+  "evidence_refs": ["ev-55696b1ed6ba", "ev-e34311374554", "ev-4cb2cf121581", "ev-55696b1ed6ba", "ev-904828abc66d"],
+  "domain": "node_census",
+  "severity": "info",
+  "created_at": "2026-07-23T17:23:24Z"
+}

@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-b820efc5bc0e",
+  "repository_pin": "pins/agent-red-team.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "node", "paths": [".well-known/agent-federation.json"], "hashes": {"field": "tier_or_layer"}
+}

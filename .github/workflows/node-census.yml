@@ -1,0 +1,59 @@
+name: Federation Node Census
+
+on:
+  schedule:
+    # Daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:  # manual trigger
+
+permissions:
+  contents: write       # needed to commit STATE.md + digest artifacts
+  # No other permissions needed — census only reads public data via gh API
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Federation Node Census
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/node-census-run.sh
+          bash scripts/node-census-run.sh
+
+      - name: Strict schema validation
+        run: bash scripts/validate-artifacts.sh --strict
+
+      - name: Commit and push census results
+        if: success() || failure()  # commit even on partial results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "federation-recon[bot]"
+          git config user.email "recon-bot@kimeisele.github.io"
+
+          # Stage all census artifacts
+          git add pins/ evidence/ findings/ coverage/ digest/ STATE.md
+
+          # Only commit if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "federation node census $(date -u +%Y-%m-%d)"
+
+          # Push — GITHUB_TOKEN has contents:write
+          git push
+
+      - name: Budget breach self-finding
+        if: failure()
+        run: |
+          echo "Census run failed — check logs for details (budget breach, partial failure, or validation error)"
+          # A budget breach or validation failure is a finding per FR-CON-011
+          # The runner already creates a self-Finding when possible
