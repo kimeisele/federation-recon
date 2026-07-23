@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-test-dangling-ref",
+  "source_repository": "kimeisele/test",
+  "source_path": "README.md",
+  "claim_text": "This claim references a pin file that does not exist",
+  "observed_at": "2026-01-01T00:00:00Z",
+  "repository_pin": "pins/nonexistent-pin-file.json"
+}

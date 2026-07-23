@@ -1,0 +1,6 @@
+{
+  "claim_id": "claim-test-schema-violation",
+  "source_repository": "kimeisele/test",
+  "source_path": "README.md",
+  "claim_text": "This claim is missing the required observed_at field"
+}

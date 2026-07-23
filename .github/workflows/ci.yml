@@ -22,3 +22,20 @@ jobs:
 
       - name: CI checks (strict validation + composed-digest idempotency)
         run: bash scripts/ci-checks.sh
+
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install bats-core
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+
+      - name: Run offline test suite
+        run: bats scripts/test/

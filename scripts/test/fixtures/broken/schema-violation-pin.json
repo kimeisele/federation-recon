@@ -1,0 +1,7 @@
+{
+  "requested_ref": "main",
+  "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+  "observation_timestamp": "2026-01-01T00:00:00Z",
+  "acquisition_method": "git-clone",
+  "dirty_state_assertion": false
+}
