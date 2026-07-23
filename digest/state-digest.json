@@ -2,13 +2,13 @@
   "digest_type": "federation",
   "procedure_id": "boundary-drift-recon-v0",
   "procedure_version": "v0",
-  "run_timestamp": "2026-07-23T16:28:02Z",
+  "run_timestamp": "2026-07-23T16:51:46Z",
   "run_result": "success",
-  "repository_pins": [{"repository": "kimeisele/steward-protocol", "sha": "34a8a0efc25c15ef7c07dd4fb50aeb2510c071e8", "ref": "main"},{"repository": "kimeisele/agent-world", "sha": "6771524abef20ef4f9b98ad366ba4bfa0968111a", "ref": "main"},{"repository": "kimeisele/agent-internet", "sha": "dcd0206434b21d8c0ec2fac81e2aafc856401831", "ref": "main"},{"repository": "kimeisele/steward-federation", "sha": "2ce22177d911d2e2635628aec6b87ed1907f9e03", "ref": "main"},{"repository": "kimeisele/steward", "sha": "6156d07833b853affeba1ffa990388ee23d743b5", "ref": "main"},{"repository": "kimeisele/agent-city", "sha": "9e16df3d5891c934568c634e0034c0cb8c40e443", "ref": "main"},{"repository": "kimeisele/federation-recon", "sha": "61dc947c8b6661d3249ac8f03792b55bc4433815", "ref": "master"}],
+  "repository_pins": [{"repository": "kimeisele/steward-protocol", "sha": "34a8a0efc25c15ef7c07dd4fb50aeb2510c071e8", "ref": "main"},{"repository": "kimeisele/agent-world", "sha": "6771524abef20ef4f9b98ad366ba4bfa0968111a", "ref": "main"},{"repository": "kimeisele/agent-internet", "sha": "dcd0206434b21d8c0ec2fac81e2aafc856401831", "ref": "main"},{"repository": "kimeisele/steward-federation", "sha": "b6f1379914f55910d6978bbcba2e026734d4c02c", "ref": "main"},{"repository": "kimeisele/steward", "sha": "7134341ff29211d921cabbc6dcaa2079825e0600", "ref": "main"},{"repository": "kimeisele/agent-city", "sha": "8694d81e545d41de1c113519b9cf54f47846dd9a", "ref": "main"},{"repository": "kimeisele/federation-recon", "sha": "61dc947c8b6661d3249ac8f03792b55bc4433815", "ref": "master"}],
   "summary": {
   "pins": 7,
   "claims": 28,
-  "evidence": 22,
+  "evidence": 21,
   "drift_records": 0,
   "findings": 4,
   "coverage_records": 7,
@@ -26,7 +26,7 @@
   "run_completed": true,
   "outputs_complete": true,
   "digest_fresh": true,
-  "issues": 
+  "issues": null
 },
   "navigation": {
     "pins": "pins/",

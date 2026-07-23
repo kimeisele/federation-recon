@@ -42,8 +42,11 @@ ENDJSON
 # gen_claim_observation <source_repo> <source_path> <claim_text> <repo_pin_id> <timestamp>
 gen_claim_observation() {
   local repo="$1" path="$2" text="$3" pin_id="$4" ts="$5"
-  # Include path and text prefix for unique deterministic ID
-  local id_input="${repo}:${path}:${text:0:80}"
+  # Include full claim text for a collision-free deterministic ID.
+  # (A prefix like ${text:0:80} would let two distinct claims sharing an
+  #  80-char prefix collide to the same file — silent overwrite, and a
+  #  determinism hazard under FR-CON-012.)
+  local id_input="${repo}:${path}:${text}"
   local claim_id; claim_id="$(make_id "claim" "$id_input")"
   local json
   json=$(cat <<ENDJSON

@@ -1,8 +1,8 @@
 {
-  "claim_id": "claim-aefef0dff2bf",
+  "claim_id": "claim-5c5d5b4b3284",
   "source_repository": "kimeisele/agent-city",
   "source_path": "docs/CONSTITUTION.md",
   "claim_text": "kimeisele/agent-city/docs/CONSTITUTION.md asserts MURALI governance cycle (has_murali=yes); 5 articles on agent-city governance",
-  "observed_at": "2026-07-23T16:28:02Z",
-  "repository_pin": "pin-agent-city-9e16df3d5891"
+  "observed_at": "2026-07-23T16:51:46Z",
+  "repository_pin": "pin-agent-city-8694d81e545d"
 }

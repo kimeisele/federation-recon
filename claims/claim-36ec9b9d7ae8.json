@@ -1,8 +1,8 @@
 {
-  "claim_id": "claim-1b8150aa4686",
+  "claim_id": "claim-36ec9b9d7ae8",
   "source_repository": "kimeisele/steward-protocol",
   "source_path": "CONSTITUTION.md",
   "claim_text": "kimeisele/steward-protocol/CONSTITUTION.md asserts status as SUPREME LAW (Layer 0); contains 10 articles; has_supreme_law=yes",
-  "observed_at": "2026-07-23T16:28:02Z",
+  "observed_at": "2026-07-23T16:51:46Z",
   "repository_pin": "pin-steward-protocol-34a8a0efc25c"
 }

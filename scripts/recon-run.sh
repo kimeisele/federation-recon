@@ -853,15 +853,20 @@ ENDJSON
     esac
   done
 
+  # Count artifacts actually written to disk — the source of truth — not the
+  # number of logical array slots. Filenames are content-addressed, so several
+  # slots can legitimately dedup to one file; the digest (and FR-CON-011
+  # self-observation "outputs_complete") must report what is really navigable.
+  count_dir() { ls -1 "$1"/*.json 2>/dev/null | wc -l | tr -d ' '; }
   local summary_json
   summary_json=$(cat <<ENDJSON
 {
-  "pins": $(for k in "${!PIN_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
-  "claims": $(for k in "${!CLAIM_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
-  "evidence": $(for k in "${!EVIDENCE_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
-  "drift_records": $(for k in "${!DRIFT_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
-  "findings": $(for k in "${!FINDING_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
-  "coverage_records": $(for k in "${!COVERAGE_FILES[@]}"; do echo 1; done | wc -l | tr -d ' '),
+  "pins": $(count_dir pins),
+  "claims": $(count_dir claims),
+  "evidence": $(count_dir evidence),
+  "drift_records": $(count_dir drift),
+  "findings": $(count_dir findings),
+  "coverage_records": $(count_dir coverage),
   "observed_repositories": $(printf '%s' "$pins_json" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
 }
 ENDJSON

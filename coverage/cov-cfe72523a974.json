@@ -6,5 +6,5 @@
   "capabilities_used": ["git", "gh", "rg", "bash", "python3", "jq"],
   "capabilities_missing": [],
   "result": "success",
-  "inspected_at": "2026-07-23T16:28:41Z"
+  "inspected_at": "2026-07-23T16:52:38Z"
 }

@@ -1,6 +1,6 @@
 # Federation Digest
 
-**Generated:** 2026-07-23T16:28:02Z
+**Generated:** 2026-07-23T16:51:46Z
 **Procedure:** `boundary-drift-recon-v0` / `v0`
 **Run result:** success
 **Self-observation status:** OK — run completed with all repositories observed
@@ -12,9 +12,9 @@
 | `kimeisele/steward-protocol` | `34a8a0efc25c` | `pins/steward-protocol.json` |
 | `kimeisele/agent-world` | `6771524abef2` | `pins/agent-world.json` |
 | `kimeisele/agent-internet` | `dcd0206434b2` | `pins/agent-internet.json` |
-| `kimeisele/steward-federation` | `2ce22177d911` | `pins/steward-federation.json` |
-| `kimeisele/steward` | `6156d07833b8` | `pins/steward.json` |
-| `kimeisele/agent-city` | `9e16df3d5891` | `pins/agent-city.json` |
+| `kimeisele/steward-federation` | `b6f1379914f5` | `pins/steward-federation.json` |
+| `kimeisele/steward` | `7134341ff292` | `pins/steward.json` |
+| `kimeisele/agent-city` | `8694d81e545d` | `pins/agent-city.json` |
 | `kimeisele/federation-recon` | `61dc947c8b66` | `pins/federation-recon.json` |
 
 

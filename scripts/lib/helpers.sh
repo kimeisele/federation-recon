@@ -56,7 +56,7 @@ _is_pure_integer() {
 json_val() {
   local v="$1"
   case "$v" in
-    ''|null)      printf '%s' "$v" ;;
+    ''|null)      printf 'null' ;;
     true|false)   printf '%s' "$v" ;;
     *)
       if _is_pure_integer "$v"; then

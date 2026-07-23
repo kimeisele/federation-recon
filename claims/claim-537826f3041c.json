@@ -1,8 +1,8 @@
 {
-  "claim_id": "claim-dda876f31cc2",
+  "claim_id": "claim-537826f3041c",
   "source_repository": "kimeisele/federation-recon",
   "source_path": "docs/founding-package-v0.2.md",
   "claim_text": "kimeisele/federation-recon/docs/founding-package-v0.2.md asserts FR-CON-001..012 constitutional invariants; founding_package_exists=yes; decision_record_exists=yes",
-  "observed_at": "2026-07-23T16:28:02Z",
+  "observed_at": "2026-07-23T16:51:46Z",
   "repository_pin": "pin-federation-recon-61dc947c8b66"
 }
