@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-c47965d1d4d7",
+  "source_repository": "kimeisele/agent-internet",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/agent-internet/.well-known/agent-federation.json exists at commit dcd0206434b21d8c0ec2fac81e2aafc856401831 (content parseable JSON)",
+  "observed_at": "2026-07-23T16:51:46Z",
+  "repository_pin": "pin-agent-internet-dcd0206434b2"
+}

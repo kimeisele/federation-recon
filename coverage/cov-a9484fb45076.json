@@ -1,0 +1,10 @@
+{
+  "coverage_id": "cov-a9484fb45076",
+  "repository_pin": "pins/steward.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "capabilities_used": ["git", "gh", "rg", "bash", "python3", "jq"],
+  "capabilities_missing": [],
+  "result": "success",
+  "inspected_at": "2026-07-23T16:52:37Z"
+}

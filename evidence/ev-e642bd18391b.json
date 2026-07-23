@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-e642bd18391b",
+  "repository_pin": "pins/agent-city.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "manifest_field",
+  "value": "agent_city_surface", "paths": [".well-known/agent-federation.json"], "hashes": {"owner_boundary": "2f597b02134d3526b4f2073fe6c633bcb9946f92417553e812d659bd5ada074f"}
+}

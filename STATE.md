@@ -1,37 +1,68 @@
 # Federation Digest
 
-**Generated:** not yet — this is a founding-phase placeholder, not a run output.
-**Self-observation status:** N/A — no scheduled run exists yet (FR-CON-011 applies once Slice v0 runs).
+**Generated:** 2026-07-23T16:51:46Z
+**Procedure:** `boundary-drift-recon-v0` / `v0`
+**Run result:** success
+**Self-observation status:** OK — run completed with all repositories observed
 
-## Founding status
+## Observed repositories
 
-`federation-recon` has completed its **founding decision**. The founding package (v0.2) was **ADOPTED on 2026-07-23**, with a visibility revision to a **public metadata-only observatory** posture (§14, FR-CON-003).
+| Repository | Commit | Pin |
+|---|---|---|
+| `kimeisele/steward-protocol` | `34a8a0efc25c` | `pins/steward-protocol.json` |
+| `kimeisele/agent-world` | `6771524abef2` | `pins/agent-world.json` |
+| `kimeisele/agent-internet` | `dcd0206434b2` | `pins/agent-internet.json` |
+| `kimeisele/steward-federation` | `b6f1379914f5` | `pins/steward-federation.json` |
+| `kimeisele/steward` | `7134341ff292` | `pins/steward.json` |
+| `kimeisele/agent-city` | `8694d81e545d` | `pins/agent-city.json` |
+| `kimeisele/federation-recon` | `61dc947c8b66` | `pins/federation-recon.json` |
 
-Slice v0 (Boundary Drift Recon) is **formally authorized** — but **not yet implemented**. No procedure, CLI, workflow, or Evidence exists yet; implementation is a separate, subsequent engineering task under the §20 implementation lock.
 
-Adopted numeric budgets (§15): target repo ≤ 50 MB · warn 250 KB/run · hard abort 1 MB/run · raw evidence retention 90 days · no silent deletion · budget breach → self-Finding.
+## Findings summary
 
-See [`docs/founding-decision-record.md`](docs/founding-decision-record.md) for the full adoption record.
+- No drift detected in this run
+- 1 self-observation finding(s)
 
-## Once Slice v0 is authorized, this file will contain
+## Drift summary
 
-- observed repository set,
-- coverage freshness,
-- active Findings by severity or domain,
-- stale or failed procedures,
-- self-observation status,
-- links to lower layers (Repository/Domain Digest → Finding → Evidence → raw reference).
+**No drift detected.** All observed claims match current repository state.
+
+## Budget
+
+22908B total (warn: 256000B, abort: 1048576B)
 
 ## Navigation (progressive disclosure)
 
 ```
 Federation Digest (this file)
     ↓
-Repository / Domain Digest   — none yet
+Repository Pins — pins/ (one per observed repo)
     ↓
-Finding                      — none yet
+Claim Observations — claims/ (extracted from claim sources)
     ↓
-Evidence                     — none yet
+Evidence — evidence/ (deterministic observations)
     ↓
-Raw repository reference     — none yet
+Drift Records — drift/ (where claim ≠ observation)
+    ↓
+Findings — findings/ (interpreted observations)
+    ↓
+Coverage — coverage/ (what was inspected)
+    ↓
+Raw repository references — original GitHub repos at pinned SHAs
 ```
+
+## Links
+
+| Artifact | Directory | Schema |
+|---|---|---|
+| Repository Pins | `pins/` | `schemas/repository-pin.schema.json` |
+| Claim Observations | `claims/` | `schemas/claim-observation.schema.json` |
+| Evidence | `evidence/` | `schemas/evidence.schema.json` |
+| Drift Records | `drift/` | `schemas/drift-record.schema.json` |
+| Findings | `findings/` | `schemas/finding.schema.json` |
+| Coverage Records | `coverage/` | `schemas/coverage-record.schema.json` |
+| Machine-readable Digest | `digest/state-digest.json` | — |
+
+## Procedure Manifest
+
+See `procedures/boundary-drift-recon-v0.md` for the full procedure definition.

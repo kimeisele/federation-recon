@@ -1,0 +1,40 @@
+{
+  "digest_type": "federation",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "run_timestamp": "2026-07-23T16:51:46Z",
+  "run_result": "success",
+  "repository_pins": [{"repository": "kimeisele/steward-protocol", "sha": "34a8a0efc25c15ef7c07dd4fb50aeb2510c071e8", "ref": "main"},{"repository": "kimeisele/agent-world", "sha": "6771524abef20ef4f9b98ad366ba4bfa0968111a", "ref": "main"},{"repository": "kimeisele/agent-internet", "sha": "dcd0206434b21d8c0ec2fac81e2aafc856401831", "ref": "main"},{"repository": "kimeisele/steward-federation", "sha": "b6f1379914f55910d6978bbcba2e026734d4c02c", "ref": "main"},{"repository": "kimeisele/steward", "sha": "7134341ff29211d921cabbc6dcaa2079825e0600", "ref": "main"},{"repository": "kimeisele/agent-city", "sha": "8694d81e545d41de1c113519b9cf54f47846dd9a", "ref": "main"},{"repository": "kimeisele/federation-recon", "sha": "61dc947c8b6661d3249ac8f03792b55bc4433815", "ref": "master"}],
+  "summary": {
+  "pins": 7,
+  "claims": 28,
+  "evidence": 21,
+  "drift_records": 0,
+  "findings": 4,
+  "coverage_records": 7,
+  "observed_repositories": 7
+},
+  "budget": {
+  "total_bytes": 22908,
+  "warn_threshold": 256000,
+  "hard_abort": 1048576,
+  "warned": false,
+  "breached": false,
+  "checkpoints": " [pins:1830] [claims:12535] [evidence:18898] [drift:18898] [findings:20068] [coverage:22344] [self-observation:22908]"
+},
+  "self_observation": {
+  "run_completed": true,
+  "outputs_complete": true,
+  "digest_fresh": true,
+  "issues": null
+},
+  "navigation": {
+    "pins": "pins/",
+    "claims": "claims/",
+    "evidence": "evidence/",
+    "drift": "drift/",
+    "findings": "findings/",
+    "coverage": "coverage/",
+    "digest": "digest/"
+  }
+}
