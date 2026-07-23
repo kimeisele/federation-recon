@@ -138,17 +138,9 @@ extract_well_known_claims() {
     local pin_id="${PIN_FILES[$slug]}"
     [ -z "$pin_id" ] && { warn "  No pin file for ${slug} — skipping"; continue; }
 
-    # Extract pin_id from pin file
-    local pin_ref
-    pin_ref=$(python3 -c "
-import json
-d = json.load(open('$pin_id'))
-print(d.get('repository_pin') or d.get('evidence_id') or d.get('finding_id') or 'pin-${slug}')
-" 2>/dev/null || echo "pin-${slug}")
-
-    # Actually, the pin file IS the repository pin. Let's extract its ID.
-    # Repository Pin schema has no "id" field — we identify by the pin_id (file path without .json)
-    local repo_pin_id="pin-${slug}-${sha:0:12}"
+    # Claims reference the pin by its file path, exactly like Evidence does, so
+    # the Claim -> Pin -> raw repo navigation chain resolves (#11).
+    local repo_pin_id="${PIN_FILES[$slug]}"
 
     # Fetch the .well-known/agent-federation.json content at this commit
     local content=""
@@ -208,7 +200,7 @@ extract_boundary_table_claims() {
   local sha="${REPO_SHA[$repo]:-}"
   [ -z "$sha" ] && { warn "  No pin for ${repo} — skipping boundary table claims"; return; }
 
-  local pin_id="pin-agent-world-${sha:0:12}"
+  local pin_id="pins/agent-world.json"
 
   local content=""
   content=$(gh api "repos/${repo}/contents/docs/REPO_BOUNDARIES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
@@ -271,7 +263,7 @@ extract_constitution_claims() {
   local repo="kimeisele/steward-protocol"
   local sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pin-steward-protocol-${sha:0:12}"
+    local pin_id="pins/steward-protocol.json"
     local content=""
     content=$(gh api "repos/${repo}/contents/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -294,7 +286,7 @@ extract_constitution_claims() {
   repo="kimeisele/agent-city"
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pin-agent-city-${sha:0:12}"
+    local pin_id="pins/agent-city.json"
     local content=""
     content=$(gh api "repos/${repo}/contents/docs/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -317,7 +309,7 @@ extract_constitution_claims() {
   repo="kimeisele/agent-internet"
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pin-agent-internet-${sha:0:12}"
+    local pin_id="pins/agent-internet.json"
     local content=""
     content=$(gh api "repos/${repo}/contents/docs/PUBLIC_FEDERATION_SURFACE.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -344,7 +336,7 @@ extract_self_observation_claims() {
   local sha="${REPO_SHA[$repo]:-}"
   [ -z "$sha" ] && { warn "  No pin for self — skipping self-observation claims"; return; }
 
-  local pin_id="pin-federation-recon-${sha:0:12}"
+  local pin_id="pins/federation-recon.json"
 
   # We already know our own invariants — check if the founding package exists
   local fp_exists="no"

@@ -1,7 +1,7 @@
 {
   "procedure_id": "v0-boundary-drift",
   "procedure_version": "v0",
-  "run_timestamp": "2026-07-23T18:14:18Z",
+  "run_timestamp": "2026-07-23T18:51:24Z",
   "attention_items": [{
   "target": "kimeisele/*",
   "status": "observed",
@@ -26,12 +26,12 @@
   "partial_failures": 0
 },
   "budget": {
-  "total_bytes": 22906,
+  "total_bytes": 22710,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [pins:1828] [claims:12533] [evidence:18896] [drift:18896] [findings:20066] [coverage:22342] [self-observation:22906]"
+  "checkpoints": " [pins:1828] [claims:12337] [evidence:18700] [drift:18700] [findings:19870] [coverage:22146] [self-observation:22710]"
 },
   "self_observation": {
   "run_completed": true,
