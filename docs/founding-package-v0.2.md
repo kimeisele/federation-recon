@@ -1,10 +1,10 @@
 # Federation Recon — Founding Package v0.2
 
-**Status:** Revised founding draft
-**Date:** 2026-07-22
+**Status:** ADOPTED (2026-07-23) — with visibility revision to a public metadata-only posture (§14, FR-CON-003)
+**Date:** 2026-07-22 (drafted) · 2026-07-23 (adopted)
 **Repository candidate:** `federation-recon`
-**Architecture judgment:** Revise complete; Boundary Drift Recon v0 is provisionally authorizable
-**Implementation status:** Locked until the founding decision record accepts this package
+**Architecture judgment:** Revise complete; Boundary Drift Recon v0 authorized by the founding decision record
+**Implementation status:** Slice v0 formally authorized; not yet implemented. See `docs/founding-decision-record.md`.
 **Primary sources:** Foundation Study and focused adversarial review by Fable
 
 ---
@@ -198,9 +198,13 @@ Recon may observe claims and differences but may not create normative federation
 
 Recon may not modify observed repositories, open remediation pull requests, merge changes, or execute healing actions.
 
-## FR-CON-003 — No public projection by default
+## FR-CON-003 — No active public projection
 
-Findings must not be publicly projected without explicit external authorization.
+The `federation-recon` repository itself may be public (adopted 2026-07-23; see §14). Public *repository visibility* is permitted.
+
+What remains prohibited is **active external projection or distribution** of Findings: Recon must not push, publish, syndicate, or otherwise propagate Findings to any external surface (wiki, feed, membrane, connector, or peer). Passive readability of the repository is not projection.
+
+In no case may Recon publish source-file contents, secrets, or sensitive raw evidence. The public posture is only defensible because of FR-CON-008 (no vendored source, no excerpts) and the §14 metadata-only controls; those controls are a precondition of publicity, not optional.
 
 ## FR-CON-004 — No registry ownership
 
@@ -621,17 +625,20 @@ This consumption model is part of the architecture, not merely documentation con
 
 # 14. Visibility and security
 
-Provisional MVP posture:
+Adopted MVP posture (2026-07-23): **public metadata-only observatory.**
 
-- private repository,
+The repository is public so that external operators and connectors can read federation state directly. Publicity is bounded by strict metadata-only controls:
+
+- public repository, read-only externally,
 - read-only access to observed repositories,
 - write access only to itself,
-- no automatic public exports,
-- no source excerpts,
-- no secret copying,
-- redacted procedure logs where required.
+- **no source excerpts** (FR-CON-008),
+- **no secret copying**,
+- Recon stores and exposes only pins, paths, hashes, counts, manifests, and derived records,
+- redacted procedure logs where required,
+- **no active external projection or distribution** of Findings (FR-CON-003) — passive readability only.
 
-A later sanitized public projection may be considered only after the artifact model and security policy are stable.
+These controls are the precondition of the public posture, not optional hardening. The earlier provisional "private repository" posture (Founding Package v0.1/v0.2 draft) is superseded by this adoption; see `docs/founding-decision-record.md`.
 
 ---
 
