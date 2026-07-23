@@ -2,7 +2,9 @@
 
 **Status:** Founding phase — not yet adopted. Implementation is locked (see [`docs/founding-package-v0.2.md`](docs/founding-package-v0.2.md), Section 20).
 
-A private, GitHub-native, self-observing, read-only observatory and context compiler that lets AI operators understand federation state through layered, reproducible evidence — without becoming a runtime, governor, healer, registry, or public membrane.
+**Visibility note:** this repository is **public**, by explicit operator instruction, so that an external agent/connector can read it. This is a deliberate, acknowledged deviation from the founding package's default private MVP posture (§14, FR-CON-003) — see [`docs/scope-finding-slice-v0.md`](docs/scope-finding-slice-v0.md) for the record of that deviation.
+
+A GitHub-native, self-observing, read-only observatory and context compiler that lets AI operators understand federation state through layered, reproducible evidence — without becoming a runtime, governor, healer, registry, or public membrane.
 
 ## Start here
 
@@ -10,6 +12,9 @@ A private, GitHub-native, self-observing, read-only observatory and context comp
 - [`docs/founding-package-v0.2.md`](docs/founding-package-v0.2.md) — the founding document (constitutional invariants, artifact model, MVP lifecycle, falsifiers)
 - [`GLOSSARY.md`](GLOSSARY.md) — canonical terminology (required before implementation completes, DG-10)
 - [`docs/founding-decision-record.md`](docs/founding-decision-record.md) — adoption record; Slice v0 is not authorized until this is filled in
+- [`docs/repository-manifest.md`](docs/repository-manifest.md) — verified real Slice v0 observed set
+- [`docs/claim-source-inventory.md`](docs/claim-source-inventory.md) — verified real, narrow claim-source list
+- [`docs/scope-finding-slice-v0.md`](docs/scope-finding-slice-v0.md) — scope review, open questions, artifact-volume estimate
 
 ## What this is not
 
