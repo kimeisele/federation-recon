@@ -27,6 +27,9 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install ripgrep (required tool per §11.1)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Reproduce from committed pins
         run: |
           RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
