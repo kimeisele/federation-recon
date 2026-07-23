@@ -93,6 +93,33 @@ if [ -f "digest/state-digest.json" ]; then
   fi
 fi
 
+# Validate procedure sub-digests (composition contract)
+if [ -d "digest" ]; then
+  sub_digest_count=0
+  sub_digest_err=0
+  for f in digest/*.json; do
+    [ -f "$f" ] || continue
+    bn=$(basename "$f")
+    # Skip the composed digest and internal state files
+    [ "$bn" = "state-digest.json" ] && continue
+    [ "$bn" = "census-run-state.json" ] && continue
+    if validate_json_syntax "$f"; then
+      sub_digest_count=$(( sub_digest_count + 1 ))
+    else
+      echo "  [FAIL] Sub-digest: $f — invalid JSON syntax"
+      sub_digest_err=$(( sub_digest_err + 1 ))
+      ERRORS=$(( ERRORS + 1 ))
+    fi
+  done
+  if [ "$sub_digest_count" -gt 0 ]; then
+    if [ "$sub_digest_err" -eq 0 ]; then
+      echo "  [OK] Sub-digests: ${sub_digest_count} valid"
+    else
+      echo "  [PARTIAL] Sub-digests: ${sub_digest_count} valid, ${sub_digest_err} errors"
+    fi
+  fi
+fi
+
 echo ""
 echo "=== Summary ==="
 echo "  Total validated: ${VALIDATED}"

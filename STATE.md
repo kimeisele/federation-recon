@@ -1,58 +1,59 @@
-# Federation Node Census
+# Federation Digest
 
-**Generated:** 2026-07-23T17:22:35Z
-**Procedure:** `node-census-v1` / `v1`
-**Run result:** success
-**Staleness threshold:** 60 days (last commit > 60d → stale)
+**Composed:** 2026-07-23T17:51:55Z
+**Procedures:** 2 (see digest/ for per-procedure details)
+**Attention items:** 2 (2 observatory)
 
-## Summary
+## Procedure Summary
 
-| Metric | Count |
-|---|---|
-| Total nodes observed | 14 |
-| OK | 12 |
-| Stale | 2 |
-| Errors | 0 |
+| Procedure | Version | Timestamp | Summary |
+|---|---|---|---|
+| `v0-boundary-drift` | `v0` | 2026-07-23T17:51 | claims=28, coverage_records=14, drift_records=0, evidence=85, findings=33, observed_repositories=7, partial_failures=0, pins=14 |
+| `v1-census` | `v1` | 2026-07-23T17:51 | coverage_records=14, error_nodes=0, evidence=85, findings=33, observed_nodes=14, ok_nodes=12, pins=14, stale_nodes=2, staleness_threshold_days=60 |
 
-## Ranked Node Census (sorted by attention needed)
+## Ranked Attention (needs operator decision)
 
-| # | Node | Status | Descriptor | Charter | Role | Tier | Last Commit |
-|---|---|---|---|---|---|---|---|
-| 1 | `kimeisele/agent-village` | ⚠️ stale | ❌ | ✅ | — | — | 2026-07-21 |
-| 2 | `kimeisele/federation-recon` | ⚠️ stale | ❌ | ✅ | — | — | 2026-07-23 |
-| 3 | `kimeisele/agent-city` | ✅ observed | ✅ | ✅ | city_runtime | — | 2026-07-23 |
-| 4 | `kimeisele/agent-internet` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | internet | 2026-07-12 |
-| 5 | `kimeisele/agent-music` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-23 |
-| 6 | `kimeisele/agent-red-team` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-21 |
-| 7 | `kimeisele/agent-research` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-23 |
-| 8 | `kimeisele/agent-template-proof-node-01` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-20 |
-| 9 | `kimeisele/agent-world` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-13 |
-| 10 | `kimeisele/hermes-sankhya-25` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-19 |
-| 11 | `kimeisele/steward` | ✅ observed | ✅ | ✅ | operator | — | 2026-07-23 |
-| 12 | `kimeisele/steward-federation` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-23 |
-| 13 | `kimeisele/steward-protocol` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-12 |
-| 14 | `kimeisele/steward-test` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-12 |
+| # | Target | Status | Procedure | Headline | Evidence |
+|---|---|---|---|---|---|
+| 1 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
+| 2 | `kimeisele/*` | ✅ observed | `v0-boundary-drift` | No boundary drift detected across all observed repositories | findings/ |
+
+## Constitutional Observatory
+
+These repositories are constitutional non-peers (§5). They are tracked for
+liveness (FR-CON-011) but are not ranked as federation attention items.
+
+| # | Target | Status | Procedure | Headline |
+|---|---|---|---|---|
+| 1 | `kimeisele/agent-village` | ✅ observed | `v1-census` | Constitutional non-peer kimeisele/agent-village — no descriptor expected (§5) |
+| 2 | `kimeisele/federation-recon` | ✅ observed | `v1-census` | Constitutional non-peer kimeisele/federation-recon — no descriptor expected (§5) |
 
 ## Budget
 
-33196B total (warn: 256000B, abort: 1048576B)
+Per-procedure budget details are in the machine-readable digest and individual sub-digests.
+See `digest/state-digest.json` and `digest/<procedure_id>.json`.
 
 ## Navigation (progressive disclosure)
 
 ```
-Federation Node Census (this file)
+Federation Digest (this file)
     ↓
-Repository Pins — pins/ (one per discovered node)
+Per-procedure sub-digests — digest/<procedure_id>.json
     ↓
-Evidence — evidence/ (presence, role, tier, charter, liveness)
+Findings — findings/ (interpreted observations with lifecycle)
     ↓
-Findings — findings/ (per-node status with lifecycle)
+Evidence — evidence/ (deterministic observations)
     ↓
-Coverage — coverage/ (what was inspected)
+Repository Pins — pins/ (exact commit references)
     ↓
 Raw repository references — original GitHub repos at pinned SHAs
 ```
 
-## Procedure Manifest
+## Sub-digests
 
-See `procedures/node-census-v1.md` for the full procedure definition.
+- [`v0-boundary-drift`](digest/v0-boundary-drift.json)
+- [`v1-census`](digest/v1-census.json)
+
+## Composition Contract
+
+See `procedures/DIGEST_CONTRACT.md` for how procedures contribute to this digest.

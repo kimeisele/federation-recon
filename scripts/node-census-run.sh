@@ -521,10 +521,10 @@ perform_self_observation() {
   log "  Self-status: ok=${self_ok}, nodes=${pinned_nodes}/${total_nodes}"
 }
 
-# ---- Phase 7: Ranked Census Digest ------------------------------------
+# ---- Phase 7: Census Sub-Digest (composition contract) -----------------
 
 generate_census_digest() {
-  log "=== Phase 7: Generate ranked census digest ==="
+  log "=== Phase 7: Generate census sub-digest (composition contract) ==="
 
   # --- Rank nodes by "needs attention" ---
   # Priority: missing descriptor > stale > ok > error
@@ -538,10 +538,6 @@ generate_census_digest() {
     local descriptor="${NODE_DESCRIPTOR[$slug]:-false}"
 
     # Scoring: lower = needs more attention
-    # 0 = missing descriptor (hard stale)
-    # 1 = stale (age-based)
-    # 2 = error (unresolvable)
-    # 3 = ok
     case "$status" in
       stale)
         if [ "$descriptor" = "false" ]; then
@@ -563,122 +559,99 @@ generate_census_digest() {
     printf '%s %s\n' "${RANK_SCORE[$slug]}" "$slug"
   done | sort -t' ' -k1,1n -k2,2)
 
-  # --- Build census JSON array ---
-  local census_json="["
-  local first_census=true
+  # --- Build attention_items for the common sub-digest shape ---
+  local attention_items_json="["
+  local first_ai=true
+
+  # Constitutional non-peers (§5, Issue #6): federation-recon, agent-village
+  # These should not be flagged for missing descriptors
+  local constitutional_non_peers="federation-recon agent-village"
+
   for slug in "${sorted_slugs[@]}"; do
     local repo="kimeisele/${slug}"
-    local sha="${REPO_SHA[$repo]:-}"
     local status="${NODE_STATUS[$slug]:-error}"
     local descriptor="${NODE_DESCRIPTOR[$slug]:-false}"
     local role="${NODE_ROLE[$slug]:-}"
     local tier="${NODE_TIER[$slug]:-}"
     local charter="${NODE_CHARTER[$slug]:-false}"
     local last_commit="${NODE_LAST_COMMIT[$slug]:-}"
-    local display_name="${NODE_DISPLAY_NAME[$slug]:-}"
 
-    $first_census || census_json+=","
-    first_census=false
+    # Determine if this node is a constitutional non-peer
+    local is_non_peer="false"
+    # shellcheck disable=SC2199
+    if [[ " $constitutional_non_peers " == *" $slug "* ]]; then
+      is_non_peer="true"
+    fi
 
-    local finding_file=""
-    finding_file="${FINDING_FILES["node-${slug}"]:-}"
-    if [ -z "$finding_file" ]; then finding_file="findings/none"; fi
+    # Skip OK nodes — they don't need operator attention
+    if [ "$status" = "observed" ]; then
+      continue
+    fi
 
-    census_json+=$(cat <<ENDNODE
+    # Build headline
+    local headline=""
+    local attn_rank=99
+    local attn_status="$status"
+
+    if [ "$status" = "error" ]; then
+      headline="Node ${repo} could not be resolved"
+      attn_rank=5
+    elif [ "$status" = "stale" ]; then
+      if [ "$descriptor" = "false" ]; then
+        if [ "$is_non_peer" = "true" ]; then
+          headline="Constitutional non-peer ${repo} — no descriptor expected (§5)"
+          attn_status="observed"
+          attn_rank=90  # low priority — expected
+        else
+          headline="Node ${repo} is missing .well-known/agent-federation.json descriptor"
+          attn_rank=0
+        fi
+      else
+        # Stale by age
+        local age_str=""
+        if [ -n "$last_commit" ] && [ "$last_commit" != "unknown" ]; then
+          age_str=" (last commit: ${last_commit:0:10})"
+        fi
+        headline="Node ${repo} is stale — last commit > ${STALE_DAYS}d ago${age_str}"
+        attn_rank=1
+      fi
+    else
+      headline="Node ${repo} status: ${status}"
+      attn_rank=10
+    fi
+
+    # Find the finding ref for this node
+    local finding_file="${FINDING_FILES["node-${slug}"]:-}"
+    local finding_ref="findings/"
+    if [ -n "$finding_file" ] && [ -f "$finding_file" ]; then
+      finding_ref="findings/$(basename "$finding_file")"
+    fi
+
+    $first_ai || attention_items_json+=","
+    first_ai=false
+
+    local non_peer_json=""
+    if [ "$is_non_peer" = "true" ]; then
+      non_peer_json=', "non_peer": true'
+    fi
+
+    attention_items_json+=$(cat <<ENDAI
 {
-  "slug": $(json_val "$slug"),
-  "repository": $(json_val "$repo"),
-  "sha": $(json_val "${sha:0:12}"),
-  "status": $(json_val "$status"),
-  "descriptor": $descriptor,
-  "charter": $charter,
-  "role": $(json_val "$role"),
-  "tier": $(json_val "$tier"),
-  "display_name": $(json_val "$display_name"),
-  "last_commit": $(json_val "$last_commit"),
-  "pin": $(json_val "pins/${slug}.json"),
-  "finding": $(json_val "${finding_file##*/}")
+  "target": $(json_val "$repo"),
+  "status": $(json_val "$attn_status"),
+  "attention_rank": ${attn_rank}${non_peer_json},
+  "headline": $(json_val "$headline"),
+  "refs": [$(json_val "$finding_ref")]
 }
-ENDNODE
+ENDAI
 )
   done
-  census_json+="]"
 
-  # --- Build pins JSON ---
-  local pins_json="["
-  local first_pin=true
-  for slug in "${NODE_SLUGS[@]}"; do
-    local repo="kimeisele/${slug}"
-    local sha="${REPO_SHA[$repo]:-}"
-    local ref="${REPO_REF[$repo]:-}"
-    if [ -n "$sha" ]; then
-      $first_pin || pins_json+=","
-      pins_json+="{\"repository\": $(json_val "$repo"), \"sha\": $(json_val "$sha"), \"ref\": $(json_val "$ref")}"
-      first_pin=false
-    fi
-  done
-  pins_json+="]"
+  attention_items_json+="]"
 
   # --- Count artifacts on disk ---
-  count_dir() { ls -1 "$1"/*.json 2>/dev/null | wc -l | tr -d ' '; }
-  local summary_json
-  summary_json=$(cat <<ENDJSON
-{
-  "pins": $(count_dir pins),
-  "evidence": $(count_dir evidence),
-  "findings": $(count_dir findings),
-  "coverage_records": $(count_dir coverage),
-  "observed_nodes": ${#NODE_SLUGS[@]},
-  "stale_nodes": $(for slug in "${NODE_SLUGS[@]}"; do [ "${NODE_STATUS[$slug]:-}" = "stale" ] && echo 1; done | wc -l | tr -d ' '),
-  "ok_nodes": $(for slug in "${NODE_SLUGS[@]}"; do [ "${NODE_STATUS[$slug]:-}" = "observed" ] && echo 1; done | wc -l | tr -d ' '),
-  "error_nodes": $PARTIAL_FAILURES,
-  "staleness_threshold_days": $STALE_DAYS
-}
-ENDJSON
-)
+  count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | wc -l | tr -d ' '; }
 
-  local budget_json
-  budget_json=$(budget_summary)
-
-  # --- Machine-readable digest ---
-  local digest_json
-  digest_json=$(cat <<ENDJSON
-{
-  "digest_type": "federation_census",
-  "procedure_id": $(json_val "$PROCEDURE_ID"),
-  "procedure_version": $(json_val "$PROCEDURE_VERSION"),
-  "run_timestamp": $(json_val "$RUN_TIMESTAMP"),
-  "run_result": $(json_val "$RUN_RESULT"),
-  "repository_pins": $pins_json,
-  "census": $census_json,
-  "summary": $summary_json,
-  "budget": $budget_json,
-  "self_observation": $SELF_STATUS,
-  "navigation": {
-    "pins": "pins/",
-    "evidence": "evidence/",
-    "findings": "findings/",
-    "coverage": "coverage/",
-    "digest": "digest/"
-  }
-}
-ENDJSON
-)
-
-  write_json "digest/state-digest.json" "$digest_json"
-  log "  Machine-readable digest written to digest/state-digest.json"
-
-  # --- Human-readable STATE.md ---
-  local state_md=""
-  state_md+="# Federation Node Census\n"
-  state_md+="\n"
-  state_md+="**Generated:** ${RUN_TIMESTAMP}\n"
-  state_md+="**Procedure:** \`${PROCEDURE_ID}\` / \`${PROCEDURE_VERSION}\`\n"
-  state_md+="**Run result:** ${RUN_RESULT}\n"
-  state_md+="**Staleness threshold:** ${STALE_DAYS} days (last commit > ${STALE_DAYS}d → stale)\n"
-  state_md+="\n"
-
-  # Summary stats
   local stale_count=0 ok_count=0 error_count=0
   for slug in "${NODE_SLUGS[@]}"; do
     case "${NODE_STATUS[$slug]:-error}" in
@@ -687,82 +660,40 @@ ENDJSON
       *) error_count=$(( error_count + 1 )) ;;
     esac
   done
-  state_md+="## Summary\n"
-  state_md+="\n"
-  state_md+="| Metric | Count |\n"
-  state_md+="|---|---|\n"
-  state_md+="| Total nodes observed | ${#NODE_SLUGS[@]} |\n"
-  state_md+="| OK | ${ok_count} |\n"
-  state_md+="| Stale | ${stale_count} |\n"
-  state_md+="| Errors | ${error_count} |\n"
-  state_md+="\n"
 
-  # Ranked node table
-  state_md+="## Ranked Node Census (sorted by attention needed)\n"
-  state_md+="\n"
-  state_md+="| # | Node | Status | Descriptor | Charter | Role | Tier | Last Commit |\n"
-  state_md+="|---|---|---|---|---|---|---|---|\n"
+  local summary_json
+  summary_json=$(cat <<ENDJSON
+{
+  "pins": $(count_dir pins),
+  "evidence": $(count_dir evidence),
+  "findings": $(count_dir findings),
+  "coverage_records": $(count_dir coverage),
+  "observed_nodes": ${#NODE_SLUGS[@]},
+  "stale_nodes": ${stale_count},
+  "ok_nodes": ${ok_count},
+  "error_nodes": ${error_count},
+  "staleness_threshold_days": ${STALE_DAYS}
+}
+ENDJSON
+  )
 
-  local rank=1
-  for slug in "${sorted_slugs[@]}"; do
-    local repo="kimeisele/${slug}"
-    local status="${NODE_STATUS[$slug]:-error}"
-    local descriptor="${NODE_DESCRIPTOR[$slug]:-false}"
-    local role="${NODE_ROLE[$slug]:-}"
-    local tier="${NODE_TIER[$slug]:-}"
-    local charter="${NODE_CHARTER[$slug]:-false}"
-    local last_commit="${NODE_LAST_COMMIT[$slug]:-}"
+  # --- Build the sub-digest in common shape (DIGEST_CONTRACT.md) ---
+  local sub_digest_json
+  sub_digest_json=$(cat <<ENDJSON
+{
+  "procedure_id": "v1-census",
+  "procedure_version": "v1",
+  "run_timestamp": $(json_val "$RUN_TIMESTAMP"),
+  "attention_items": $attention_items_json,
+  "summary": $summary_json,
+  "budget": $(budget_summary),
+  "self_observation": $SELF_STATUS
+}
+ENDJSON
+  )
 
-    local status_icon=""
-    case "$status" in
-      observed) status_icon="✅" ;;
-      stale)    status_icon="⚠️" ;;
-      *)        status_icon="❌" ;;
-    esac
-
-    local desc_icon=""
-    [ "$descriptor" = "true" ] && desc_icon="✅" || desc_icon="❌"
-    local charter_icon=""
-    [ "$charter" = "true" ] && charter_icon="✅" || charter_icon="❌"
-
-    local short_commit="${last_commit:0:10}"
-    [ -z "$short_commit" ] && short_commit="-"
-
-    state_md+="| ${rank} | \`${repo}\` | ${status_icon} ${status} | ${desc_icon} | ${charter_icon} | ${role:-—} | ${tier:-—} | ${short_commit} |\n"
-    rank=$(( rank + 1 ))
-  done
-  state_md+="\n"
-
-  # Budget
-  state_md+="## Budget\n"
-  state_md+="\n"
-  state_md+="${BUDGET_TOTAL_BYTES}B total (warn: ${WARN_THRESHOLD}B, abort: ${HARD_ABORT}B)\n"
-  state_md+="\n"
-
-  # Navigation
-  state_md+="## Navigation (progressive disclosure)\n"
-  state_md+="\n"
-  state_md+="\`\`\`\n"
-  state_md+="Federation Node Census (this file)\n"
-  state_md+="    ↓\n"
-  state_md+="Repository Pins — pins/ (one per discovered node)\n"
-  state_md+="    ↓\n"
-  state_md+="Evidence — evidence/ (presence, role, tier, charter, liveness)\n"
-  state_md+="    ↓\n"
-  state_md+="Findings — findings/ (per-node status with lifecycle)\n"
-  state_md+="    ↓\n"
-  state_md+="Coverage — coverage/ (what was inspected)\n"
-  state_md+="    ↓\n"
-  state_md+="Raw repository references — original GitHub repos at pinned SHAs\n"
-  state_md+="\`\`\`\n"
-  state_md+="\n"
-
-  state_md+="## Procedure Manifest\n"
-  state_md+="\n"
-  state_md+="See \`procedures/node-census-v1.md\` for the full procedure definition.\n"
-
-  printf '%b' "$state_md" > STATE.md
-  log "  STATE.md updated"
+  write_json "digest/v1-census.json" "$sub_digest_json"
+  log "Sub-digest written to digest/v1-census.json"
 }
 
 # ---- Phase 8: Schema Validation ---------------------------------------
