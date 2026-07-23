@@ -1,9 +1,0 @@
-{
-  "finding_id": "finding-f28341af46dd",
-  "lifecycle_state": "observed",
-  "statement": "Node kimeisele/agent-world is OK — descriptor present, role=agent_federation_descriptor, tier=none, charter=true, last commit 2026-07-23T16:26:22Z",
-  "evidence_refs": ["ev-d8903dd8cd82", "ev-2bda2d760642", "ev-18f8c7f6210a", "ev-d8903dd8cd82", "ev-49c72e4bd0de"],
-  "domain": "node_census",
-  "severity": "info",
-  "created_at": "2026-07-23T17:15:55Z"
-}

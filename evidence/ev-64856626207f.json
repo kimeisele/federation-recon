@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-64856626207f",
-  "repository_pin": "pins/agent-template-proof-node-01.json",
-  "procedure_id": "node-census-v1",
-  "procedure_version": "v1",
-  "observation_type": "manifest_field",
-  "value": "2026-07-21T05:03:13Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
-}

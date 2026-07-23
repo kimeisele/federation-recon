@@ -1,9 +1,0 @@
-{
-  "finding_id": "finding-f9bc18803406",
-  "lifecycle_state": "observed",
-  "statement": "Node kimeisele/steward-test is OK — descriptor present, role=agent_federation_descriptor, tier=none, charter=true, last commit 2026-07-12T08:57:01Z",
-  "evidence_refs": ["ev-d168d804d012", "ev-2e2b95add5b0", "ev-e852d4704e61", "ev-d168d804d012", "ev-f3f7c36d5df8"],
-  "domain": "node_census",
-  "severity": "info",
-  "created_at": "2026-07-23T17:16:00Z"
-}

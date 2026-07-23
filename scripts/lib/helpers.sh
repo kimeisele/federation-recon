@@ -117,7 +117,15 @@ make_id() {
 
 # utc_timestamp — ISO-8601 UTC timestamp
 utc_timestamp() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
+  # Determinism (FR-CON-012): when RECON_FROZEN_TS is exported (reproduce mode),
+  # every derived timestamp — pin, claim observed_at, coverage inspected_at,
+  # finding created_at, drift detected_at — resolves to the same frozen value so
+  # the whole artifact set reproduces byte-identically. Live mode uses wall-clock.
+  if [ -n "${RECON_FROZEN_TS:-}" ]; then
+    printf '%s\n' "$RECON_FROZEN_TS"
+  else
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+  fi
 }
 
 # epoch_iso <epoch_seconds> — convert epoch to ISO-8601 UTC

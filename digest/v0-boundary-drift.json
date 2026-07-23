@@ -1,7 +1,7 @@
 {
   "procedure_id": "v0-boundary-drift",
   "procedure_version": "v0",
-  "run_timestamp": "2026-07-23T17:51:15Z",
+  "run_timestamp": "2026-07-23T18:14:18Z",
   "attention_items": [{
   "target": "kimeisele/*",
   "status": "observed",
@@ -18,9 +18,9 @@
   "summary": {
   "pins": 14,
   "claims": 28,
-  "evidence": 85,
+  "evidence": 69,
   "drift_records": 0,
-  "findings": 33,
+  "findings": 19,
   "coverage_records": 14,
   "observed_repositories": 7,
   "partial_failures": 0

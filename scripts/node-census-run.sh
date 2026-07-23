@@ -805,6 +805,14 @@ main() {
 
   run_start
   RUN_TIMESTAMP="$(utc_timestamp)"
+  if $reproduce; then
+    # Determinism (FR-CON-012): reuse the persisted run timestamp so pins and
+    # claim observed_at reproduce byte-identically instead of re-stamping.
+    frozen_ts="$(python3 -c "import json; print(json.load(open('digest/census-run-state.json')).get('run_timestamp',''))" 2>/dev/null || true)"
+    [ -n "${frozen_ts:-}" ] && RUN_TIMESTAMP="$frozen_ts"
+    # Freeze ALL derived timestamps (coverage/finding/drift) to the same value.
+    export RECON_FROZEN_TS="$RUN_TIMESTAMP"
+  fi
 
   log "=== Federation Node Census v1 ==="
   log "Timestamp: ${RUN_TIMESTAMP}"
