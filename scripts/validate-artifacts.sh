@@ -83,6 +83,25 @@ validate_dir "drift" "$SCHEMA_DIR/drift-record.schema.json" "Drift Records"
 validate_dir "findings" "$SCHEMA_DIR/finding.schema.json" "Findings"
 validate_dir "coverage" "$SCHEMA_DIR/coverage-record.schema.json" "Coverage Records"
 
+# Referential integrity (#11): every repository_pin must resolve to a real pin
+# file, so the Claim/Evidence -> Pin -> raw repo navigation chain is not broken.
+# The schema only requires repository_pin to be a string; this checks it points
+# somewhere real.
+ref_err=0
+for f in claims/*.json evidence/*.json; do
+  [ -f "$f" ] || continue
+  ref=$(python3 -c "import json;print(json.load(open('$f')).get('repository_pin',''))" 2>/dev/null)
+  [ -z "$ref" ] && continue
+  if [ ! -f "$ref" ]; then
+    echo "  [FAIL] $f — repository_pin '$ref' does not resolve to a pin file"
+    ref_err=$(( ref_err + 1 ))
+    ERRORS=$(( ERRORS + 1 ))
+  fi
+done
+if [ "$ref_err" -eq 0 ]; then
+  echo "  [OK] Pin references: all resolve to existing pin files"
+fi
+
 # Validate machine-readable digest (no official schema yet — syntax check only)
 if [ -f "digest/state-digest.json" ]; then
   if validate_json_syntax "digest/state-digest.json"; then
