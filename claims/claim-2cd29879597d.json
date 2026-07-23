@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": ".well-known/agent-federation.json",
   "claim_text": "kimeisele/agent-world/.well-known/agent-federation.json asserts owner_boundary=\"world_governance_surface\" (kind=\"agent_federation_descriptor\")",
-  "observed_at": "2026-07-23T16:51:46Z",
+  "observed_at": "2026-07-23T18:14:18Z",
   "repository_pin": "pin-agent-world-6771524abef2"
 }

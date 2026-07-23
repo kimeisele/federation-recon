@@ -1,9 +1,0 @@
-{
-  "finding_id": "finding-037869ff6f3f",
-  "lifecycle_state": "observed",
-  "statement": "Node kimeisele/agent-internet is OK — descriptor present, role=agent_federation_descriptor, tier=internet, charter=true, last commit 2026-07-12T10:20:39Z",
-  "evidence_refs": ["ev-e9a9bf394d53", "ev-95fb6bd5483b", "ev-0e0f8773383d", "ev-e9a9bf394d53", "ev-4aa3bfad5b28"],
-  "domain": "node_census",
-  "severity": "info",
-  "created_at": "2026-07-23T17:15:50Z"
-}

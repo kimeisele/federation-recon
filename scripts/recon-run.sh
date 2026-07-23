@@ -28,7 +28,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
-source "$SCRIPT_DIR/lib/digest.sh"
 
 # ---- Configuration -----------------------------------------------------
 
@@ -820,44 +819,128 @@ ENDJSON
   log "  Self-status: ok=${self_ok}, pins=${actual_pins}/${expected_count}, issues=${self_issues:-none}"
 }
 
-# ---- Phase 8: Generate Digest (§12.3 op 10) ----------------------------
+# ---- Phase 8: Generate Sub-Digest (§12.3 op 10) --------------------------
 
 generate_digest() {
-  log "=== Phase 8: Generate Digest + STATE.md ==="
+  log "=== Phase 8: Generate sub-digest (composition contract) ==="
 
-  # Build pins JSON
-  local pins_json="["
-  local first=true
-  for repo in "${OBSERVED_REPOS[@]}"; do
-    local slug="${repo#*/}"
-    local sha="${REPO_SHA[$repo]:-}"
-    local ref="${REPO_REF[$repo]:-}"
-    if [ -n "$sha" ]; then
-      $first || pins_json+=","
-      pins_json+=$(cat <<ENDJSON
-{"repository": "$repo", "sha": "$sha", "ref": "$ref"}
-ENDJSON
-      )
-      first=false
+  # Count artifacts on disk
+  count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | wc -l | tr -d ' '; }
+
+  local drift_count_on_disk
+  drift_count_on_disk=$(count_dir drift)
+
+  # Build attention_items from drift records
+  local attention_items_json="["
+  local first_ai=true
+
+  if [ "$drift_count_on_disk" -gt 0 ]; then
+    for f in drift/*.json; do
+      [ -f "$f" ] || continue
+      $first_ai || attention_items_json+=","
+      first_ai=false
+
+      # Extract target repo from drift record
+      local drift_data claim_id ev_id diff_desc
+      drift_data=$(python3 -c "
+import json
+with open('$f') as fh:
+    d = json.load(fh)
+print(json.dumps({
+    'claim': d.get('claim_observation',''),
+    'ev': d.get('evidence',''),
+    'diff': d.get('difference','')[:120]
+}))
+" 2>/dev/null || echo '{"claim":"","ev":"","diff":""}')
+
+      claim_id=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('claim',''))" <<< "$drift_data" 2>/dev/null || echo "")
+      diff_desc=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('diff',''))" <<< "$drift_data" 2>/dev/null || echo "")
+
+      # Find the target repo — look for the claim that generated this drift
+      local target="kimeisele/agent-world"
+      # Try to determine from claim mapping
+      for ckey in "${!CLAIM_FILES[@]}"; do
+        local cf="${CLAIM_FILES[$ckey]}"
+        if [ -f "$cf" ]; then
+          local cid
+          cid=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('claim_id',''))" 2>/dev/null || echo "")
+          if [ "$cid" = "$claim_id" ]; then
+            target=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('source_repository','kimeisele/agent-world'))" 2>/dev/null || echo "kimeisele/agent-world")
+            break
+          fi
+        fi
+      done
+
+      # Determine finding ref for this drift
+      local finding_ref=""
+      for fkey in "${!FINDING_FILES[@]}"; do
+        local ff="${FINDING_FILES[$fkey]}"
+        if [ -f "$ff" ]; then
+          finding_ref="${ff##*/}"
+          break
+        fi
+      done
+      [ -z "$finding_ref" ] && finding_ref="findings/none"
+
+      attention_items_json+=$(cat <<ENDAI
+{
+  "target": $(json_val "$target"),
+  "status": "observed",
+  "attention_rank": 1,
+  "headline": $(json_val "Boundary drift: $diff_desc"),
+  "refs": [$(json_val "findings/$finding_ref"), $(json_val "drift/$(basename "$f")")]
+}
+ENDAI
+)
+    done
+  fi
+
+  # If no drift, add a positive attention item
+  if [ "$drift_count_on_disk" -eq 0 ]; then
+    attention_items_json+=$(cat <<ENDAI
+{
+  "target": "kimeisele/*",
+  "status": "observed",
+  "attention_rank": 99,
+  "headline": "No boundary drift detected across all observed repositories",
+  "refs": ["findings/"]
+}
+ENDAI
+)
+    first_ai=false
+  fi
+
+  # Stale boundary table check
+  local rb_claim="${CLAIM_FILES["rb-agent-world"]}"
+  if [ -n "$rb_claim" ] && [ -f "$rb_claim" ]; then
+    local last_audited=""
+    last_audited=$(python3 -c "
+import json, re
+d = json.load(open('$rb_claim'))
+t = d.get('claim_text','')
+m = re.search(r'last audited: ([^)]+)', t)
+print(m.group(1) if m else '')
+" 2>/dev/null || echo "")
+
+    if [ -n "$last_audited" ] && [ "$last_audited" != "2026-07-23" ]; then
+      $first_ai || attention_items_json+=","
+      first_ai=false
+      attention_items_json+=$(cat <<ENDAI
+{
+  "target": "kimeisele/agent-world",
+  "status": "stale",
+  "attention_rank": 2,
+  "headline": "REPO_BOUNDARIES.md last audited ${last_audited} — boundary source may be stale",
+  "refs": ["findings/", "claims/"]
+}
+ENDAI
+)
     fi
-  done
-  pins_json+="]"
+  fi
 
-  # Build summary counts
-  local finding_count_drift=0 finding_count_self=0 finding_count_other=0
-  for key in "${!FINDING_FILES[@]}"; do
-    case "$key" in
-      drift*) finding_count_drift=$(( finding_count_drift + 1 )) ;;
-      self*)  finding_count_self=$(( finding_count_self + 1 )) ;;
-      *)      finding_count_other=$(( finding_count_other + 1 )) ;;
-    esac
-  done
+  attention_items_json+="]"
 
-  # Count artifacts actually written to disk — the source of truth — not the
-  # number of logical array slots. Filenames are content-addressed, so several
-  # slots can legitimately dedup to one file; the digest (and FR-CON-011
-  # self-observation "outputs_complete") must report what is really navigable.
-  count_dir() { ls -1 "$1"/*.json 2>/dev/null | wc -l | tr -d ' '; }
+  # Build summary
   local summary_json
   summary_json=$(cat <<ENDJSON
 {
@@ -867,62 +950,29 @@ ENDJSON
   "drift_records": $(count_dir drift),
   "findings": $(count_dir findings),
   "coverage_records": $(count_dir coverage),
-  "observed_repositories": $(printf '%s' "$pins_json" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  "observed_repositories": ${#OBSERVED_REPOS[@]},
+  "partial_failures": ${PARTIAL_FAILURES}
 }
 ENDJSON
   )
 
-  local budget_json
-  budget_json=$(budget_summary)
+  # Build the sub-digest in common shape (DIGEST_CONTRACT.md)
+  local sub_digest_json
+  sub_digest_json=$(cat <<ENDJSON
+{
+  "procedure_id": "v0-boundary-drift",
+  "procedure_version": "v0",
+  "run_timestamp": $(json_val "$RUN_TIMESTAMP"),
+  "attention_items": $attention_items_json,
+  "summary": $summary_json,
+  "budget": $(budget_summary),
+  "self_observation": $SELF_STATUS
+}
+ENDJSON
+  )
 
-  # Build pins list for STATE.md (using $'\n' for real newlines)
-  local pins_list=""
-  local nl=$'\n'
-  for repo in "${OBSERVED_REPOS[@]}"; do
-    local slug="${repo#*/}"
-    local sha="${REPO_SHA[$repo]:-}"
-    if [ -n "$sha" ]; then
-      pins_list+="| \`${repo}\` | \`${sha:0:12}\` | \`${PIN_FILES[$slug]}\` |${nl}"
-    fi
-  done
-  pins_list="| Repository | Commit | Pin |${nl}|---|---|---|${nl}${pins_list}"
-
-  local findings_summary=""
-  local nl=$'\n'
-  local drift_detected=0
-  for key in "${!DRIFT_FILES[@]}"; do drift_detected=$(( drift_detected + 1 )); done
-
-  if [ "$drift_detected" -gt 0 ]; then
-    findings_summary="- ${drift_detected} drift record(s) — potential boundary drift detected${nl}- ${finding_count_self} self-observation finding(s)"
-  else
-    findings_summary="- No drift detected in this run${nl}- ${finding_count_self} self-observation finding(s)"
-  fi
-
-  local drift_summary=""
-  if [ "$drift_detected" -gt 0 ]; then
-    drift_summary="**${drift_detected} drift record(s) created.** See \`drift/\` directory."
-  else
-    drift_summary="**No drift detected.** All observed claims match current repository state."
-  fi
-
-  local self_status_summary=""
-  if [ "$PARTIAL_FAILURES" -eq 0 ]; then
-    self_status_summary="OK — run completed with all repositories observed"
-  else
-    self_status_summary="ISSUES — ${PARTIAL_FAILURES} partial failure(s)"
-  fi
-
-  local budget_line="${BUDGET_TOTAL_BYTES}B total (warn: ${WARN_THRESHOLD}B, abort: ${HARD_ABORT}B)"
-  [ "$BUDGET_TOTAL_BYTES" -ge "$WARN_THRESHOLD" ] && budget_line+=" ⚠ WARNING"
-
-  # Write machine-readable digest
-  gen_machine_digest "$RUN_TIMESTAMP" "$RUN_RESULT" \
-    "$pins_json" "$summary_json" "$budget_json" "$SELF_STATUS"
-
-  # Write STATE.md
-  gen_state_md "$RUN_TIMESTAMP" "$RUN_RESULT" \
-    "$pins_list" "$findings_summary" "$drift_summary" \
-    "$self_status_summary" "$budget_line"
+  write_json "digest/v0-boundary-drift.json" "$sub_digest_json"
+  log "Sub-digest written to digest/v0-boundary-drift.json"
 }
 
 # ---- Phase 9: Budget Enforcement (§12.3 op 11) -------------------------
@@ -1057,6 +1107,15 @@ main() {
 
   run_start
   RUN_TIMESTAMP="$(utc_timestamp)"
+  if $reproduce; then
+    # Determinism (FR-CON-012): freeze the run timestamp to this procedure's own
+    # previously recorded sub-digest, so pins and claim observed_at reproduce
+    # byte-identically instead of being re-stamped with wall-clock time.
+    frozen_ts="$(python3 -c "import json; print(json.load(open('digest/v0-boundary-drift.json')).get('run_timestamp',''))" 2>/dev/null || true)"
+    [ -n "${frozen_ts:-}" ] && RUN_TIMESTAMP="$frozen_ts"
+    # Freeze ALL derived timestamps (coverage/finding/drift) to the same value.
+    export RECON_FROZEN_TS="$RUN_TIMESTAMP"
+  fi
 
   log "=== Boundary Drift Recon v0 ==="
   log "Timestamp: ${RUN_TIMESTAMP}"

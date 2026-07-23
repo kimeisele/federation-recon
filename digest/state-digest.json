@@ -1,218 +1,97 @@
 {
-  "digest_type": "federation_census",
-  "procedure_id": "node-census-v1",
-  "procedure_version": "v1",
-  "run_timestamp": "2026-07-23T17:22:35Z",
-  "run_result": "success",
-  "repository_pins": [{"repository": "kimeisele/steward-protocol", "sha": "34a8a0efc25c15ef7c07dd4fb50aeb2510c071e8", "ref": "main"},{"repository": "kimeisele/agent-city", "sha": "8694d81e545d41de1c113519b9cf54f47846dd9a", "ref": "main"},{"repository": "kimeisele/steward-federation", "sha": "161152dd3131265ae4f17b5321069d263faaa255", "ref": "main"},{"repository": "kimeisele/agent-research", "sha": "a596b89790ac8738e7b55854b1fa2be95f31d14f", "ref": "main"},{"repository": "kimeisele/agent-village", "sha": "d5d185b9af695cf0f11a4733fd3030a1550cc214", "ref": "main"},{"repository": "kimeisele/agent-internet", "sha": "dcd0206434b21d8c0ec2fac81e2aafc856401831", "ref": "main"},{"repository": "kimeisele/hermes-sankhya-25", "sha": "307b10f0bed489e564d1de1fb696ce0fff3a4aef", "ref": "main"},{"repository": "kimeisele/agent-world", "sha": "6771524abef20ef4f9b98ad366ba4bfa0968111a", "ref": "main"},{"repository": "kimeisele/steward-test", "sha": "ca057d2ce3028a845bb36e78b3c7d8cc9904ec07", "ref": "main"},{"repository": "kimeisele/agent-music", "sha": "86bf7ffa5f869919b774dfc31fd8bc422a01fcdc", "ref": "main"},{"repository": "kimeisele/steward", "sha": "5bc18d3b4f178ee4817901eeccc617f39fdd9d70", "ref": "main"},{"repository": "kimeisele/agent-template-proof-node-01", "sha": "6df6d02eac248df7069366e40bbeb0e95e7d7df5", "ref": "main"},{"repository": "kimeisele/agent-red-team", "sha": "7b4f2dc16d2d225c4dfd4c1a1beaec62bc81ceab", "ref": "main"},{"repository": "kimeisele/federation-recon", "sha": "ff9adb0f4bd0dd081a27b2f527b8114741177825", "ref": "master"}],
-  "census": [{
-  "slug": "agent-village",
-  "repository": "kimeisele/agent-village",
-  "sha": "d5d185b9af69",
-  "status": "stale",
-  "descriptor": false,
-  "charter": true,
-  "role": null,
-  "tier": null,
-  "display_name": null,
-  "last_commit": "2026-07-21T17:58:52Z",
-  "pin": "pins/agent-village.json",
-  "finding": "finding-aa331f6e7cb3.json"
-},{
-  "slug": "federation-recon",
-  "repository": "kimeisele/federation-recon",
-  "sha": "ff9adb0f4bd0",
-  "status": "stale",
-  "descriptor": false,
-  "charter": true,
-  "role": null,
-  "tier": null,
-  "display_name": null,
-  "last_commit": "2026-07-23T16:58:43Z",
-  "pin": "pins/federation-recon.json",
-  "finding": "finding-a6dcd59a8492.json"
-},{
-  "slug": "agent-city",
-  "repository": "kimeisele/agent-city",
-  "sha": "8694d81e545d",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "city_runtime",
-  "tier": null,
-  "display_name": "Agent City — Self-Governing AI Agent Federation",
-  "last_commit": "2026-07-23T16:44:01Z",
-  "pin": "pins/agent-city.json",
-  "finding": "finding-e4c7a8d58602.json"
-},{
-  "slug": "agent-internet",
-  "repository": "kimeisele/agent-internet",
-  "sha": "dcd0206434b2",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": "internet",
-  "display_name": "Agent Internet Control Plane",
-  "last_commit": "2026-07-12T10:21:18Z",
-  "pin": "pins/agent-internet.json",
-  "finding": "finding-e596c25a5ae1.json"
-},{
-  "slug": "agent-music",
-  "repository": "kimeisele/agent-music",
-  "sha": "86bf7ffa5f86",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": "node",
-  "display_name": "Agent Music",
-  "last_commit": "2026-07-23T16:15:08Z",
-  "pin": "pins/agent-music.json",
-  "finding": "finding-5c2ee7b770b3.json"
-},{
-  "slug": "agent-red-team",
-  "repository": "kimeisele/agent-red-team",
-  "sha": "7b4f2dc16d2d",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": "node",
-  "display_name": "Agent Red Team",
-  "last_commit": "2026-07-21T04:46:40Z",
-  "pin": "pins/agent-red-team.json",
-  "finding": "finding-ab20a919b8b0.json"
-},{
-  "slug": "agent-research",
-  "repository": "kimeisele/agent-research",
-  "sha": "a596b89790ac",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": null,
-  "display_name": "Research Engine & Faculty of Agent Universe",
-  "last_commit": "2026-07-23T16:17:16Z",
-  "pin": "pins/agent-research.json",
-  "finding": "finding-5bf0018e721d.json"
-},{
-  "slug": "agent-template-proof-node-01",
-  "repository": "kimeisele/agent-template-proof-node-01",
-  "sha": "6df6d02eac24",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": "node",
-  "display_name": "Agent Template Proof Node 01",
-  "last_commit": "2026-07-20T18:53:02Z",
-  "pin": "pins/agent-template-proof-node-01.json",
-  "finding": "finding-ba7582684e13.json"
-},{
-  "slug": "agent-world",
-  "repository": "kimeisele/agent-world",
-  "sha": "6771524abef2",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": null,
-  "display_name": "Agent World",
-  "last_commit": "2026-07-13T08:12:52Z",
-  "pin": "pins/agent-world.json",
-  "finding": "finding-884e8997edcf.json"
-},{
-  "slug": "hermes-sankhya-25",
-  "repository": "kimeisele/hermes-sankhya-25",
-  "sha": "307b10f0bed4",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": "node",
-  "display_name": "Hermes Sankhya 25",
-  "last_commit": "2026-07-19T05:55:47Z",
-  "pin": "pins/hermes-sankhya-25.json",
-  "finding": "finding-828ff44cb0a8.json"
-},{
-  "slug": "steward",
-  "repository": "kimeisele/steward",
-  "sha": "5bc18d3b4f17",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "operator",
-  "tier": null,
-  "display_name": "Steward — Autonomous Superagent",
-  "last_commit": "2026-07-23T17:20:08Z",
-  "pin": "pins/steward.json",
-  "finding": "finding-493bdf743d3c.json"
-},{
-  "slug": "steward-federation",
-  "repository": "kimeisele/steward-federation",
-  "sha": "161152dd3131",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": null,
-  "display_name": "Steward Federation Hub",
-  "last_commit": "2026-07-23T17:18:23Z",
-  "pin": "pins/steward-federation.json",
-  "finding": "finding-366db4fd3934.json"
-},{
-  "slug": "steward-protocol",
-  "repository": "kimeisele/steward-protocol",
-  "sha": "34a8a0efc25c",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": null,
-  "display_name": "Steward Protocol",
-  "last_commit": "2026-07-12T09:38:24Z",
-  "pin": "pins/steward-protocol.json",
-  "finding": "finding-0fc027b8a436.json"
-},{
-  "slug": "steward-test",
-  "repository": "kimeisele/steward-test",
-  "sha": "ca057d2ce302",
-  "status": "observed",
-  "descriptor": true,
-  "charter": true,
-  "role": "agent_federation_descriptor",
-  "tier": null,
-  "display_name": "Steward Test Sandbox",
-  "last_commit": "2026-07-12T08:57:26Z",
-  "pin": "pins/steward-test.json",
-  "finding": "finding-97b3fe86469b.json"
-}],
+  "digest_type": "composed_federation",
+  "composer_version": "v2",
+  "composed_at": "2026-07-23T18:15:03Z",
+  "procedure_count": 2,
+  "procedures": [
+    {
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0",
+      "run_timestamp": "2026-07-23T18:14:18Z",
+      "summary": {
+        "pins": 14,
+        "claims": 28,
+        "evidence": 69,
+        "drift_records": 0,
+        "findings": 19,
+        "coverage_records": 14,
+        "observed_repositories": 7,
+        "partial_failures": 0
+      }
+    },
+    {
+      "procedure_id": "v1-census",
+      "procedure_version": "v1",
+      "run_timestamp": "2026-07-23T18:15:03Z",
+      "summary": {
+        "pins": 14,
+        "evidence": 69,
+        "findings": 19,
+        "coverage_records": 14,
+        "observed_nodes": 14,
+        "stale_nodes": 2,
+        "ok_nodes": 12,
+        "error_nodes": 0,
+        "staleness_threshold_days": 60
+      }
+    }
+  ],
+  "attention_items": [
+    {
+      "target": "kimeisele/agent-world",
+      "status": "stale",
+      "attention_rank": 2,
+      "headline": "REPO_BOUNDARIES.md last audited 2026-03-15 \u2014 boundary source may be stale",
+      "refs": [
+        "findings/",
+        "claims/"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    },
+    {
+      "target": "kimeisele/*",
+      "status": "observed",
+      "attention_rank": 99,
+      "headline": "No boundary drift detected across all observed repositories",
+      "refs": [
+        "findings/"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    }
+  ],
+  "constitutional_observatory": [
+    {
+      "target": "kimeisele/agent-village",
+      "status": "observed",
+      "attention_rank": 90,
+      "headline": "Constitutional non-peer kimeisele/agent-village \u2014 no descriptor expected (\u00a75)",
+      "refs": [
+        "findings/finding-aa331f6e7cb3.json"
+      ],
+      "non_peer": true,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    },
+    {
+      "target": "kimeisele/federation-recon",
+      "status": "observed",
+      "attention_rank": 90,
+      "headline": "Constitutional non-peer kimeisele/federation-recon \u2014 no descriptor expected (\u00a75)",
+      "refs": [
+        "findings/finding-a6dcd59a8492.json"
+      ],
+      "non_peer": true,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    }
+  ],
   "summary": {
-  "pins": 14,
-  "evidence": 84,
-  "findings": 33,
-  "coverage_records": 14,
-  "observed_nodes": 14,
-  "stale_nodes": 2,
-  "ok_nodes": 12,
-  "error_nodes": 0,
-  "staleness_threshold_days": 60
-},
-  "budget": {
-  "total_bytes": 33196,
-  "warn_threshold": 256000,
-  "hard_abort": 1048576,
-  "warned": false,
-  "breached": false,
-  "checkpoints": " [discovery:0] [pins:3675] [evidence:22180] [findings:28281] [coverage:32612] [self-observation:33196]"
-},
-  "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null},
-  "navigation": {
-    "pins": "pins/",
-    "evidence": "evidence/",
-    "findings": "findings/",
-    "coverage": "coverage/",
-    "digest": "digest/"
+    "total_attention_items": 2,
+    "total_observatory_items": 2,
+    "total_procedures": 2
   }
 }

@@ -1,0 +1,42 @@
+{
+  "procedure_id": "v0-boundary-drift",
+  "procedure_version": "v0",
+  "run_timestamp": "2026-07-23T18:14:18Z",
+  "attention_items": [{
+  "target": "kimeisele/*",
+  "status": "observed",
+  "attention_rank": 99,
+  "headline": "No boundary drift detected across all observed repositories",
+  "refs": ["findings/"]
+},{
+  "target": "kimeisele/agent-world",
+  "status": "stale",
+  "attention_rank": 2,
+  "headline": "REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale",
+  "refs": ["findings/", "claims/"]
+}],
+  "summary": {
+  "pins": 14,
+  "claims": 28,
+  "evidence": 69,
+  "drift_records": 0,
+  "findings": 19,
+  "coverage_records": 14,
+  "observed_repositories": 7,
+  "partial_failures": 0
+},
+  "budget": {
+  "total_bytes": 22906,
+  "warn_threshold": 256000,
+  "hard_abort": 1048576,
+  "warned": false,
+  "breached": false,
+  "checkpoints": " [pins:1828] [claims:12533] [evidence:18896] [drift:18896] [findings:20066] [coverage:22342] [self-observation:22906]"
+},
+  "self_observation": {
+  "run_completed": true,
+  "outputs_complete": true,
+  "digest_fresh": true,
+  "issues": null
+}
+}

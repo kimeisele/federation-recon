@@ -1,0 +1,38 @@
+{
+  "procedure_id": "v1-census",
+  "procedure_version": "v1",
+  "run_timestamp": "2026-07-23T18:15:03Z",
+  "attention_items": [{
+  "target": "kimeisele/agent-village",
+  "status": "observed",
+  "attention_rank": 90, "non_peer": true,
+  "headline": "Constitutional non-peer kimeisele/agent-village — no descriptor expected (§5)",
+  "refs": ["findings/finding-aa331f6e7cb3.json"]
+},{
+  "target": "kimeisele/federation-recon",
+  "status": "observed",
+  "attention_rank": 90, "non_peer": true,
+  "headline": "Constitutional non-peer kimeisele/federation-recon — no descriptor expected (§5)",
+  "refs": ["findings/finding-a6dcd59a8492.json"]
+}],
+  "summary": {
+  "pins": 14,
+  "evidence": 69,
+  "findings": 19,
+  "coverage_records": 14,
+  "observed_nodes": 14,
+  "stale_nodes": 2,
+  "ok_nodes": 12,
+  "error_nodes": 0,
+  "staleness_threshold_days": 60
+},
+  "budget": {
+  "total_bytes": 33194,
+  "warn_threshold": 256000,
+  "hard_abort": 1048576,
+  "warned": false,
+  "breached": false,
+  "checkpoints": " [discovery:0] [pins:3673] [evidence:22178] [findings:28279] [coverage:32610] [self-observation:33194]"
+},
+  "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
+}
