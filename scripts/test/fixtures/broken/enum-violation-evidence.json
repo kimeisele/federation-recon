@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-test-enum-violation",
+  "repository_pin": "pins/federation-recon.json",
+  "procedure_id": "test-proc",
+  "procedure_version": "v0",
+  "observation_type": "not_a_valid_type",
+  "value": "test"
+}
