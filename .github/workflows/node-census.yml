@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ github.token }}
 
       - name: Run Federation Node Census
         env:
@@ -48,8 +51,10 @@ jobs:
 
           git commit -m "federation node census $(date -u +%Y-%m-%d)"
 
-          # Push — GITHUB_TOKEN has contents:write
-          git push
+          # Determine the branch to push to and push
+          BRANCH="${GITHUB_REF_NAME:-master}"
+          echo "Pushing to branch: $BRANCH"
+          git push origin "HEAD:$BRANCH"
 
       - name: Budget breach self-finding
         if: failure()
