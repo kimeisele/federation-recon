@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/finding.schema.json",
+  "title": "Finding",
+  "description": "An interpreted, evidence-backed observation with an explicit lifecycle state. Not automatically canonical truth (FR-CON-005). See founding package §8.4, §9.",
+  "type": "object",
+  "required": ["finding_id", "lifecycle_state", "statement", "evidence_refs", "created_at"],
+  "properties": {
+    "finding_id": { "type": "string" },
+    "lifecycle_state": { "type": "string", "enum": ["observed", "stale", "superseded"] },
+    "statement": { "type": "string" },
+    "evidence_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "drift_refs": { "type": "array", "items": { "type": "string" } },
+    "supersedes": { "type": "string", "description": "finding_id of the Finding this one replaces, if any" },
+    "domain": { "type": "string" },
+    "severity": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

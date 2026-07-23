@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/coverage-record.schema.json",
+  "title": "Coverage Record",
+  "description": "Records what was inspected, when, at which commit, with which procedure, using which capabilities, and with what result. See founding package §8.6.",
+  "type": "object",
+  "required": ["coverage_id", "repository_pin", "procedure_id", "procedure_version", "result"],
+  "properties": {
+    "coverage_id": { "type": "string" },
+    "repository_pin": { "type": "string" },
+    "procedure_id": { "type": "string" },
+    "procedure_version": { "type": "string" },
+    "capabilities_used": { "type": "array", "items": { "type": "string" } },
+    "capabilities_missing": { "type": "array", "items": { "type": "string" } },
+    "result": { "type": "string", "enum": ["success", "partial", "failed"] },
+    "inspected_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

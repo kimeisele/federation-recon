@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/claim-observation.schema.json",
+  "title": "Claim Observation",
+  "description": "Records that a selected source asserts something. Recon owns the observation of the claim, not the claim itself. See founding package §8.3.",
+  "type": "object",
+  "required": ["claim_id", "source_repository", "source_path", "claim_text", "observed_at"],
+  "properties": {
+    "claim_id": { "type": "string" },
+    "source_repository": { "type": "string" },
+    "source_path": { "type": "string" },
+    "claim_text": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "repository_pin": { "type": "string" }
+  },
+  "additionalProperties": false
+}

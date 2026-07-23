@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/evidence.schema.json",
+  "title": "Evidence",
+  "description": "A deterministic observation bound to a Repository Pin. Not a conclusion. See founding package §8.2, FR-CON-007, FR-CON-008.",
+  "type": "object",
+  "required": ["evidence_id", "repository_pin", "procedure_id", "procedure_version", "observation_type", "value"],
+  "properties": {
+    "evidence_id": { "type": "string" },
+    "repository_pin": { "type": "string", "description": "reference to a Repository Pin record" },
+    "procedure_id": { "type": "string" },
+    "procedure_version": { "type": "string" },
+    "observation_type": {
+      "type": "string",
+      "enum": ["file_existence", "path_inventory", "file_count", "workflow_presence", "dependency_occurrence", "manifest_field", "documented_claim"]
+    },
+    "paths": { "type": "array", "items": { "type": "string" }, "description": "paths or structural references, not source excerpts (FR-CON-008)" },
+    "value": { "description": "the observed value; must not contain source excerpts in the MVP" },
+    "hashes": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

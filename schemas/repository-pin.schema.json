@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/repository-pin.schema.json",
+  "title": "Repository Pin",
+  "description": "Identifies the exact repository state observed. See founding package §8.1.",
+  "type": "object",
+  "required": ["repository", "requested_ref", "resolved_commit_sha", "observation_timestamp", "acquisition_method"],
+  "properties": {
+    "repository": { "type": "string", "description": "owner/repo slug" },
+    "requested_ref": { "type": "string" },
+    "resolved_commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "observation_timestamp": { "type": "string", "format": "date-time" },
+    "acquisition_method": { "type": "string", "description": "e.g. git-clone, gh-api" },
+    "dirty_state_assertion": { "type": "boolean", "description": "true if working tree had uncommitted changes at observation time" }
+  },
+  "additionalProperties": false
+}

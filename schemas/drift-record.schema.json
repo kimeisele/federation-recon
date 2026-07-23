@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/drift-record.schema.json",
+  "title": "Drift Record",
+  "description": "A structured difference between a Claim Observation and a deterministic current observation. No external baseline required for Slice v0. See founding package §8.5.",
+  "type": "object",
+  "required": ["drift_id", "claim_observation", "evidence", "difference"],
+  "properties": {
+    "drift_id": { "type": "string" },
+    "claim_observation": { "type": "string", "description": "reference to a Claim Observation record" },
+    "evidence": { "type": "string", "description": "reference to an Evidence record" },
+    "difference": { "type": "string", "description": "human-readable description of the mismatch" },
+    "detected_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
