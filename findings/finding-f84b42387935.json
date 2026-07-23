@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-f84b42387935",
+  "lifecycle_state": "observed",
+  "statement": "Node kimeisele/hermes-sankhya-25 is OK — descriptor present, role=agent_federation_descriptor, tier=node, charter=true, last commit 2026-07-22T19:05:33Z",
+  "evidence_refs": ["ev-d0d13a427911", "ev-5e8d582b21de", "ev-500674444e9b", "ev-d0d13a427911", "ev-f71d6e55e2d2"],
+  "domain": "node_census",
+  "severity": "info",
+  "created_at": "2026-07-23T17:15:57Z"
+}

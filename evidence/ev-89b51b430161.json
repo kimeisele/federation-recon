@@ -1,8 +1,8 @@
 {
   "evidence_id": "ev-89b51b430161",
   "repository_pin": "pins/steward.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
   "observation_type": "file_existence",
-  "value": true, "paths": [".well-known/agent-federation.json"]
+  "value": true, "paths": ["docs/authority/charter.md"]
 }

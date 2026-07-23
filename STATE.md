@@ -1,68 +1,58 @@
-# Federation Digest
+# Federation Node Census
 
-**Generated:** 2026-07-23T16:51:46Z
-**Procedure:** `boundary-drift-recon-v0` / `v0`
+**Generated:** 2026-07-23T17:22:35Z
+**Procedure:** `node-census-v1` / `v1`
 **Run result:** success
-**Self-observation status:** OK — run completed with all repositories observed
+**Staleness threshold:** 60 days (last commit > 60d → stale)
 
-## Observed repositories
+## Summary
 
-| Repository | Commit | Pin |
-|---|---|---|
-| `kimeisele/steward-protocol` | `34a8a0efc25c` | `pins/steward-protocol.json` |
-| `kimeisele/agent-world` | `6771524abef2` | `pins/agent-world.json` |
-| `kimeisele/agent-internet` | `dcd0206434b2` | `pins/agent-internet.json` |
-| `kimeisele/steward-federation` | `b6f1379914f5` | `pins/steward-federation.json` |
-| `kimeisele/steward` | `7134341ff292` | `pins/steward.json` |
-| `kimeisele/agent-city` | `8694d81e545d` | `pins/agent-city.json` |
-| `kimeisele/federation-recon` | `61dc947c8b66` | `pins/federation-recon.json` |
+| Metric | Count |
+|---|---|
+| Total nodes observed | 14 |
+| OK | 12 |
+| Stale | 2 |
+| Errors | 0 |
 
+## Ranked Node Census (sorted by attention needed)
 
-## Findings summary
-
-- No drift detected in this run
-- 1 self-observation finding(s)
-
-## Drift summary
-
-**No drift detected.** All observed claims match current repository state.
+| # | Node | Status | Descriptor | Charter | Role | Tier | Last Commit |
+|---|---|---|---|---|---|---|---|
+| 1 | `kimeisele/agent-village` | ⚠️ stale | ❌ | ✅ | — | — | 2026-07-21 |
+| 2 | `kimeisele/federation-recon` | ⚠️ stale | ❌ | ✅ | — | — | 2026-07-23 |
+| 3 | `kimeisele/agent-city` | ✅ observed | ✅ | ✅ | city_runtime | — | 2026-07-23 |
+| 4 | `kimeisele/agent-internet` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | internet | 2026-07-12 |
+| 5 | `kimeisele/agent-music` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-23 |
+| 6 | `kimeisele/agent-red-team` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-21 |
+| 7 | `kimeisele/agent-research` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-23 |
+| 8 | `kimeisele/agent-template-proof-node-01` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-20 |
+| 9 | `kimeisele/agent-world` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-13 |
+| 10 | `kimeisele/hermes-sankhya-25` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | node | 2026-07-19 |
+| 11 | `kimeisele/steward` | ✅ observed | ✅ | ✅ | operator | — | 2026-07-23 |
+| 12 | `kimeisele/steward-federation` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-23 |
+| 13 | `kimeisele/steward-protocol` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-12 |
+| 14 | `kimeisele/steward-test` | ✅ observed | ✅ | ✅ | agent_federation_descriptor | — | 2026-07-12 |
 
 ## Budget
 
-22908B total (warn: 256000B, abort: 1048576B)
+33196B total (warn: 256000B, abort: 1048576B)
 
 ## Navigation (progressive disclosure)
 
 ```
-Federation Digest (this file)
+Federation Node Census (this file)
     ↓
-Repository Pins — pins/ (one per observed repo)
+Repository Pins — pins/ (one per discovered node)
     ↓
-Claim Observations — claims/ (extracted from claim sources)
+Evidence — evidence/ (presence, role, tier, charter, liveness)
     ↓
-Evidence — evidence/ (deterministic observations)
-    ↓
-Drift Records — drift/ (where claim ≠ observation)
-    ↓
-Findings — findings/ (interpreted observations)
+Findings — findings/ (per-node status with lifecycle)
     ↓
 Coverage — coverage/ (what was inspected)
     ↓
 Raw repository references — original GitHub repos at pinned SHAs
 ```
 
-## Links
-
-| Artifact | Directory | Schema |
-|---|---|---|
-| Repository Pins | `pins/` | `schemas/repository-pin.schema.json` |
-| Claim Observations | `claims/` | `schemas/claim-observation.schema.json` |
-| Evidence | `evidence/` | `schemas/evidence.schema.json` |
-| Drift Records | `drift/` | `schemas/drift-record.schema.json` |
-| Findings | `findings/` | `schemas/finding.schema.json` |
-| Coverage Records | `coverage/` | `schemas/coverage-record.schema.json` |
-| Machine-readable Digest | `digest/state-digest.json` | — |
-
 ## Procedure Manifest
 
-See `procedures/boundary-drift-recon-v0.md` for the full procedure definition.
+See `procedures/node-census-v1.md` for the full procedure definition.

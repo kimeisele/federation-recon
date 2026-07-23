@@ -1,10 +1,10 @@
 {
   "coverage_id": "cov-cfe72523a974",
   "repository_pin": "pins/federation-recon.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
-  "capabilities_used": ["git", "gh", "rg", "bash", "python3", "jq"],
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "capabilities_used": ["git", "gh", "rg", "python3", "jq"],
   "capabilities_missing": [],
   "result": "success",
-  "inspected_at": "2026-07-23T16:52:38Z"
+  "inspected_at": "2026-07-23T17:23:26Z"
 }

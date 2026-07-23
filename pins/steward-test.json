@@ -1,0 +1,8 @@
+{
+  "repository": "kimeisele/steward-test",
+  "requested_ref": "main",
+  "resolved_commit_sha": "ca057d2ce3028a845bb36e78b3c7d8cc9904ec07",
+  "observation_timestamp": "2026-07-23T17:22:35Z",
+  "acquisition_method": "gh-api",
+  "dirty_state_assertion": false
+}

@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-e852d4704e61",
+  "repository_pin": "pins/steward-test.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": null, "paths": [".well-known/agent-federation.json"], "hashes": {"field": "tier_or_layer"}
+}

@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-5c07aacdfae3",
+  "lifecycle_state": "observed",
+  "statement": "Node kimeisele/agent-research is OK — descriptor present, role=agent_federation_descriptor, tier=none, charter=true, last commit 2026-07-23T16:17:07Z",
+  "evidence_refs": ["ev-c2d970bf8e4e", "ev-fa396e629f8c", "ev-1cbb7140dddd", "ev-c2d970bf8e4e", "ev-aa1093294ac5"],
+  "domain": "node_census",
+  "severity": "info",
+  "created_at": "2026-07-23T17:15:52Z"
+}

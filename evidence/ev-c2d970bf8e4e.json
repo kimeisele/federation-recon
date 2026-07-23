@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-c2d970bf8e4e",
+  "repository_pin": "pins/agent-research.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "file_existence",
+  "value": true, "paths": ["docs/authority/charter.md"]
+}
