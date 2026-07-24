@@ -25,6 +25,9 @@ fi
 if [ -n "${GH_REPO:-}" ]; then
   exit 5
 fi
+if [ -n "${GH_HOST:-}" ]; then
+  exit 6
+fi
 if [ "$MOCK_GH_FAIL_ON" = "all" ] || [ "$MOCK_GH_FAIL_ON" = "${1:-}" ]; then
   exit 1
 fi
@@ -279,6 +282,14 @@ _run_heartbeat() {
 @test "heartbeat: caller GH_REPO cannot redirect repository reads" {
   _write_state "$(_state)"
   export GH_REPO='foreign-owner/foreign-repo'
+  run _run_heartbeat --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: HOLD"* ]]
+}
+
+@test "heartbeat: caller GH_HOST cannot redirect repository reads" {
+  _write_state "$(_state)"
+  export GH_HOST='evil-enterprise.example.com'
   run _run_heartbeat --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
