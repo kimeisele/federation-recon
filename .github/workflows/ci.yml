@@ -39,3 +39,41 @@ jobs:
 
       - name: Run offline test suite
         run: bats scripts/test/
+
+  # Pull-request only: a feature PR must commit a reproduce FIXPOINT — the
+  # committed artifacts must equal a fresh --reproduce. This catches PRs that
+  # add/extend a procedure but commit a stale artifact set (code produces more
+  # than was committed), which the offline gate and reproduce-stability nightly
+  # cannot see. Not run on push to master, where the daily census legitimately
+  # commits a fresh live observation.
+  reproduce-fixpoint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: Reproduce from committed pins
+        run: |
+          RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
+          RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce
+          bash scripts/compose-digest.sh
+
+      - name: Assert committed artifacts equal the reproduce fixpoint
+        run: |
+          if ! git diff --quiet -- pins claims evidence drift findings coverage digest STATE.md; then
+            echo "::error::Committed artifacts are stale — a fresh --reproduce differs. Regenerate the fixpoint and commit it."
+            git --no-pager diff --stat -- pins claims evidence drift findings coverage digest STATE.md
+            exit 1
+          fi
+          echo "OK: committed artifacts are a reproduce fixpoint"
