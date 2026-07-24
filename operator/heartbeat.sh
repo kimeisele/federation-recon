@@ -28,6 +28,9 @@ Usage: bash operator/heartbeat.sh [--dry-run] [--state-file PATH]
 
   --dry-run          decide without modifying the state file
   --state-file PATH  use an explicit checkpoint path
+
+Exit status: 0 = decision/policy stop, 1 = invalid local state/configuration,
+             2 = required Git or GitHub visibility unavailable
 EOF
 }
 
@@ -251,11 +254,11 @@ command -v gh >/dev/null 2>&1 || {
   exit 2
 }
 
-if ! prs_json="$(cd "$REPO_ROOT" && gh pr list --state open --limit 1000 --json number,updatedAt 2>/dev/null)"; then
+if ! prs_json="$(cd "$REPO_ROOT" 2>/dev/null && unset GH_REPO GH_HOST && gh pr list --state open --limit 1000 --json number,updatedAt 2>/dev/null)"; then
   visibility_stop "GitHub visibility unavailable: open PR query failed"
   exit 2
 fi
-if ! issues_json="$(cd "$REPO_ROOT" && gh issue list --state open --limit 1000 --json number,updatedAt,labels 2>/dev/null)"; then
+if ! issues_json="$(cd "$REPO_ROOT" 2>/dev/null && unset GH_REPO GH_HOST && gh issue list --state open --limit 1000 --json number,updatedAt,labels 2>/dev/null)"; then
   visibility_stop "GitHub visibility unavailable: open issue query failed"
   exit 2
 fi

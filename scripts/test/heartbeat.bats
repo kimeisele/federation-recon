@@ -22,6 +22,9 @@ setup() {
 if [ -n "${MOCK_GH_CWD:-}" ] && [ "$PWD" != "$MOCK_GH_CWD" ]; then
   exit 4
 fi
+if [ -n "${GH_REPO:-}" ]; then
+  exit 5
+fi
 if [ "$MOCK_GH_FAIL_ON" = "all" ] || [ "$MOCK_GH_FAIL_ON" = "${1:-}" ]; then
   exit 1
 fi
@@ -273,6 +276,14 @@ _run_heartbeat() {
   [[ "$output" != *"BUILD"* ]]
 }
 
+@test "heartbeat: caller GH_REPO cannot redirect repository reads" {
+  _write_state "$(_state)"
+  export GH_REPO='foreign-owner/foreign-repo'
+  run _run_heartbeat --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: HOLD"* ]]
+}
+
 @test "heartbeat: two open PRs STOP regardless of deterministic review order" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":42,"title":"newer","body":"","updatedAt":"2026-07-24T10:00:00Z"},{"number":7,"title":"older","body":"","updatedAt":"2026-07-23T10:00:00Z"}]'
@@ -367,13 +378,13 @@ _run_heartbeat() {
   [[ "$output" == *"ACTION: SWEEP issue #9"* ]]
 }
 
-@test "heartbeat: untrusted PR body is data and never shell syntax" {
+@test "heartbeat: consumed untrusted label text is data and never shell syntax" {
   _write_state "$(_state)"
   marker="$WORKDIR/should-not-exist"
-  export MOCK_PRS="[{\"number\":42,\"title\":\"data\",\"body\":\"\$(touch $marker)\",\"updatedAt\":\"2026-07-24T10:00:00Z\"}]"
+  export MOCK_ISSUES="[{\"number\":42,\"updatedAt\":\"2026-07-24T10:00:00Z\",\"labels\":[{\"name\":\"\$(touch $marker)\"}]}]"
   run _run_heartbeat --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ACTION: REVIEW PR #42"* ]]
+  [[ "$output" == *"ACTION: HOLD"* ]]
   [ ! -e "$marker" ]
 }
 
@@ -404,6 +415,7 @@ _run_heartbeat() {
 }
 
 @test "heartbeat: state write failure emits no misleading action" {
+  [ "$(id -u)" -ne 0 ] || skip "root bypasses directory write permissions"
   _write_state "$(_state)"
   chmod 0500 "$WORKDIR/operator"
   run _run_heartbeat
