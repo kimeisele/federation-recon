@@ -2,11 +2,12 @@
 
 Constitution for the operator running the `federation-recon` node. **Lean
 bootstrap**: read this, then use `operator/heartbeat.sh` for a deterministic
-dispatch decision. The committed checkpoint is the bootstrap source, not
-runtime memory. Current v1.1 only reports an action; it does not persist runtime
-state to GitHub or execute the action. Local mutation is optional and must use a
-validated state file. No LLM is in the dispatcher, only at measurable judgment
-triggers.
+dispatch decision. The committed `operator/state.json` (schema v1)
+is the **immutable bootstrap seed**, never mutated. Runtime state defaults to
+`operator/.runtime/state.json` (schema v2). Use `--init-runtime` to create it
+from seed, `--init-runtime --force` to backup+re-init, and `--break-lock` to
+clear a stuck lock. v1.2 only reports an action; it does not execute actions.
+No LLM is in the dispatcher.
 
 ## Operator Loop (6 phases)
 
@@ -16,11 +17,21 @@ The operator is a deterministic state machine. Phases are numbered, Western:
 0_BOOTSTRAP → 1_CLASSIFY → 2_DELEGATE → 3_REVIEW → 4_INTEGRATE → 5_SWEEP
 ```
 
-Executable form: `operator/heartbeat.sh` (deterministic dispatcher, reads a
-validated state file + read-only `gh` queries and emits `ACTION: <…>`). Use
-`--dry-run` for a byte-preserving decision or `--state-file PATH` /
-`OPERATOR_STATE_FILE` to advance an explicit runtime checkpoint. Offline except
-for `gh` reads, with no LLM in the decision path.
+Executable form: `operator/heartbeat.sh` (deterministic dispatcher).
+
+```
+# First-time setup (once per worktree/session):
+bash operator/heartbeat.sh --init-runtime
+
+# Normal heartbeat:
+bash operator/heartbeat.sh [--dry-run] [--state-file PATH]
+
+# Recovery:
+bash operator/heartbeat.sh --init-runtime --force   # backup + re-init from seed
+bash operator/heartbeat.sh --break-lock             # clear stuck lock (live PID rejected)
+```
+
+Offline except for `gh` reads, with no LLM in the decision path.
 
 | Phase | Rule | Action |
 |---|---|---|
@@ -32,7 +43,7 @@ for `gh` reads, with no LLM in the decision path.
 | **5 SWEEP** | Stale PR (>7d) or issue (>14d), no progress | `SWEEP #N` |
 | *(none)* | No actionable work | `HOLD` |
 
-After the local-only bootstrap, v1.1 evaluates rules in safety priority order:
+After the local-only bootstrap, v1.2 evaluates rules in safety priority order:
 WIP cap → budget cap → stale SWEEP → open-PR REVIEW → approved-issue BUILD →
 HOLD. The stored phase records the selected handling state; it does not authorize
 execution. GitHub reads are always resolved from this repository root.
@@ -41,17 +52,16 @@ execution. GitHub reads are always resolved from this repository root.
 lines, CI red, review conflict. Otherwise DeepSeek default.
 
 Hard limits enforced: WIP ≤ 1, expert calls ≤ budget.max_expert_calls.
-Violation → STOP (terminal hold). Phase 4 execution and durable runtime-state
-persistence remain intentionally unimplemented.
+Violation → STOP (terminal hold). Phase 4 INTEGRATE/execution remains
+intentionally unimplemented.
 
 ## Session Bootstrap
 
-Every fresh session: confirm a clean tree, update from `main`, read this file,
-and inspect `operator/state.json`. Treat it as the committed seed. Run
-`bash operator/heartbeat.sh --dry-run` for a non-mutating decision, or copy the
-seed to an explicit runtime path and pass `--state-file PATH`. Mutation of the
-tracked seed is allowed only deliberately in a controlled branch or worktree.
-Never trust memory.
+Every fresh session: confirm a clean tree, update from `main`, read this file.
+Run `bash operator/heartbeat.sh --init-runtime` once to create the runtime
+checkpoint from the committed seed. Run `bash operator/heartbeat.sh --dry-run`
+for a non-mutating decision. The committed `operator/state.json` is immutable;
+mutation targets the runtime path only. Never trust memory.
 
 ## Stewardship & Trust Boundary
 
@@ -70,11 +80,16 @@ Risk classes:
   credential or permission changes, cross-repository writes, and changes to this
   risk envelope or its machine guardrails are never auto-executed.
 
-The branch ruleset and CI are the current machine enforcement. Model budgets or
-provider caps must be enforced by their provider, not merely claimed here. Before
-execute mode is enabled, the control plane must also implement durable checkpoint
-persistence, an auditable action log, one compact weekly owner digest, and a
-periodic independent audit comparing decisions and classifications against Git.
+## Runtime State & Locking
+
+- **Seed**: `operator/state.json` (schema v1) — immutable, committed.
+- **Runtime**: `operator/.runtime/state.json` (schema v2) — gitignored, durable.
+- **Lock**: `operator/.runtime/heartbeat.lock/` — `mkdir`-atomic with PID+boot-ID stale recovery.
+- **Backup**: `operator/.runtime/state.json.bak` — last state before force re-init.
+- **Schema v2** adds `previous_checkpoint` (bounded audit snapshot).
+- **Crash safety**: tempfile → fsync → `os.replace` → directory fsync.
+- Exit 0 = decision, 1 = irrecoverable (operator must act), 2 = transient.
+- See `docs/operator-v1.2-runtime-state-adr.md` for the full contract.
 
 ## Model Economy
 

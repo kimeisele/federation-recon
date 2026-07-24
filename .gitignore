@@ -1,3 +1,6 @@
 .DS_Store
 *.log
 .env
+
+# Operator v1.2 runtime state directory (never committed)
+operator/.runtime/
