@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-internet",
   "source_path": "docs/PUBLIC_FEDERATION_SURFACE.md",
   "claim_text": "kimeisele/agent-internet/docs/PUBLIC_FEDERATION_SURFACE.md asserts GitHub-native participation as primary public surface (github_primary=yes); Lotus is authenticated operator surface (operator=yes)",
-  "observed_at": "2026-07-24T00:18:02Z",
+  "observed_at": "2026-07-24T00:24:41Z",
   "repository_pin": "pins/v0-boundary-drift/agent-internet.json"
 }

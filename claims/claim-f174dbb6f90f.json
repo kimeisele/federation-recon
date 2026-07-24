@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": "docs/REPO_BOUNDARIES.md",
   "claim_text": "kimeisele/agent-world/docs/REPO_BOUNDARIES.md asserts agent-internet owns: routing, trust, city registration, wiki/search/crawling, bundle projection",
-  "observed_at": "2026-07-24T00:18:02Z",
+  "observed_at": "2026-07-24T00:24:41Z",
   "repository_pin": "pins/v0-boundary-drift/agent-world.json"
 }

@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/federation-recon",
   "source_path": "docs/founding-package-v0.2.md",
   "claim_text": "kimeisele/federation-recon/docs/founding-package-v0.2.md asserts FR-CON-001..012 constitutional invariants; founding_package_exists=yes; decision_record_exists=yes",
-  "observed_at": "2026-07-24T00:18:02Z",
+  "observed_at": "2026-07-24T00:24:41Z",
   "repository_pin": "pins/v0-boundary-drift/federation-recon.json"
 }
