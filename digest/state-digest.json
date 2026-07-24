@@ -10,10 +10,10 @@
       "run_timestamp": "2026-07-24T00:59:36Z",
       "summary": {
         "pins": 7,
-        "claims": 30,
-        "evidence": 23,
-        "drift_records": 0,
-        "findings": 3,
+        "claims": 42,
+        "evidence": 35,
+        "drift_records": 2,
+        "findings": 6,
         "coverage_records": 7,
         "observed_repositories": 7,
         "partial_failures": 0
@@ -39,24 +39,38 @@
   "attention_items": [
     {
       "target": "kimeisele/agent-world",
-      "status": "stale",
-      "attention_rank": 2,
-      "headline": "REPO_BOUNDARIES.md last audited 2026-03-15 \u2014 boundary source may be stale",
+      "status": "observed",
+      "attention_rank": 1,
+      "headline": "Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.",
       "refs": [
-        "findings/",
-        "claims/"
+        "findings/finding-265cabb8cf9f.json",
+        "drift/drift-c2f3cdbf9756.json"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0"
     },
     {
-      "target": "kimeisele/*",
+      "target": "kimeisele/agent-world",
       "status": "observed",
-      "attention_rank": 99,
-      "headline": "No boundary drift detected across all observed repositories",
+      "attention_rank": 1,
+      "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
       "refs": [
-        "findings/"
+        "findings/finding-265cabb8cf9f.json",
+        "drift/drift-f217a5ab2201.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    },
+    {
+      "target": "kimeisele/agent-world",
+      "status": "stale",
+      "attention_rank": 2,
+      "headline": "REPO_BOUNDARIES.md last audited 2026-03-15 \u2014 boundary source may be stale",
+      "refs": [
+        "findings/",
+        "claims/"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",
@@ -90,7 +104,7 @@
     }
   ],
   "summary": {
-    "total_attention_items": 2,
+    "total_attention_items": 3,
     "total_observatory_items": 2,
     "total_procedures": 2
   }

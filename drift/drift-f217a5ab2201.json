@@ -1,0 +1,7 @@
+{
+  "drift_id": "drift-f217a5ab2201",
+  "claim_observation": "claim-58b659a6ba52",
+  "evidence": "ev-eaf767176576",
+  "difference": "Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-declares role: operator (normalized: autonomous engine vs operator)",
+  "detected_at": "2026-07-24T00:59:36Z"
+}

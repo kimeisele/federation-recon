@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-ca2c08099746",
+  "source_repository": "kimeisele/steward-protocol",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/steward-protocol/.well-known/agent-federation.json self-declares role: , owner_boundary: protocol_governance",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/steward-protocol.json"
+}

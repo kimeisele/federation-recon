@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-5cd51c7f5fed",
+  "lifecycle_state": "observed",
+  "statement": "Cross-node boundary disagreement for steward: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-declares role: operator (normalized: autonomous engine vs operator)",
+  "evidence_refs": ["evidence/ev-eaf767176576.json"],
+  "domain": "cross_repository_boundaries",
+  "severity": "warning",
+  "created_at": "2026-07-24T00:59:36Z"
+}

@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-b7ad1a2defa9",
+  "source_repository": "kimeisele/agent-world",
+  "source_path": "docs/REPO_BOUNDARIES.md",
+  "claim_text": "REPO_BOUNDARIES.md (agent-world:docs/REPO_BOUNDARIES.md) asserts agent-internet role: Control Plane + Projection, owns: routing, trust, city registration, wiki/search/crawling, bundle projection",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
+}

@@ -2,21 +2,22 @@
 
 **Composed:** 2026-07-24T00:59:36Z
 **Procedures:** 2 (see digest/ for per-procedure details)
-**Attention items:** 2 (2 observatory)
+**Attention items:** 3 (2 observatory)
 
 ## Procedure Summary
 
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
-| `v0-boundary-drift` | `v0` | 2026-07-24T00:59 | claims=30, coverage_records=7, drift_records=0, evidence=23, findings=3, observed_repositories=7, partial_failures=0, pins=7 |
+| `v0-boundary-drift` | `v0` | 2026-07-24T00:59 | claims=42, coverage_records=7, drift_records=2, evidence=35, findings=6, observed_repositories=7, partial_failures=0, pins=7 |
 | `v1-census` | `v1` | 2026-07-23T18:52 | coverage_records=14, error_nodes=0, evidence=54, findings=14, observed_nodes=14, ok_nodes=12, pins=14, stale_nodes=2, staleness_threshold_days=60 |
 
 ## Ranked Attention (needs operator decision)
 
 | # | Target | Status | Procedure | Headline | Evidence |
 |---|---|---|---|---|---|
-| 1 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
-| 2 | `kimeisele/*` | ✅ observed | `v0-boundary-drift` | No boundary drift detected across all observed repositories | findings/ |
+| 1 | `kimeisele/agent-world` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-265cabb8cf9f.json, drift/drift-c2f3cdbf9756.json |
+| 2 | `kimeisele/agent-world` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-265cabb8cf9f.json, drift/drift-f217a5ab2201.json |
+| 3 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
 
 ## Constitutional Observatory
 
