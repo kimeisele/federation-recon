@@ -47,10 +47,10 @@ The runtime checkpoint survives process exit / session loss / reboot as a local 
 
 **Path validation** (before any read, write, `rm`, or `mkdir -p`):
 
-1. For each existing ancestor component from the filesystem root to the target path: `lstat` → reject if symlink or not a directory. No owner/mode check on ancestors — only symlink traversal is prevented.
-2. Identify the runtime parent directory (e.g. `operator/.runtime/` for the default path, or the dirname of a custom `--state-file`). Verify it is a real directory, not a symlink, and owned by `$(id -u)`.
-3. Create only missing suffix components under the last validated ancestor with `umask 077; mkdir -p`.
-4. Revalidate the final directory — verify ownership and `0700` mode.
+1. For each existing ancestor component from the filesystem root to the target path: `lstat` → reject if symlink or not a directory. No owner/mode check on system ancestors — only symlink traversal is prevented.
+2. Find the last existing ancestor. If the runtime parent already exists, require it to be a real directory owned by `$(id -u)`; otherwise require the existing ancestor to be writable by the operator.
+3. Create only the missing suffix under that validated ancestor with `umask 077; mkdir -p`.
+4. Revalidate the final runtime parent — require ownership by `$(id -u)` and mode `0700`.
 
 State, backup, lock, and tempfile paths are all validated before use.
 
@@ -73,8 +73,10 @@ POSIX `mkdir` atomicity provides advisory locking. Lock directory: `$(dirname "$
      b. pid dead + boot_id matches current boot → stale: rm -rf $lock_dir, retry mkdir
      c. pid dead + boot_id differs + boot_id trusted → stale (no process survives reboot):
         rm -rf $lock_dir, retry mkdir
-     d. pid dead + boot_id unavailable/unreadable/untrusted → exit 1
-        (operator runs --break-lock to clear, then retry)
+     d. pid dead + boot_id unavailable, but PID metadata valid → exit 1
+        (operator may run --break-lock, which rechecks the dead PID, then retry)
+     e. PID metadata missing/unreadable/untrusted → exit 1
+        (manual inspection is required; no automated lock break)
 ```
 
 ### Boot identity
@@ -82,7 +84,7 @@ POSIX `mkdir` atomicity provides advisory locking. Lock directory: `$(dirname "$
 | OS | Method | Property |
 |---|---|---|
 | Linux | `/proc/sys/kernel/random/boot_id` | UUID, unique per boot |
-| macOS | `sysctl -n kern.boottime` (seconds) | Not unique per boot; in the extreme-edge case of two boots in the same second, case (c) above treats the lock as same-boot and falls through to same-boot stale logic — harmless |
+| macOS | `sysctl -n kern.boottime` (seconds) | Not unique per boot; in the extreme-edge case of two boots in the same second, case (b) treats the dead-PID lock as same-boot stale — harmless |
 
 If neither method returns a value, boot identity is unavailable → case (d), fail closed.
 
@@ -104,7 +106,7 @@ Lock covers `--init-runtime`, `--init-runtime --force`, and normal heartbeat. `-
 
 **`--force` backup ordering:** Current state is written to a tempfile, file-fsynced, atomically replaced as `state.json.bak`, directory-fsynced, and only then is the state file replaced from seed. A crash before backup completion loses nothing. A crash between backup and seed-replace leaves `state.json.bak` durable.
 
-**Directory-fsync failure:** After `os.replace` succeeds, `_HB_FSYNC_FAIL_INJECT=1` causes the Python helper to exit 1 before the directory `fsync` call, simulating a real fsync failure. The new state is on disk (rename succeeded), but commit is uncertain — either old or new valid state survives, neither corrupt. Heartbeat exits 1 with a diagnostic.
+**Directory-fsync failure:** After `os.replace` succeeds, `_HB_FSYNC_FAIL_INJECT=1` causes the Python helper to exit 1 before the directory `fsync` call, simulating a real fsync failure. The new state is immediately visible, but its survival across a subsequent power loss is uncertain; either old or new valid state may then survive. Heartbeat exits 1 with a diagnostic.
 
 ---
 
