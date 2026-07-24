@@ -3,7 +3,7 @@ name: CI — artifact & digest invariants
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
 
 permissions:
   contents: read
@@ -44,7 +44,7 @@ jobs:
   # committed artifacts must equal a fresh --reproduce. This catches PRs that
   # add/extend a procedure but commit a stale artifact set (code produces more
   # than was committed), which the offline gate and reproduce-stability nightly
-  # cannot see. Not run on push to master, where the daily census legitimately
+  # cannot see. Not run on push to main, where the daily census legitimately
   # commits a fresh live observation.
   reproduce-fixpoint:
     if: github.event_name == 'pull_request'

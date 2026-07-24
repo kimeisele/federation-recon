@@ -64,7 +64,7 @@ jobs:
           git commit -m "federation recon composed digest $(date -u +%Y-%m-%d)"
 
           # Determine the branch to push to and push
-          BRANCH="${GITHUB_REF_NAME:-master}"
+          BRANCH="${GITHUB_REF_NAME:-main}"
           echo "Pushing to branch: $BRANCH"
           git push origin "HEAD:$BRANCH"
 

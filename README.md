@@ -66,7 +66,7 @@ bash scripts/verify-determinism.sh            # two --reproduce passes must be b
 
 | Workflow | Trigger | Checks |
 |---|---|---|
-| `ci.yml` (`invariants`) | every PR + push to master | strict schema validation, composed-digest idempotency, pin-reference resolution — fast, offline |
+| `ci.yml` (`invariants`) | every PR + push to main | strict schema validation, composed-digest idempotency, pin-reference resolution — fast, offline |
 | `nightly-determinism.yml` | daily 05:30 UTC + manual | reproduce-stability: two full `--reproduce` passes must be byte-identical |
 | `node-census.yml` | daily 06:00 UTC + manual | live run of all procedures + compose; commits the fresh Federation Digest |
 
