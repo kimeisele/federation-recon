@@ -218,6 +218,12 @@ stop_action() {
   return "$exit_code"
 }
 
+visibility_stop() {
+  local reason="$1"
+  emit_action "STOP" "$reason"
+  return 2
+}
+
 phase="$(state_field phase)"
 cycle="$(state_field cycle)"
 expert_calls="$(state_field budget.expert_calls_this_cycle)"
@@ -242,16 +248,16 @@ fi
 # GitHub is the read-only control plane. Any incomplete or malformed view must
 # stop the dispatcher rather than masquerade as an empty backlog.
 command -v gh >/dev/null 2>&1 || {
-  stop_action "GitHub visibility unavailable: gh not found" "STOP: gh unavailable" 2
+  visibility_stop "GitHub visibility unavailable: gh not found"
   exit $?
 }
 
 if ! prs_json="$(gh pr list --state open --limit 1000 --json number,title,body,updatedAt 2>/dev/null)"; then
-  stop_action "GitHub visibility unavailable: open PR query failed" "STOP: PR query failed" 2
+  visibility_stop "GitHub visibility unavailable: open PR query failed"
   exit $?
 fi
 if ! issues_json="$(gh issue list --state open --limit 1000 --json number,title,updatedAt,labels 2>/dev/null)"; then
-  stop_action "GitHub visibility unavailable: open issue query failed" "STOP: issue query failed" 2
+  visibility_stop "GitHub visibility unavailable: open issue query failed"
   exit $?
 fi
 
@@ -340,7 +346,7 @@ for _, number, labels in normalized_issues:
 print(len(normalized_prs), stale_pr, stale_issue, review_pr, build_issue)
 PY
 then
-  stop_action "GitHub visibility unavailable: malformed list response" "STOP: invalid GitHub response" 2
+  visibility_stop "GitHub visibility unavailable: malformed list response"
   exit $?
 fi
 
@@ -348,14 +354,14 @@ decision_tuple="$(cat "$runtime_tmp/decision")"
 
 case "$decision_tuple" in
   ""|*[!0-9\ ]*)
-    stop_action "GitHub visibility unavailable: invalid decision data" "STOP: invalid decision tuple" 2
+    visibility_stop "GitHub visibility unavailable: invalid decision data"
     exit $?
     ;;
 esac
 
 set -- $decision_tuple
 if [ "$#" -ne 5 ]; then
-  stop_action "GitHub visibility unavailable: invalid decision data" "STOP: invalid decision tuple" 2
+  visibility_stop "GitHub visibility unavailable: invalid decision data"
   exit $?
 fi
 wip="$1"

@@ -178,40 +178,63 @@ _run_heartbeat() {
   [[ "$output" == *"invalid HEARTBEAT_NOW"* ]]
 }
 
+@test "heartbeat: missing gh fails closed without changing state" {
+  _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
+  rm "$WORKDIR/mockbin/gh"
+
+  run env PATH="$WORKDIR/mockbin:/usr/bin:/bin" \
+    HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+    bash "$WORKDIR/operator/heartbeat.sh"
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"gh not found"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
+}
+
 @test "heartbeat: PR query failure emits STOP and exits nonzero" {
   _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_GH_FAIL_ON='pr'
   run _run_heartbeat
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"PR query failed"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
 }
 
 @test "heartbeat: issue query failure emits STOP and exits nonzero" {
   _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_GH_FAIL_ON='issue'
   run _run_heartbeat
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"issue query failed"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
 }
 
 @test "heartbeat: malformed GitHub JSON fails closed" {
   _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_PRS='not-json'
   run _run_heartbeat
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"malformed list response"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
 }
 
 @test "heartbeat: malformed GitHub fields fail closed" {
   _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_ISSUES='[{"number":1,"title":"bad labels","updatedAt":"2026-07-24T10:00:00Z","labels":["approved"]}]'
   run _run_heartbeat
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"malformed list response"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
 }
 
 @test "heartbeat: GitHub failure in dry-run leaves state byte-identical" {
