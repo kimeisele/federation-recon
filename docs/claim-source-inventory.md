@@ -92,6 +92,28 @@ Registered only where a repository has its own explicit constitution or scope do
     this file specifically asserts what it projects publicly, which is
     the boundary most likely to drift (scope creep into publishing).
   authority_status: asserted_not_adjudicated
+
+- repository: kimeisele/agent-world
+  path: docs/WORLD_CONSTITUTION.md
+  claim_scope: world_governance_principles
+  selection_reason: >
+    Asserts foundational constitutional principles for world-level
+    coordination (world truth vs city truth, substrate vs governance,
+    projection vs authority). Explicitly registers initial offices and
+    deferred powers. Directly relevant as a governance anchor alongside
+    REPO_BOUNDARIES.md and FEDERATION_ROLES.md.
+  authority_status: asserted_not_adjudicated
+
+- repository: kimeisele/agent-world
+  path: docs/FEDERATION_ROLES.md
+  claim_scope: federation_role_definitions
+  selection_reason: >
+    Authoritative role definitions for every node in the federation.
+    Contains role architecture diagram, per-repo role definitions with
+    owns/does-not-own assertions, trust hierarchy, and maturity assessment.
+    The most comprehensive single source of federation topology claims
+    and a natural complement to REPO_BOUNDARIES.md's summary table.
+  authority_status: asserted_not_adjudicated
 ```
 
 ## Self-observation source (FR-CON-011 only — not a federation-boundary claim)
@@ -109,11 +131,11 @@ authority_status: asserted_not_adjudicated
 ## Explicitly not registered (and why)
 
 - Every other `.md` file under each repo's `docs/` (e.g. `steward-protocol/docs/*`, `agent-city/docs/FEDERATION_DELEGATION_*`, `steward/docs/FEDERATION_*`) — these are implementation status reports, ADRs, and design notes, not boundary/constitution claims. Registering them would make Slice v0 a general document-drift scanner instead of a boundary check.
-- `agent-world/docs/WORLD_CONSTITUTION.md`, `docs/FEDERATION_ROLES.md`, `docs/CROSS_REPO_ROADMAP.md` — plausible future candidates, deliberately deferred to keep the first source-count small; revisit once Slice v0's real run volume is known.
+- `agent-world/docs/CROSS_REPO_ROADMAP.md` — plausible future candidate, deliberately deferred to keep the first source-count small; revisit once Slice v0's real run volume is known.
 - READMEs of all six repos — none currently make an explicit cross-repository boundary claim distinct from `REPO_BOUNDARIES.md` or their own constitution/surface doc above; adding them now would be claim-source sprawl without a stated reason.
 
 ## Open scope questions
 
-1. Should `agent-world/docs/WORLD_CONSTITUTION.md` be included alongside `REPO_BOUNDARIES.md`, given both are in the same repo and could diverge from each other?
+1. ~~Should `agent-world/docs/WORLD_CONSTITUTION.md` and `docs/FEDERATION_ROLES.md` be included alongside `REPO_BOUNDARIES.md`?~~ Resolved: both registered in v0 per Issue #20.
 2. `REPO_BOUNDARIES.md` is dated "last audited 2026-03-15" — over four months stale relative to today (2026-07-23). Is a manually-dated claim source itself already a drift candidate before Slice v0 even runs?
 3. `steward/README.md` and `steward-federation/README.md` are one-liners with no explicit boundary claim beyond role name — is repo-level silence itself worth an "absence of claim" record, or out of scope for v0?

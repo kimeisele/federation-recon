@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-4ce23fcdd725",
+  "source_repository": "kimeisele/agent-world",
+  "source_path": "docs/WORLD_CONSTITUTION.md",
+  "claim_text": "kimeisele/agent-world/docs/WORLD_CONSTITUTION.md asserts world-level coordination governance; 5 constitutional principles; 3 initial offices; separate_world_truth=yes",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
+}

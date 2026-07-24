@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-7c4687aa58df",
+  "source_repository": "kimeisele/agent-world",
+  "source_path": "docs/FEDERATION_ROLES.md",
+  "claim_text": "kimeisele/agent-world/docs/FEDERATION_ROLES.md asserts 9 role definitions; last audited: 2026-03-15; maturity_assessment_table=yes",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
+}

@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-city",
   "source_path": ".well-known/agent-federation.json",
   "claim_text": "kimeisele/agent-city/.well-known/agent-federation.json asserts owner_boundary=\"agent_city_surface\" (kind=\"agent_federation_descriptor\")",
-  "observed_at": "2026-07-24T00:24:41Z",
+  "observed_at": "2026-07-24T00:59:36Z",
   "repository_pin": "pins/v0-boundary-drift/agent-city.json"
 }
