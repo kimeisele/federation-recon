@@ -32,6 +32,11 @@ for `gh` reads, with no LLM in the decision path.
 | **5 SWEEP** | Stale PR (>7d) or issue (>14d), no progress | `SWEEP #N` |
 | *(none)* | No actionable work | `HOLD` |
 
+After the local-only bootstrap, v1.1 evaluates rules in safety priority order:
+WIP cap → budget cap → stale SWEEP → open-PR REVIEW → approved-issue BUILD →
+HOLD. The stored phase records the selected handling state; it does not authorize
+execution. GitHub reads are always resolved from this repository root.
+
 **Escalation triggers** (Opus instead of DeepSeek): risk class HIGH, diff >200
 lines, CI red, review conflict. Otherwise DeepSeek default.
 

@@ -55,6 +55,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$STATE_FILE" ] || die "state file not found: $STATE_FILE"
+[ ! -L "$STATE_FILE" ] || die "state file must not be a symbolic link: $STATE_FILE"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 
 # Validate the checkpoint before any GitHub query or mutation. Booleans do not
@@ -212,16 +213,14 @@ emit_action() {
 }
 
 stop_action() {
-  local reason="$1" note="$2" exit_code="${3:-0}"
+  local reason="$1" note="$2"
   write_state "$phase" "$cycle" "$expert_calls" "$now_iso" "$note"
   emit_action "STOP" "$reason"
-  return "$exit_code"
 }
 
 visibility_stop() {
   local reason="$1"
   emit_action "STOP" "$reason"
-  return 2
 }
 
 phase="$(state_field phase)"
@@ -232,12 +231,12 @@ max_expert="$(state_field budget.max_expert_calls)"
 # Bootstrap is local-only. It does not require GitHub visibility.
 if [ "$phase" = "0_BOOTSTRAP" ]; then
   if ! git_status="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)"; then
-    stop_action "local repository status unavailable — cannot run heartbeat" "STOP: git status failed" 2
-    exit $?
+    stop_action "local repository status unavailable — cannot run heartbeat" "STOP: git status failed"
+    exit 2
   fi
   if [ -n "$git_status" ]; then
-    stop_action "uncommitted changes in working tree — cannot run heartbeat" "STOP: dirty git tree" 0
-    exit $?
+    stop_action "uncommitted changes in working tree — cannot run heartbeat" "STOP: dirty git tree"
+    exit 0
   fi
 
   write_state "1_CLASSIFY" "$((cycle + 1))" "$expert_calls" "$now_iso" "bootstrap OK, advancing"
@@ -249,16 +248,16 @@ fi
 # stop the dispatcher rather than masquerade as an empty backlog.
 command -v gh >/dev/null 2>&1 || {
   visibility_stop "GitHub visibility unavailable: gh not found"
-  exit $?
+  exit 2
 }
 
-if ! prs_json="$(gh pr list --state open --limit 1000 --json number,title,body,updatedAt 2>/dev/null)"; then
+if ! prs_json="$(cd "$REPO_ROOT" && gh pr list --state open --limit 1000 --json number,updatedAt 2>/dev/null)"; then
   visibility_stop "GitHub visibility unavailable: open PR query failed"
-  exit $?
+  exit 2
 fi
-if ! issues_json="$(gh issue list --state open --limit 1000 --json number,title,updatedAt,labels 2>/dev/null)"; then
+if ! issues_json="$(cd "$REPO_ROOT" && gh issue list --state open --limit 1000 --json number,updatedAt,labels 2>/dev/null)"; then
   visibility_stop "GitHub visibility unavailable: open issue query failed"
-  exit $?
+  exit 2
 fi
 
 printf '%s' "$prs_json" > "$runtime_tmp/prs.json"
@@ -275,7 +274,6 @@ if ! _HB_PRS="$runtime_tmp/prs.json" \
 import datetime
 import json
 import os
-import re
 
 with open(os.environ["_HB_PRS"]) as handle:
     prs = json.load(handle)
@@ -300,11 +298,7 @@ for pr in prs:
         raise ValueError("PR entries must be objects")
     number = validate_number(pr.get("number"))
     updated = parse_time(pr.get("updatedAt"))
-    body = pr.get("body") or ""
-    title = pr.get("title") or ""
-    if not isinstance(body, str) or not isinstance(title, str):
-        raise ValueError("PR title/body must be strings")
-    normalized_prs.append((updated, number, body))
+    normalized_prs.append((updated, number))
 
 normalized_issues = []
 for issue in issues:
@@ -328,18 +322,13 @@ now = int(os.environ["_HB_NOW_EPOCH"])
 pr_cutoff = now - int(os.environ["_HB_STALE_PR"]) * 86400
 issue_cutoff = now - int(os.environ["_HB_STALE_ISSUE"]) * 86400
 
-stale_pr = next((number for updated, number, _ in normalized_prs if updated < pr_cutoff), 0)
+stale_pr = next((number for updated, number in normalized_prs if updated < pr_cutoff), 0)
 stale_issue = next((number for updated, number, _ in normalized_issues if updated < issue_cutoff), 0)
 review_pr = normalized_prs[0][1] if normalized_prs else 0
 
-closing = set()
-pattern = re.compile(r"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b")
-for _, _, body in normalized_prs:
-    closing.update(int(match) for match in pattern.findall(body))
-
 build_issue = 0
 for _, number, labels in normalized_issues:
-    if "approved" in labels and number not in closing:
+    if "approved" in labels:
         build_issue = number
         break
 
@@ -347,7 +336,7 @@ print(len(normalized_prs), stale_pr, stale_issue, review_pr, build_issue)
 PY
 then
   visibility_stop "GitHub visibility unavailable: malformed list response"
-  exit $?
+  exit 2
 fi
 
 decision_tuple="$(cat "$runtime_tmp/decision")"
@@ -355,14 +344,14 @@ decision_tuple="$(cat "$runtime_tmp/decision")"
 case "$decision_tuple" in
   ""|*[!0-9\ ]*)
     visibility_stop "GitHub visibility unavailable: invalid decision data"
-    exit $?
+    exit 2
     ;;
 esac
 
 set -- $decision_tuple
 if [ "$#" -ne 5 ]; then
   visibility_stop "GitHub visibility unavailable: invalid decision data"
-  exit $?
+  exit 2
 fi
 wip="$1"
 stale_pr="$2"
@@ -371,13 +360,13 @@ review_pr="$4"
 build_issue="$5"
 
 if [ "$wip" -gt 1 ]; then
-  stop_action "WIP cap violated: $wip open PRs (limit 1)" "STOP: WIP cap ($wip open PRs)" 0
-  exit $?
+  stop_action "WIP cap violated: $wip open PRs (limit 1)" "STOP: WIP cap ($wip open PRs)"
+  exit 0
 fi
 
 if [ "$expert_calls" -ge "$max_expert" ]; then
-  stop_action "budget cap: $expert_calls/$max_expert expert calls used" "STOP: budget cap" 0
-  exit $?
+  stop_action "budget cap: $expert_calls/$max_expert expert calls used" "STOP: budget cap"
+  exit 0
 fi
 
 if [ "$stale_pr" -gt 0 ]; then
