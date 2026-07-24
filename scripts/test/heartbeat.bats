@@ -1,226 +1,325 @@
 #!/usr/bin/env bats
-# heartbeat.bats — Unit tests for operator/heartbeat.sh
-#
-# Tests: HOLD on clean state, REVIEW on open PR, WIP cap enforcement.
-# Fully offline — mocks `gh` and `git` via PATH-based wrapper scripts.
+# heartbeat.bats — Offline tests for the decide-only operator heartbeat.
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-
-  # Create a temporary workspace with operator/ and mockbin/
   WORKDIR="$(mktemp -d)"
   mkdir -p "$WORKDIR/operator" "$WORKDIR/mockbin"
-
-  # Copy heartbeat.sh into the workspace
   cp "$REPO_ROOT/operator/heartbeat.sh" "$WORKDIR/operator/heartbeat.sh"
   chmod +x "$WORKDIR/operator/heartbeat.sh"
 
-  # Export WORKDIR for _write_state helper
   export WORKDIR
-  export MOCK_GH_OUTPUT='[]'
+  export MOCK_PRS='[]'
+  export MOCK_ISSUES='[]'
+  export MOCK_GH_FAIL_ON=''
   export MOCK_GIT_DIRTY='clean'
+  export MOCK_GIT_FAIL='false'
+  export HEARTBEAT_NOW='2026-07-24T12:00:00Z'
+
+  cat > "$WORKDIR/mockbin/gh" <<'GHSCRIPT'
+#!/usr/bin/env bash
+if [ "$MOCK_GH_FAIL_ON" = "all" ] || [ "$MOCK_GH_FAIL_ON" = "${1:-}" ]; then
+  exit 1
+fi
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' "$MOCK_PRS" ;;
+  "issue list") printf '%s\n' "$MOCK_ISSUES" ;;
+  *) exit 2 ;;
+esac
+GHSCRIPT
+  chmod +x "$WORKDIR/mockbin/gh"
+
+  cat > "$WORKDIR/mockbin/git" <<'GITSCRIPT'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-C" ]; then shift 2; fi
+if [ "${1:-}" = "status" ]; then
+  [ "$MOCK_GIT_FAIL" = "false" ] || exit 1
+  [ "$MOCK_GIT_DIRTY" = "clean" ] || printf ' M operator/state.json\n'
+  exit 0
+fi
+exec /usr/bin/git "$@"
+GITSCRIPT
+  chmod +x "$WORKDIR/mockbin/git"
 }
 
 teardown() {
   rm -rf "$WORKDIR"
 }
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+_state() {
+  local phase="${1:-1_CLASSIFY}" cycle="${2:-1}" used="${3:-0}" maximum="${4:-3}"
+  printf '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"%s","cycle":%s,"budget":{"expert_calls_this_cycle":%s,"max_expert_calls":%s},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}' \
+    "$phase" "$cycle" "$used" "$maximum"
+}
 
 _write_state() {
-  local content="$1"
-  printf '%s\n' "$content" > "$WORKDIR/operator/state.json"
+  local content="$1" path="${2:-$WORKDIR/operator/state.json}"
+  printf '%s\n' "$content" > "$path"
 }
 
-# Build mock scripts in mockbin/ and run heartbeat.sh under that PATH.
-# If a mock gh already exists (specialized test), it is preserved.
-_heartbeat_with_mocks() {
-  local state_json="$1"
-  _write_state "$state_json"
-
-  # Only create default mock gh if none exists yet.
-  if [ ! -f "$WORKDIR/mockbin/gh" ]; then
-    cat > "$WORKDIR/mockbin/gh" << 'GHSCRIPT'
-#!/usr/bin/env bash
-echo "$MOCK_GH_OUTPUT"
-GHSCRIPT
-    chmod +x "$WORKDIR/mockbin/gh"
-  fi
-
-  # Always (re)create mock git.
-  cat > "$WORKDIR/mockbin/git" << 'GITSCRIPT'
-#!/usr/bin/env bash
-while [[ "$1" == -* ]]; do
-  if [ "$1" = "-C" ]; then
-    shift 2
-  else
-    shift
-  fi
-done
-if [ "${1:-}" = "diff" ] && [ "${2:-}" = "--quiet" ]; then
-  test "$MOCK_GIT_DIRTY" = "clean" && exit 0 || exit 1
-fi
-/usr/bin/git "$@"
-GITSCRIPT
-  chmod +x "$WORKDIR/mockbin/git"
-
-  PATH="$WORKDIR/mockbin:$PATH" bash "$WORKDIR/operator/heartbeat.sh" 2>&1
+_run_heartbeat() {
+  PATH="$WORKDIR/mockbin:$PATH" \
+    HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+    bash "$WORKDIR/operator/heartbeat.sh" "$@" 2>&1
 }
 
-# ---------------------------------------------------------------------------
-# Test: HOLD on clean state (no PRs, no issues, post-bootstrap)
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: HOLD on clean state (no PRs, no issues, post-bootstrap)" {
-  export MOCK_GH_OUTPUT='[]'
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+@test "heartbeat: HOLD on a complete empty GitHub view" {
+  _write_state "$(_state)"
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HOLD"* ]]
+  [[ "$output" == *"ACTION: HOLD"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: ADVANCE from bootstrap when git is clean
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: ADVANCE from bootstrap when git is clean" {
-  export MOCK_GH_OUTPUT='[]'
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"0_BOOTSTRAP","cycle":0,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":null,"notes":""}'
+@test "heartbeat: dry-run leaves the selected state byte-identical" {
+  _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
+  run _run_heartbeat --dry-run
+  after="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ADVANCE"* ]]
+  [[ "$output" == *"ACTION: HOLD"* ]]
+  [ "$before" = "$after" ]
 }
 
-# ---------------------------------------------------------------------------
-# Test: STOP on dirty git tree during bootstrap
-# ---------------------------------------------------------------------------
+@test "heartbeat: explicit state file is advanced without touching the bootstrap seed" {
+  _write_state "$(_state)"
+  cp "$WORKDIR/operator/state.json" "$WORKDIR/runtime-state.json"
+  seed_before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
 
-@test "heartbeat: STOP on dirty git tree during bootstrap" {
-  export MOCK_GH_OUTPUT='[]'
+  run _run_heartbeat --state-file "$WORKDIR/runtime-state.json"
+  [ "$status" -eq 0 ]
+  [ "$seed_before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
+  [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/runtime-state.json'))['notes'])")" = "HOLD: no work" ]
+}
+
+@test "heartbeat: OPERATOR_STATE_FILE selects runtime state without touching the seed" {
+  _write_state "$(_state)"
+  cp "$WORKDIR/operator/state.json" "$WORKDIR/runtime-state.json"
+  seed_before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
+  export OPERATOR_STATE_FILE="$WORKDIR/runtime-state.json"
+
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [ "$seed_before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
+  [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/runtime-state.json'))['notes'])")" = "HOLD: no work" ]
+}
+
+@test "heartbeat: atomic state replacement preserves file permissions" {
+  _write_state "$(_state)"
+  chmod 0640 "$WORKDIR/operator/state.json"
+
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [ "$(python3 -c "import os, stat; print(oct(stat.S_IMODE(os.stat('$WORKDIR/operator/state.json').st_mode)))")" = "0o640" ]
+}
+
+@test "heartbeat: bootstrap advances locally without querying GitHub" {
+  _write_state "$(_state 0_BOOTSTRAP 0)"
+  export MOCK_GH_FAIL_ON='all'
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: ADVANCE"* ]]
+  [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/operator/state.json'))['phase'])")" = "1_CLASSIFY" ]
+}
+
+@test "heartbeat: bootstrap STOPs on tracked or untracked dirt" {
+  _write_state "$(_state 0_BOOTSTRAP 0)"
   export MOCK_GIT_DIRTY='dirty'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"0_BOOTSTRAP","cycle":0,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":null,"notes":""}'
-  [[ "$output" == *"STOP"* ]]
-}
-
-# ---------------------------------------------------------------------------
-# Test: REVIEW when an open PR exists
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: REVIEW when an open PR exists" {
-  export MOCK_GH_OUTPUT='[{"number":42,"title":"Test PR","createdAt":"2026-07-24T00:00:00Z","labels":[]}]'
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-  [[ "$output" == *"REVIEW"* ]]
-  [[ "$output" == *"42"* ]]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"uncommitted changes"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: WIP cap — STOP when >1 open PR
-# ---------------------------------------------------------------------------
+@test "heartbeat: bootstrap git status failure emits STOP and exits nonzero" {
+  _write_state "$(_state 0_BOOTSTRAP 0)"
+  export MOCK_GIT_FAIL='true'
+  run _run_heartbeat
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"repository status unavailable"* ]]
+}
 
-@test "heartbeat: STOP when WIP cap violated (>1 open PR)" {
-  export MOCK_GH_OUTPUT='[{"number":1},{"number":2}]'
-  export MOCK_GIT_DIRTY='clean'
+@test "heartbeat: rejects invalid JSON before GitHub access" {
+  _write_state '{not-json'
+  export MOCK_GH_FAIL_ON='all'
+  run _run_heartbeat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FATAL: invalid state file"* ]]
+}
 
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+@test "heartbeat: rejects an unsupported phase" {
+  _write_state "$(_state 9_UNKNOWN)"
+  run _run_heartbeat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"phase is missing or unsupported"* ]]
+}
+
+@test "heartbeat: rejects negative or boolean budget counters" {
+  _write_state '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":true,"max_expert_calls":3},"last_heartbeat":null,"notes":""}'
+  run _run_heartbeat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"expert_calls_this_cycle"* ]]
+}
+
+@test "heartbeat: rejects missing required state fields" {
+  _write_state '{"schema_version":1,"phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3}}'
+  run _run_heartbeat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"updated_at"* ]]
+  [[ "$output" == *"notes"* ]]
+}
+
+@test "heartbeat: rejects invalid injected time before GitHub access" {
+  _write_state "$(_state)"
+  export HEARTBEAT_NOW='not-a-time'
+  export MOCK_GH_FAIL_ON='all'
+  run _run_heartbeat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid HEARTBEAT_NOW"* ]]
+}
+
+@test "heartbeat: PR query failure emits STOP and exits nonzero" {
+  _write_state "$(_state)"
+  export MOCK_GH_FAIL_ON='pr'
+  run _run_heartbeat
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"PR query failed"* ]]
+}
+
+@test "heartbeat: issue query failure emits STOP and exits nonzero" {
+  _write_state "$(_state)"
+  export MOCK_GH_FAIL_ON='issue'
+  run _run_heartbeat
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"issue query failed"* ]]
+}
+
+@test "heartbeat: malformed GitHub JSON fails closed" {
+  _write_state "$(_state)"
+  export MOCK_PRS='not-json'
+  run _run_heartbeat
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"malformed list response"* ]]
+}
+
+@test "heartbeat: malformed GitHub fields fail closed" {
+  _write_state "$(_state)"
+  export MOCK_ISSUES='[{"number":1,"title":"bad labels","updatedAt":"2026-07-24T10:00:00Z","labels":["approved"]}]'
+  run _run_heartbeat
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"malformed list response"* ]]
+}
+
+@test "heartbeat: GitHub failure in dry-run leaves state byte-identical" {
+  _write_state "$(_state)"
+  before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
+  export MOCK_GH_FAIL_ON='pr'
+  run _run_heartbeat --dry-run
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
+}
+
+@test "heartbeat: two open PRs STOP regardless of deterministic review order" {
+  _write_state "$(_state)"
+  export MOCK_PRS='[{"number":42,"title":"newer","body":"","updatedAt":"2026-07-24T10:00:00Z"},{"number":7,"title":"older","body":"","updatedAt":"2026-07-23T10:00:00Z"}]'
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-  [[ "$output" == *"STOP"* ]]
-  [[ "$output" == *"WIP"* ]]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"WIP cap"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: BUILD when approved issue exists and WIP=0
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: BUILD when approved issue exists and WIP=0" {
-  # gh returns approved issues list; the python3 DELEGATE logic makes subprocess
-  # calls to gh, so we need the mock to handle those too.
-  # The python3 subprocess also calls gh, so the mock sees those calls.
-  # Strategy: the mock returns empty for search queries (issue_has_open_pr check)
-  # and approved issues for issue list.
-  cat > "$WORKDIR/mockbin/gh" << 'GHSCRIPT'
-#!/usr/bin/env bash
-if [[ "$*" == *"search"* ]]; then
-  echo '[]'
-elif [[ "$*" == *"issue"* ]] && [[ "$*" == *"approved"* ]]; then
-  echo '[{"number":29,"title":"OPERATOR BOOTSTRAP","createdAt":"2026-07-24T00:00:00Z"}]'
-elif [[ "$*" == *"pr list"* ]] && [[ "$*" == *"limit"* ]]; then
-  echo '[]'
-else
-  echo '[]'
-fi
-GHSCRIPT
-  chmod +x "$WORKDIR/mockbin/gh"
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+@test "heartbeat: REVIEWs one recent open PR" {
+  _write_state "$(_state)"
+  export MOCK_PRS='[{"number":42,"title":"Test PR","body":"Closes #29","updatedAt":"2026-07-24T10:00:00Z"}]'
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-  [[ "$output" == *"BUILD"* ]]
-  [[ "$output" == *"29"* ]]
+  [[ "$output" == *"ACTION: REVIEW PR #42"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: STOP on budget cap (expert calls exhausted)
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: STOP when expert calls budget is exhausted" {
-  export MOCK_GH_OUTPUT='[]'
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":3,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+@test "heartbeat: WIP cap STOPs before other work when more than one PR is open" {
+  _write_state "$(_state)"
+  export MOCK_PRS='[{"number":1,"title":"one","body":"","updatedAt":"2026-07-24T10:00:00Z"},{"number":2,"title":"two","body":"","updatedAt":"2026-07-24T11:00:00Z"}]'
+  export MOCK_ISSUES='[{"number":32,"title":"approved","updatedAt":"2026-07-24T11:00:00Z","labels":[{"name":"approved"}]}]'
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-  [[ "$output" == *"STOP"* ]]
-  [[ "$output" == *"budget"* ]]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"WIP cap"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: state.json advances phase field after bootstrap
-# ---------------------------------------------------------------------------
-
-@test "heartbeat: advances state.json phase field after bootstrap" {
-  export MOCK_GH_OUTPUT='[]'
-  export MOCK_GIT_DIRTY='clean'
-
-  run _heartbeat_with_mocks \
-    '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"0_BOOTSTRAP","cycle":0,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":null,"notes":""}'
+@test "heartbeat: BUILDs the oldest approved issue when WIP is zero" {
+  _write_state "$(_state)"
+  export MOCK_ISSUES='[{"number":33,"title":"newer","updatedAt":"2026-07-24T11:00:00Z","labels":[{"name":"approved"}]},{"number":29,"title":"older","updatedAt":"2026-07-23T11:00:00Z","labels":[{"name":"approved"}]}]'
+  run _run_heartbeat
   [ "$status" -eq 0 ]
-
-  # After bootstrap advance, state should now have phase 1_CLASSIFY
-  local new_phase
-  new_phase="$(python3 -c "import json; print(json.load(open('$WORKDIR/operator/state.json'))['phase'])" 2>/dev/null)"
-  [ "$new_phase" = "1_CLASSIFY" ]
+  [[ "$output" == *"ACTION: BUILD issue #29"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test: determinism — same inputs produce same output
-# ---------------------------------------------------------------------------
+@test "heartbeat: STOPs when the expert-call budget is exhausted" {
+  _write_state "$(_state 1_CLASSIFY 1 3 3)"
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: STOP"* ]]
+  [[ "$output" == *"budget cap"* ]]
+}
 
-@test "heartbeat: deterministic — same state produces same action" {
-  export MOCK_GH_OUTPUT='[]'
-  export MOCK_GIT_DIRTY='clean'
+@test "heartbeat: stale PR detection uses updatedAt activity" {
+  _write_state "$(_state)"
+  export MOCK_PRS='[{"number":8,"title":"stale","body":"","updatedAt":"2026-07-10T00:00:00Z"}]'
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: SWEEP PR #8"* ]]
+}
 
-  local state='{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}'
+@test "heartbeat: recently updated PR is reviewed rather than swept" {
+  _write_state "$(_state)"
+  export MOCK_PRS='[{"number":8,"title":"old creation irrelevant","body":"","updatedAt":"2026-07-24T11:00:00Z"}]'
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: REVIEW PR #8"* ]]
+  [[ "$output" != *"SWEEP"* ]]
+}
 
-  run1="$(_heartbeat_with_mocks "$state")"
-  # Reset state for second run
-  _write_state "$state"
-  run2="$(_heartbeat_with_mocks "$state")"
+@test "heartbeat: stale issue detection uses updatedAt activity" {
+  _write_state "$(_state)"
+  export MOCK_ISSUES='[{"number":10,"title":"stale","updatedAt":"2026-07-01T00:00:00Z","labels":[]}]'
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: SWEEP issue #10"* ]]
+}
 
-  # Both should contain HOLD
-  [[ "$run1" == *"HOLD"* ]]
-  [[ "$run2" == *"HOLD"* ]]
+@test "heartbeat: stale selection is deterministic by updatedAt then number" {
+  _write_state "$(_state)"
+  export MOCK_ISSUES='[{"number":12,"title":"same time","updatedAt":"2026-07-01T00:00:00Z","labels":[]},{"number":9,"title":"same time","updatedAt":"2026-07-01T00:00:00Z","labels":[]}]'
+  run _run_heartbeat
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: SWEEP issue #9"* ]]
+}
+
+@test "heartbeat: untrusted PR body is data and never shell syntax" {
+  _write_state "$(_state)"
+  marker="$WORKDIR/should-not-exist"
+  export MOCK_PRS="[{\"number\":42,\"title\":\"data\",\"body\":\"\$(touch $marker)\",\"updatedAt\":\"2026-07-24T10:00:00Z\"}]"
+  run _run_heartbeat --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACTION: REVIEW PR #42"* ]]
+  [ ! -e "$marker" ]
+}
+
+@test "heartbeat: same inputs and injected time produce the same dry-run output" {
+  _write_state "$(_state)"
+  first="$(_run_heartbeat --dry-run)"
+  second="$(_run_heartbeat --dry-run)"
+  [ "$first" = "$second" ]
+}
+
+@test "heartbeat: unknown arguments fail explicitly" {
+  _write_state "$(_state)"
+  run _run_heartbeat --execute
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown argument"* ]]
 }

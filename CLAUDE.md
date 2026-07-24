@@ -3,9 +3,10 @@
 Constitution for the operator running the `federation-recon` node. **Lean
 bootstrap**: read this, then use `operator/heartbeat.sh` for a deterministic
 dispatch decision. The committed checkpoint is the bootstrap source, not
-runtime memory. Current v1 writes that checkpoint locally and only reports an
-action; it does not persist runtime state to GitHub or execute the action. No
-LLM is in the dispatcher, only at measurable judgment triggers.
+runtime memory. Current v1.1 only reports an action; it does not persist runtime
+state to GitHub or execute the action. Local mutation is optional and must use a
+validated state file. No LLM is in the dispatcher, only at measurable judgment
+triggers.
 
 ## Operator Loop (6 phases)
 
@@ -15,9 +16,11 @@ The operator is a deterministic state machine. Phases are numbered, Western:
 0_BOOTSTRAP → 1_CLASSIFY → 2_DELEGATE → 3_REVIEW → 4_INTEGRATE → 5_SWEEP
 ```
 
-Executable form: `operator/heartbeat.sh` (deterministic dispatcher, reads
-`operator/state.json` + `gh` queries, emits `ACTION: <…>` and advances the local
-state file). Offline except for `gh` read, with no LLM in the decision path.
+Executable form: `operator/heartbeat.sh` (deterministic dispatcher, reads a
+validated state file + read-only `gh` queries and emits `ACTION: <…>`). Use
+`--dry-run` for a byte-preserving decision or `--state-file PATH` /
+`OPERATOR_STATE_FILE` to advance an explicit runtime checkpoint. Offline except
+for `gh` reads, with no LLM in the decision path.
 
 | Phase | Rule | Action |
 |---|---|---|
@@ -39,8 +42,11 @@ persistence remain intentionally unimplemented.
 ## Session Bootstrap
 
 Every fresh session: confirm a clean tree, update from `main`, read this file,
-and inspect `operator/state.json`. Run the heartbeat only in a controlled branch
-or worktree because v1 mutates the tracked local checkpoint. Never trust memory.
+and inspect `operator/state.json`. Treat it as the committed seed. Run
+`bash operator/heartbeat.sh --dry-run` for a non-mutating decision, or copy the
+seed to an explicit runtime path and pass `--state-file PATH`. Mutation of the
+tracked seed is allowed only deliberately in a controlled branch or worktree.
+Never trust memory.
 
 ## Stewardship & Trust Boundary
 
@@ -82,7 +88,8 @@ periodic independent audit comparing decisions and classifications against Git.
 ## Key references
 
 - `STATE.md` — Federation Digest (entry point for any operator session).
-- `operator/state.json` — compact checkpoint (phase, cycle, budget, last heartbeat).
+- `operator/state.json` — validated, committed checkpoint seed (phase, cycle,
+  budget, last heartbeat); use an explicit copy for runtime mutation.
 - `operator/heartbeat.sh` — deterministic dispatcher.
 - Issue #29 — operator bootstrap (compact state, not whole history).
 - `docs/founding-package-v0.2.md` — constitution + invariants.
