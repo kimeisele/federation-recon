@@ -120,16 +120,56 @@ BOOT_ID="$(get_boot_id)"
 #  Path validation (§2 of ADR)
 # ────────────────────────────────────────────────────────────
 
-# validate_path TARGET_PATH [must_exist]
-# Rejects symlinks on the target and its immediate parent directory.
-# Resolves parent to physical path (handles macOS system symlinks like
-# /var -> /private/var, /tmp -> /private/tmp) and validates all resolved
-# ancestors are directories. Checks ownership/mode of the parent dir.
-validate_path() {
+# _is_system_path PATH — true if path is outside REPO_ROOT and owned by root.
+# These paths (e.g. /var -> /private/var on macOS) may contain system symlinks
+# that we must NOT reject, as they are not attacker-controlled.
+_is_system_path() {
+  local p="$1"
+  case "$p" in
+    "$REPO_ROOT"|"$REPO_ROOT"/*) return 1 ;;  # inside repo — not system
+    *) return 0 ;;
+  esac
+}
+
+# validate_seed_path PATH
+# Read-only seed validation: reject symlinks on target + every existing ancestor
+# component. Does NOT check ownership/mode (seed is committed, not runtime).
+validate_seed_path() {
+  local target="$1"
+  [ -f "$target" ] || die "seed file not found: $target"
+
+  # Target must not be a symlink
+  if [ -L "$target" ]; then
+    die "seed file must not be a symbolic link: $target"
+  fi
+
+  # Walk every existing raw ancestor component and reject symlinks
+  local raw_ancestor
+  raw_ancestor="$(dirname "$target")"
+  while [ "$raw_ancestor" != "/" ]; do
+    if [ -L "$raw_ancestor" ]; then
+      # System symlinks (e.g. /var → /private/var on macOS) are tolerated.
+      if _is_system_path "$raw_ancestor"; then
+        break
+      fi
+      die "path component is a symbolic link: $raw_ancestor"
+    fi
+    if [ -e "$raw_ancestor" ] && [ ! -d "$raw_ancestor" ]; then
+      die "path component is not a directory: $raw_ancestor"
+    fi
+    raw_ancestor="$(dirname "$raw_ancestor")"
+  done
+}
+
+# validate_runtime_path TARGET_PATH [must_exist]
+# Security validation for runtime state files. Rejects symlinks on the target
+# and every existing raw ancestor (except system paths). Checks ownership and
+# mode of the immediate parent directory.
+validate_runtime_path() {
   local target="$1"
   local must_exist="${2:-false}"
 
-  # --- Raw checks: target + immediate parent only ---
+  # --- Raw symlink checks on target and every existing ancestor ---
 
   # Target must not be a symlink
   if [ -L "$target" ]; then
@@ -139,10 +179,20 @@ validate_path() {
   local parent_dir
   parent_dir="$(dirname "$target")"
 
-  # Parent must not be a symlink (catches "ln -s evil state_dir")
-  if [ -L "$parent_dir" ]; then
-    die "path component is a symbolic link: $parent_dir"
-  fi
+  # Walk every existing raw ancestor; reject non-system symlinks
+  local raw_ancestor="$parent_dir"
+  while [ "$raw_ancestor" != "/" ]; do
+    if [ -L "$raw_ancestor" ]; then
+      if _is_system_path "$raw_ancestor"; then
+        break
+      fi
+      die "path component is a symbolic link: $raw_ancestor"
+    fi
+    if [ -e "$raw_ancestor" ] && [ ! -d "$raw_ancestor" ]; then
+      die "path component is not a directory: $raw_ancestor"
+    fi
+    raw_ancestor="$(dirname "$raw_ancestor")"
+  done
 
   # --- Physical ancestor checks (resolves system symlinks) ---
 
@@ -169,7 +219,7 @@ validate_path() {
     die "state file is not a regular file: $target"
   fi
 
-  # --- Parent ownership and mode ---
+  # --- Parent ownership and mode (runtime dir only, not seed) ---
 
   if [ -d "$parent_dir" ]; then
     local owner_uid
@@ -190,23 +240,25 @@ validate_path() {
 
 # create_runtime_parent PARENT_DIR
 # Create missing parent dirs under a validated ancestor with umask 077.
-# Uses physical path resolution to handle macOS system symlinks (/var -> /private/var).
 create_runtime_parent() {
   local parent_dir="$1"
   if [ -d "$parent_dir" ]; then
     return 0
   fi
 
-  # Find last existing ancestor: first try raw, but if it lands on a system
-  # symlink, resolve physically to find the correct ancestor.
+  # Find last existing ancestor
   local p="$parent_dir"
   while [ "$p" != "/" ] && [ ! -d "$p" ] && [ ! -L "$p" ]; do
     p="$(dirname "$p")"
   done
 
-  # If we landed on a symlink, resolve physically.
   if [ -L "$p" ]; then
-    p="$(cd "$p" 2>/dev/null && pwd -P 2>/dev/null)" || true
+    # System symlinks: resolve physically
+    if _is_system_path "$p"; then
+      p="$(cd "$p" 2>/dev/null && pwd -P 2>/dev/null)" || true
+    else
+      die "path component is a symbolic link: $p"
+    fi
     if [ -z "$p" ] || [ ! -d "$p" ]; then
       die "cannot resolve physical ancestor for: $parent_dir"
     fi
@@ -237,28 +289,69 @@ create_runtime_parent() {
 
 LOCK_DIR=""
 
+_release_lock() {
+  if [ -n "${LOCK_DIR:-}" ] && [ -d "$LOCK_DIR" ]; then
+    rm -rf "$LOCK_DIR"
+  fi
+}
+
+# _add_exit_trap COMMAND — chain a command onto the EXIT trap (Bash 3.2 compat).
+_add_exit_trap() {
+  local cmd="$1"
+  local existing
+  existing="$(trap -p EXIT 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "trap -- '' EXIT" ]; then
+    existing="${existing#trap -- }"
+    existing="${existing% EXIT}"
+    [ "${existing#\'}" != "$existing" ] && existing="${existing#\'}"
+    [ "${existing%\'}" != "$existing" ] && existing="${existing%\'}"
+    trap "$cmd; $existing" EXIT
+  else
+    trap "$cmd" EXIT
+  fi
+}
+
+_register_lock_cleanup() {
+  _add_exit_trap '_release_lock'
+}
+
 acquire_lock() {
   local runtime_state="$1"
   local parent_dir
   parent_dir="$(dirname "$runtime_state")"
   LOCK_DIR="$parent_dir/heartbeat.lock"
 
-  # Ensure parent exists (for init-runtime case)
+  # Ensure parent exists
   if [ ! -d "$parent_dir" ]; then
     die "runtime parent does not exist; run --init-runtime first"
   fi
 
   while true; do
     if mkdir "$LOCK_DIR" 2>/dev/null; then
-      # Lock acquired
-      chmod 0700 "$LOCK_DIR"
+      # Lock acquired. Register cleanup IMMEDIATELY so any failure below
+      # still removes the lock directory.
+      _register_lock_cleanup
+
+      # Write metadata. If any of these fail, the trap removes the lock dir.
+      chmod 0700 "$LOCK_DIR" 2>/dev/null || {
+        echo "FATAL: failed to chmod lock directory" >&2
+        exit 1
+      }
       local now_iso
       now_iso="${HEARTBEAT_NOW:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
-      echo "$$" > "$LOCK_DIR/pid"
-      echo "${BOOT_ID:-unknown}" > "$LOCK_DIR/boot_id"
-      echo "$now_iso" > "$LOCK_DIR/acquired_at"
-      chmod 0600 "$LOCK_DIR/pid" "$LOCK_DIR/boot_id" "$LOCK_DIR/acquired_at"
-      register_lock_trap
+      echo "$$" > "$LOCK_DIR/pid" || {
+        echo "FATAL: failed to write lock PID metadata" >&2
+        exit 1
+      }
+      echo "${BOOT_ID:-unknown}" > "$LOCK_DIR/boot_id" || {
+        echo "FATAL: failed to write lock boot_id metadata" >&2
+        exit 1
+      }
+      echo "$now_iso" > "$LOCK_DIR/acquired_at" || {
+        echo "FATAL: failed to write lock acquired_at metadata" >&2
+        exit 1
+      }
+      chmod 0600 "$LOCK_DIR/pid" "$LOCK_DIR/boot_id" "$LOCK_DIR/acquired_at" 2>/dev/null || true
       return 0
     fi
 
@@ -276,8 +369,9 @@ acquire_lock() {
       ''|*[!0-9]*) die "lock PID invalid — manual inspection required: $LOCK_DIR" ;;
     esac
 
-    # (a) Live process → contention
+    # (a) Live process → contention. Emit ACTION: STOP, no misleading work.
     if kill -0 "$lock_pid" 2>/dev/null; then
+      echo "ACTION: STOP lock held by live process $lock_pid" >&2
       echo "FATAL: lock held by live process $lock_pid" >&2
       exit 2
     fi
@@ -302,32 +396,6 @@ acquire_lock() {
     # Break stale lock and retry
     rm -rf "$LOCK_DIR"
   done
-}
-
-_release_lock() {
-  if [ -n "${LOCK_DIR:-}" ] && [ -d "$LOCK_DIR" ]; then
-    rm -rf "$LOCK_DIR"
-  fi
-}
-
-# _add_exit_trap COMMAND — chain a command onto the EXIT trap (Bash 3.2 compat).
-_add_exit_trap() {
-  local cmd="$1"
-  local existing
-  existing="$(trap -p EXIT 2>/dev/null || true)"
-  if [ -n "$existing" ] && [ "$existing" != "trap -- '' EXIT" ]; then
-    existing="${existing#trap -- }"
-    existing="${existing% EXIT}"
-    [ "${existing#\'}" != "$existing" ] && existing="${existing#\'}"
-    [ "${existing%\'}" != "$existing" ] && existing="${existing%\'}"
-    trap "$cmd; $existing" EXIT
-  else
-    trap "$cmd" EXIT
-  fi
-}
-
-register_lock_trap() {
-  _add_exit_trap '_release_lock'
 }
 
 do_break_lock() {
@@ -425,10 +493,36 @@ else:
     if not is_int(maximum) or maximum < 1:
         errors.append("budget.max_expert_calls must be a positive integer")
 
-# previous_checkpoint: optional, must be null or object
+# previous_checkpoint: must be null or a dict with exact 7 fields
 pc = state.get("previous_checkpoint")
-if pc is not None and not isinstance(pc, dict):
-    errors.append("previous_checkpoint must be null or an object")
+if pc is not None:
+    if not isinstance(pc, dict):
+        errors.append("previous_checkpoint must be null or an object")
+    else:
+        required_pc_fields = {"phase", "cycle", "expert_calls_this_cycle",
+                              "max_expert_calls", "last_heartbeat", "updated_at", "notes"}
+        actual_fields = set(pc.keys())
+        extra = actual_fields - required_pc_fields
+        missing = required_pc_fields - actual_fields
+        if extra:
+            errors.append("previous_checkpoint has unexpected fields: " + ",".join(sorted(extra)))
+        if missing:
+            errors.append("previous_checkpoint missing fields: " + ",".join(sorted(missing)))
+        # Validate types of each field
+        if pc.get("phase") and pc["phase"] not in phases:
+            errors.append("previous_checkpoint.phase invalid")
+        if not is_int(pc.get("cycle", 0)):
+            errors.append("previous_checkpoint.cycle must be an integer")
+        if not is_int(pc.get("expert_calls_this_cycle", -1)):
+            errors.append("previous_checkpoint.expert_calls_this_cycle must be an integer")
+        if not is_int(pc.get("max_expert_calls", -1)):
+            errors.append("previous_checkpoint.max_expert_calls must be an integer")
+        if not valid_timestamp(pc.get("updated_at"), nullable=False):
+            errors.append("previous_checkpoint.updated_at must be an ISO-8601 UTC timestamp")
+        if not valid_timestamp(pc.get("last_heartbeat"), nullable=True):
+            errors.append("previous_checkpoint.last_heartbeat must be null or ISO-8601 UTC")
+        if not isinstance(pc.get("notes"), str):
+            errors.append("previous_checkpoint.notes must be a string")
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
@@ -436,10 +530,34 @@ if errors:
 PY
 }
 
+# _python_fsync_dir — perform directory fsync after os.replace.
+# On real fsync failure, exits 1 with diagnostic (uncertain commit outcome).
+# On _HB_FSYNC_FAIL_INJECT=1, simulates failure after os.replace.
+_python_fsync_dir() {
+  # Called inline via subshell; reads _HB_FSYNC_FAIL_INJECT from env.
+  python3 - <<'PY'
+import os, sys
+
+if os.environ.get("_HB_FSYNC_FAIL_INJECT") == "1":
+    print("FATAL: simulated directory fsync failure after os.replace", file=sys.stderr)
+    raise SystemExit(1)
+
+directory = os.environ.get("_HB_FSYNC_DIR", "")
+if directory:
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except OSError as exc:
+        print("FATAL: directory fsync failed after os.replace: " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
+PY
+}
+
 # _python_init_runtime SEED_PATH RUNTIME_PATH
 _python_init_runtime() {
   _HB_SEED="$1" _HB_RUNTIME="$2" python3 - <<'PY'
-import json, os, stat, sys, tempfile
+import json, os, sys, tempfile
 
 seed_path = os.environ["_HB_SEED"]
 runtime_path = os.environ["_HB_RUNTIME"]
@@ -455,7 +573,6 @@ runtime = dict(seed)
 runtime["schema_version"] = 2
 runtime["previous_checkpoint"] = None
 
-# Atomic write
 directory = os.path.dirname(os.path.abspath(runtime_path))
 fd, temporary = tempfile.mkstemp(prefix=".heartbeat-state-", dir=directory, text=True)
 try:
@@ -466,31 +583,21 @@ try:
         os.fsync(handle.fileno())
     os.chmod(temporary, 0o600)
     os.replace(temporary, runtime_path)
-    # Directory fsync
-    if os.environ.get("_HB_FSYNC_FAIL_INJECT") == "1":
-        print("FATAL: simulated directory fsync failure after os.replace", file=sys.stderr)
-        raise SystemExit(1)
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-        os.fsync(dir_fd)
-        os.close(dir_fd)
-    except OSError:
-        pass
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
 PY
 }
 
-# _python_init_force SEED_PATH RUNTIME_PATH
+# _python_init_force SEED_PATH RUNTIME_PATH BACKUP_PATH
 _python_init_force() {
-  _HB_SEED="$1" _HB_RUNTIME="$2" python3 - <<'PY'
-import json, os, stat, sys, tempfile
+  _HB_SEED="$1" _HB_RUNTIME="$2" _HB_BACKUP="$3" python3 - <<'PY'
+import json, os, sys, tempfile
 
 seed_path = os.environ["_HB_SEED"]
 runtime_path = os.environ["_HB_RUNTIME"]
+backup_path = os.environ["_HB_BACKUP"]
 directory = os.path.dirname(os.path.abspath(runtime_path))
-backup_path = os.path.join(directory, "state.json.bak")
 
 # 1. Backup current runtime state if it exists
 if os.path.exists(runtime_path):
@@ -504,13 +611,6 @@ if os.path.exists(runtime_path):
             os.fsync(dst.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, backup_path)
-        # Directory fsync after backup
-        try:
-            dir_fd = os.open(directory, os.O_RDONLY)
-            os.fsync(dir_fd)
-            os.close(dir_fd)
-        except OSError:
-            pass
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -536,15 +636,6 @@ try:
         os.fsync(handle.fileno())
     os.chmod(temporary, 0o600)
     os.replace(temporary, runtime_path)
-    if os.environ.get("_HB_FSYNC_FAIL_INJECT") == "1":
-        print("FATAL: simulated directory fsync failure after os.replace", file=sys.stderr)
-        raise SystemExit(1)
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-        os.fsync(dir_fd)
-        os.close(dir_fd)
-    except OSError:
-        pass
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
@@ -561,19 +652,24 @@ _python_write_state() {
   _HB_NOTES="$6" \
   _HB_UPDATED_AT="$7" \
   python3 - <<'PY' || die "failed to write state file"
-import json, os, stat, sys, tempfile
+import json, os, sys, tempfile
 
 path = os.environ["_HB_STATE_PATH"]
 with open(path) as handle:
     state = json.load(handle)
 
-# Capture previous_checkpoint: snapshot of all mutable fields before mutation
-mutable_fields = ["phase", "cycle", "budget", "last_heartbeat", "updated_at", "notes"]
-prev = {}
-for field in mutable_fields:
-    prev[field] = state.get(field)
-# Strip nested previous_checkpoint
-prev.pop("previous_checkpoint", None)
+# Capture previous_checkpoint: flattened snapshot of mutable fields
+# ADR requires flattened expert_calls_this_cycle and max_expert_calls.
+budget = state.get("budget", {})
+prev = {
+    "phase": state.get("phase"),
+    "cycle": state.get("cycle"),
+    "expert_calls_this_cycle": budget.get("expert_calls_this_cycle"),
+    "max_expert_calls": budget.get("max_expert_calls"),
+    "last_heartbeat": state.get("last_heartbeat"),
+    "updated_at": state.get("updated_at"),
+    "notes": state.get("notes"),
+}
 
 state["previous_checkpoint"] = prev
 state["updated_at"] = os.environ["_HB_UPDATED_AT"]
@@ -593,16 +689,6 @@ try:
         os.fsync(handle.fileno())
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
-    # Directory fsync (with injectable failure for tests)
-    if os.environ.get("_HB_FSYNC_FAIL_INJECT") == "1":
-        print("FATAL: simulated directory fsync failure after os.replace", file=sys.stderr)
-        raise SystemExit(1)
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-        os.fsync(dir_fd)
-        os.close(dir_fd)
-    except OSError:
-        pass
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
@@ -626,7 +712,7 @@ PY
 }
 
 # ────────────────────────────────────────────────────────────
-#  Tempfile cleanup
+#  Tempfile cleanup (must run under lock, never in dry-run)
 # ────────────────────────────────────────────────────────────
 
 cleanup_tempfiles() {
@@ -646,7 +732,7 @@ cleanup_tempfiles() {
 # ────────────────────────────────────────────────────────────
 
 if $BREAK_LOCK; then
-  validate_path "$STATE_FILE"
+  validate_runtime_path "$STATE_FILE"
   do_break_lock "$STATE_FILE"
 fi
 
@@ -655,42 +741,46 @@ fi
 # ────────────────────────────────────────────────────────────
 
 if $INIT_RUNTIME; then
-  # Seed must exist and be valid v1
-  [ -f "$SEED_FILE" ] || die "seed file not found: $SEED_FILE"
-  [ ! -L "$SEED_FILE" ] || die "seed file must not be a symbolic link: $SEED_FILE"
+  # Validate seed (read-only — no ownership/mode check)
+  validate_seed_path "$SEED_FILE"
 
-  # Validate seed path ancestry
-  validate_path "$SEED_FILE" true
-
-  # Validate runtime path ancestry and create parent if needed
-  validate_path "$STATE_FILE"
+  # Validate runtime path ancestry
+  validate_runtime_path "$STATE_FILE"
   create_runtime_parent "$(dirname "$STATE_FILE")"
-
-  # Cleanup stale tempfiles before acquiring lock
-  cleanup_tempfiles
 
   # Acquire lock
   acquire_lock "$STATE_FILE"
 
+  # Cleanup stale tempfiles (under lock, never dry-run)
+  cleanup_tempfiles
+
   if $FORCE_INIT; then
-    if _python_init_force_out="$(_python_init_force "$SEED_FILE" "$STATE_FILE" 2>&1)"; then
-      echo "Runtime state re-initialized from seed: $STATE_FILE"
-      exit 0
+    # Derive backup path from runtime state file
+    _backup_path="${STATE_FILE}.bak"
+    if _python_init_force_out="$(_python_init_force "$SEED_FILE" "$STATE_FILE" "$_backup_path" 2>&1)"; then
+      :
     else
       echo "FATAL: $python_init_force_out" >&2
       exit 1
     fi
+    # Fsync directory after init
+    _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
+    echo "Runtime state re-initialized from seed: $STATE_FILE"
+    exit 0
   else
     if [ -f "$STATE_FILE" ]; then
       die "runtime state already exists: $STATE_FILE (use --force to re-initialize)"
     fi
     if _python_init_runtime_out="$(_python_init_runtime "$SEED_FILE" "$STATE_FILE" 2>&1)"; then
-      echo "Runtime state initialized: $STATE_FILE"
-      exit 0
+      :
     else
       echo "FATAL: $python_init_runtime_out" >&2
       exit 1
     fi
+    # Fsync directory after init
+    _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
+    echo "Runtime state initialized: $STATE_FILE"
+    exit 0
   fi
 fi
 
@@ -699,14 +789,16 @@ fi
 # ────────────────────────────────────────────────────────────
 
 # Validate runtime state path
-validate_path "$STATE_FILE" true
-
-# Cleanup stale tempfiles
-cleanup_tempfiles
+validate_runtime_path "$STATE_FILE" true
 
 # Acquire lock (skip for dry-run)
 if ! $DRY_RUN; then
   acquire_lock "$STATE_FILE"
+fi
+
+# Cleanup stale tempfiles (under lock, never dry-run)
+if ! $DRY_RUN; then
+  cleanup_tempfiles
 fi
 
 # Validate runtime state as schema v2
@@ -724,7 +816,6 @@ state_field() {
 
 now_iso="${HEARTBEAT_NOW:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 runtime_tmp="$(mktemp -d)"
-# Chain runtime_tmp cleanup onto existing EXIT trap (which may include lock release)
 _add_exit_trap 'rm -rf "$runtime_tmp"'
 if ! _HB_NOW="$now_iso" python3 - > "$runtime_tmp/now-epoch" 2>/dev/null <<'PY'
 import datetime
@@ -745,6 +836,8 @@ write_state() {
   local phase="$1" cycle="$2" expert_calls="$3" last_heartbeat="$4" notes="$5"
   $DRY_RUN && return 0
   _python_write_state "$STATE_FILE" "$phase" "$cycle" "$expert_calls" "$last_heartbeat" "$notes" "$now_iso"
+  # Fsync directory after write
+  _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
 }
 
 emit_action() {

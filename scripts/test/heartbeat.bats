@@ -59,7 +59,6 @@ teardown() {
   rm -rf "$WORKDIR"
 }
 
-# Produce v2-schema state JSON
 _state() {
   local phase="${1:-1_CLASSIFY}" cycle="${2:-1}" used="${3:-0}" maximum="${4:-3}"
   printf '{"schema_version":2,"updated_at":"2026-07-24T00:00:00Z","phase":"%s","cycle":%s,"budget":{"expert_calls_this_cycle":%s,"max_expert_calls":%s},"last_heartbeat":"2026-07-24T00:00:00Z","notes":"","previous_checkpoint":null}' \
@@ -436,8 +435,6 @@ _run_heartbeat() {
   run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   chmod 0700 "$WORKDIR/operator"
 
-  # With locked writes, the acquire_lock check (needs writable parent for mkdir)
-  # fails before any write attempt. Exit 1 and no ACTION.
   [ "$status" -eq 1 ]
   [[ "$output" != *"ACTION:"* ]]
 }
