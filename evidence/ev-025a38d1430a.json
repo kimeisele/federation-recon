@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-025a38d1430a",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_count",
+  "value": "{\"char_count\": 1507, \"principle_count\": 5}", "paths": ["docs/WORLD_CONSTITUTION.md"]
+}

@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-67da6d5eeb46",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_count",
+  "value": "{\"char_count\": 17297, \"role_count\": 9}", "paths": ["docs/FEDERATION_ROLES.md"]
+}

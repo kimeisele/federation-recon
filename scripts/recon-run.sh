@@ -61,6 +61,8 @@ CONSTITUTION_SP_SOURCE="steward-protocol:CONSTITUTION.md"
 CONSTITUTION_AC_SOURCE="agent-city:docs/CONSTITUTION.md"
 PUBLIC_SURFACE_AI_SOURCE="agent-internet:docs/PUBLIC_FEDERATION_SURFACE.md"
 SELF_SOURCE="federation-recon:docs/founding-package-v0.2.md"
+WORLD_CONSTITUTION_SOURCE="agent-world:docs/WORLD_CONSTITUTION.md"
+FEDERATION_ROLES_SOURCE="agent-world:docs/FEDERATION_ROLES.md"
 
 # Output directories
 mkdir -p "$REPO_ROOT/pins/$PIN_NAMESPACE" "$REPO_ROOT/claims" "$REPO_ROOT/evidence"
@@ -356,6 +358,88 @@ extract_self_observation_claims() {
   log "  Self: founding_package=${fp_exists}, decision_record=${dr_exists}"
 }
 
+extract_world_constitution_claims() {
+  log "=== Phase 2e: Extract WORLD_CONSTITUTION.md claims ==="
+  log "Claim set defined in docs/claim-source-inventory.md §Per-repository constitution/boundary documents"
+
+  local repo="kimeisele/agent-world"
+  local sha="${REPO_SHA[$repo]:-}"
+  [ -z "$sha" ] && { warn "  No pin for ${repo} — skipping world constitution claims"; return; }
+
+  local pin_id="${PIN_FILES[agent-world]}"
+
+  local content=""
+  content=$(gh api "repos/${repo}/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  if [ -z "$content" ]; then
+    local claim
+    claim=$(gen_claim_observation "$repo" "docs/WORLD_CONSTITUTION.md" \
+      "File docs/WORLD_CONSTITUTION.md not found in ${repo} at commit ${sha}" \
+      "$pin_id" "$RUN_TIMESTAMP")
+    CLAIM_FILES["wc-aw"]="$claim"
+    budget_track "$claim"
+    log "  agent-world: WORLD_CONSTITUTION.md not found (absence claim recorded)"
+    return
+  fi
+
+  local principle_count=0
+  principle_count=$(printf '%s' "$content" | rg -c '^[0-9]+\. \*\*' 2>/dev/null || echo 0)
+
+  local office_count=0
+  office_count=$(printf '%s' "$content" | rg -c '^- \*\*' 2>/dev/null || echo 0)
+
+  local has_separate_truth="no"
+  printf '%s' "$content" | rg -q 'World truth is separate from city truth' && has_separate_truth="yes"
+
+  local claim_text="${repo}/docs/WORLD_CONSTITUTION.md asserts world-level coordination governance; ${principle_count} constitutional principles; ${office_count} initial offices; separate_world_truth=${has_separate_truth}"
+  local claim
+  claim=$(gen_claim_observation "$repo" "docs/WORLD_CONSTITUTION.md" "$claim_text" "$pin_id" "$RUN_TIMESTAMP")
+  CLAIM_FILES["wc-aw"]="$claim"
+  budget_track "$claim"
+  log "  agent-world: WORLD_CONSTITUTION.md principles=${principle_count}, offices=${office_count}, separate_truth=${has_separate_truth}"
+}
+
+extract_federation_roles_claims() {
+  log "=== Phase 2f: Extract FEDERATION_ROLES.md claims ==="
+  log "Claim set defined in docs/claim-source-inventory.md §Per-repository constitution/boundary documents"
+
+  local repo="kimeisele/agent-world"
+  local sha="${REPO_SHA[$repo]:-}"
+  [ -z "$sha" ] && { warn "  No pin for ${repo} — skipping federation roles claims"; return; }
+
+  local pin_id="${PIN_FILES[agent-world]}"
+
+  local content=""
+  content=$(gh api "repos/${repo}/contents/docs/FEDERATION_ROLES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  if [ -z "$content" ]; then
+    local claim
+    claim=$(gen_claim_observation "$repo" "docs/FEDERATION_ROLES.md" \
+      "File docs/FEDERATION_ROLES.md not found in ${repo} at commit ${sha}" \
+      "$pin_id" "$RUN_TIMESTAMP")
+    CLAIM_FILES["fr-aw"]="$claim"
+    budget_track "$claim"
+    log "  agent-world: FEDERATION_ROLES.md not found (absence claim recorded)"
+    return
+  fi
+
+  local role_count=0
+  role_count=$(printf '%s' "$content" | rg -c '^### ' 2>/dev/null || echo 0)
+
+  local last_audited=""
+  last_audited=$(printf '%s' "$content" | rg 'Last audited' | rg -o '\d{4}-\d{2}-\d{2}' 2>/dev/null || echo "not found")
+
+  local has_maturity_table="no"
+  printf '%s' "$content" | rg -q 'Maturity Assessment' && has_maturity_table="yes"
+
+  local claim_text="${repo}/docs/FEDERATION_ROLES.md asserts ${role_count} role definitions; last audited: ${last_audited}; maturity_assessment_table=${has_maturity_table}"
+  local claim
+  claim=$(gen_claim_observation "$repo" "docs/FEDERATION_ROLES.md" "$claim_text" "$pin_id" "$RUN_TIMESTAMP")
+  CLAIM_FILES["fr-aw"]="$claim"
+  budget_track "$claim"
+  log "  agent-world: FEDERATION_ROLES.md roles=${role_count}, last_audited=${last_audited}, maturity_table=${has_maturity_table}"
+}
+
 # ---- Phase 3: Deterministic Observations (§12.3 op 4) ------------------
 
 run_deterministic_observations() {
@@ -425,6 +509,9 @@ except: print('')
 
   # Observation 4: Check repo metrics (file counts, structural evidence)
   observe_repo_metrics
+
+  # Observation 5: Observe WORLD_CONSTITUTION.md and FEDERATION_ROLES.md
+  observe_agent_world_boundary_docs
 }
 
 observe_boundary_table() {
@@ -534,6 +621,79 @@ observe_repo_metrics() {
     budget_track "$ev"
     log "  ${repo}: ${root_files} top-level entries"
   done
+}
+
+observe_agent_world_boundary_docs() {
+  log "--- Agent-world boundary documents ---"
+  local sha="${REPO_SHA[kimeisele/agent-world]:-}"
+  [ -z "$sha" ] && { warn "  No pin for agent-world — skipping boundary doc observations"; return; }
+  local pin_file="${PIN_FILES[agent-world]}"
+
+  # WORLD_CONSTITUTION.md
+  local content=""
+  content=$(gh api "repos/kimeisele/agent-world/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  if [ -z "$content" ]; then
+    local ev
+    ev=$(gen_evidence "$pin_file" "file_existence" \
+      "false" \
+      "docs/WORLD_CONSTITUTION.md")
+    EVIDENCE_FILES["wc-exists"]="$ev"
+    budget_track "$ev"
+    log "  WORLD_CONSTITUTION.md: not found"
+  else
+    local ev_exists
+    ev_exists=$(gen_evidence "$pin_file" "file_existence" \
+      "true" \
+      "docs/WORLD_CONSTITUTION.md")
+    EVIDENCE_FILES["wc-exists"]="$ev_exists"
+    budget_track "$ev_exists"
+
+    local char_count
+    char_count=$(printf '%s' "$content" | wc -c | tr -d ' ')
+    local principle_count
+    principle_count=$(printf '%s' "$content" | rg -c '^[0-9]+\. \*\*' 2>/dev/null || echo 0)
+    local ev
+    ev=$(gen_evidence "$pin_file" "file_count" \
+      "{\"char_count\": ${char_count}, \"principle_count\": ${principle_count}}" \
+      "docs/WORLD_CONSTITUTION.md")
+    EVIDENCE_FILES["wc-size"]="$ev"
+    budget_track "$ev"
+    log "  WORLD_CONSTITUTION.md: ${char_count} chars, ${principle_count} principles"
+  fi
+
+  # FEDERATION_ROLES.md
+  content=""
+  content=$(gh api "repos/kimeisele/agent-world/contents/docs/FEDERATION_ROLES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  if [ -z "$content" ]; then
+    local ev
+    ev=$(gen_evidence "$pin_file" "file_existence" \
+      "false" \
+      "docs/FEDERATION_ROLES.md")
+    EVIDENCE_FILES["fr-exists"]="$ev"
+    budget_track "$ev"
+    log "  FEDERATION_ROLES.md: not found"
+  else
+    local ev_exists
+    ev_exists=$(gen_evidence "$pin_file" "file_existence" \
+      "true" \
+      "docs/FEDERATION_ROLES.md")
+    EVIDENCE_FILES["fr-exists"]="$ev_exists"
+    budget_track "$ev_exists"
+
+    local char_count
+    char_count=$(printf '%s' "$content" | wc -c | tr -d ' ')
+    local role_count
+    role_count=$(printf '%s' "$content" | rg -c '^### ' 2>/dev/null || echo 0)
+    local ev
+    ev=$(gen_evidence "$pin_file" "file_count" \
+      "{\"char_count\": ${char_count}, \"role_count\": ${role_count}}" \
+      "docs/FEDERATION_ROLES.md")
+    EVIDENCE_FILES["fr-size"]="$ev"
+    budget_track "$ev"
+    log "  FEDERATION_ROLES.md: ${char_count} chars, ${role_count} roles"
+  fi
 }
 
 # ---- Phase 4: Compare & Detect Drift (§12.3 ops 5-6) ------------------
@@ -1128,6 +1288,8 @@ main() {
   extract_boundary_table_claims
   extract_constitution_claims
   extract_self_observation_claims
+  extract_world_constitution_claims
+  extract_federation_roles_claims
   budget_checkpoint "claims"
 
   # Phase 3: Deterministic observations

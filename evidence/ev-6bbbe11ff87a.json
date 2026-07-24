@@ -4,5 +4,5 @@
   "procedure_id": "boundary-drift-recon-v0",
   "procedure_version": "v0",
   "observation_type": "file_existence",
-  "value": true, "paths": ["docs/REPO_BOUNDARIES.md"]
+  "value": true, "paths": ["docs/FEDERATION_ROLES.md"]
 }

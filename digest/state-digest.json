@@ -1,17 +1,17 @@
 {
   "digest_type": "composed_federation",
   "composer_version": "v2",
-  "composed_at": "2026-07-24T00:24:41Z",
+  "composed_at": "2026-07-24T00:59:36Z",
   "procedure_count": 2,
   "procedures": [
     {
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0",
-      "run_timestamp": "2026-07-24T00:24:41Z",
+      "run_timestamp": "2026-07-24T00:59:36Z",
       "summary": {
         "pins": 0,
-        "claims": 28,
-        "evidence": 75,
+        "claims": 30,
+        "evidence": 77,
         "drift_records": 0,
         "findings": 19,
         "coverage_records": 21,
@@ -25,7 +25,7 @@
       "run_timestamp": "2026-07-23T18:52:06Z",
       "summary": {
         "pins": 0,
-        "evidence": 75,
+        "evidence": 77,
         "findings": 19,
         "coverage_records": 21,
         "observed_nodes": 14,
