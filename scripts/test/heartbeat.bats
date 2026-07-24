@@ -4,8 +4,8 @@
 # (backward-compatible with v1.1 decision-logic tests).
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-  WORKDIR="$(mktemp -d)"
+  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
+  WORKDIR="$(cd "$(mktemp -d)" && pwd -P)"
   mkdir -p "$WORKDIR/operator" "$WORKDIR/mockbin"
   chmod 0700 "$WORKDIR/operator"
   cp "$REPO_ROOT/operator/heartbeat.sh" "$WORKDIR/operator/heartbeat.sh"
@@ -68,6 +68,7 @@ _state() {
 _write_state() {
   local content="$1" path="${2:-$WORKDIR/operator/state.json}"
   printf '%s\n' "$content" > "$path"
+  chmod 0600 "$path"
 }
 
 _run_heartbeat() {
@@ -131,7 +132,7 @@ _run_heartbeat() {
 
   run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"must not be a symbolic link"* ]]
+  [[ "$output" == *"symbolic link"* ]]
 }
 
 @test "heartbeat: bootstrap advances locally without querying GitHub" {

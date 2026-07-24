@@ -84,12 +84,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# --force is only valid with --init-runtime
 if $FORCE_INIT && ! $INIT_RUNTIME; then
   die "--force requires --init-runtime"
 fi
 
-# Mutually exclusive high-level modes
 mode_count=0
 $INIT_RUNTIME && mode_count=$((mode_count + 1))
 $BREAK_LOCK && mode_count=$((mode_count + 1))
@@ -97,7 +95,6 @@ if [ "$mode_count" -gt 1 ]; then
   die "--init-runtime and --break-lock are mutually exclusive"
 fi
 
-# Resolve runtime state path: explicit > env > default
 if [ -z "$STATE_FILE" ]; then
   STATE_FILE="${OPERATOR_STATE_FILE:-$REPO_ROOT/operator/.runtime/state.json}"
 fi
@@ -120,148 +117,172 @@ BOOT_ID="$(get_boot_id)"
 #  Path validation (§2 of ADR)
 # ────────────────────────────────────────────────────────────
 
-# _is_system_path PATH — true if path is outside REPO_ROOT and owned by root.
-# These paths (e.g. /var -> /private/var on macOS) may contain system symlinks
-# that we must NOT reject, as they are not attacker-controlled.
-_is_system_path() {
-  local p="$1"
-  case "$p" in
-    "$REPO_ROOT"|"$REPO_ROOT"/*) return 1 ;;  # inside repo — not system
-    *) return 0 ;;
-  esac
-}
-
-# validate_seed_path PATH
-# Read-only seed validation: reject symlinks on target + every existing ancestor
-# component. Does NOT check ownership/mode (seed is committed, not runtime).
-validate_seed_path() {
+# _raw_ancestor_symlink_check PATH
+# Rejects symlinks on the given path and every existing raw ancestor component
+# from the filesystem root. Dies on first symlink or non-directory file found.
+_raw_ancestor_symlink_check() {
   local target="$1"
-  [ -f "$target" ] || die "seed file not found: $target"
 
-  # Target must not be a symlink
   if [ -L "$target" ]; then
-    die "seed file must not be a symbolic link: $target"
+    die "path component is a symbolic link: $target"
+  fi
+  if [ -e "$target" ] && [ ! -d "$target" ] && [ ! -f "$target" ]; then
+    die "path component is not a regular file or directory: $target"
   fi
 
-  # Walk every existing raw ancestor component and reject symlinks
-  local raw_ancestor
-  raw_ancestor="$(dirname "$target")"
-  while [ "$raw_ancestor" != "/" ]; do
-    if [ -L "$raw_ancestor" ]; then
-      # System symlinks (e.g. /var → /private/var on macOS) are tolerated.
-      if _is_system_path "$raw_ancestor"; then
-        break
-      fi
-      die "path component is a symbolic link: $raw_ancestor"
+  local ancestor
+  ancestor="$(dirname "$target")"
+  while [ "$ancestor" != "/" ]; do
+    if [ -L "$ancestor" ]; then
+      die "path component is a symbolic link: $ancestor"
     fi
-    if [ -e "$raw_ancestor" ] && [ ! -d "$raw_ancestor" ]; then
-      die "path component is not a directory: $raw_ancestor"
+    if [ -e "$ancestor" ] && [ ! -d "$ancestor" ]; then
+      die "path component is not a directory: $ancestor"
     fi
-    raw_ancestor="$(dirname "$raw_ancestor")"
+    ancestor="$(dirname "$ancestor")"
   done
 }
 
+# _validate_target_perms PATH [require_file]
+# For an existing path: reject symlinks, validate owner=$(id -u), mode=0600.
+_validate_target_perms() {
+  local target="$1"
+  local require_file="${2:-false}"
+
+  if [ -L "$target" ]; then
+    die "path must not be a symbolic link: $target"
+  fi
+  if [ ! -e "$target" ]; then
+    return 0
+  fi
+  if $require_file && [ ! -f "$target" ]; then
+    die "expected regular file: $target"
+  fi
+
+  local owner_uid
+  owner_uid="$(stat -f '%u' "$target" 2>/dev/null || stat -c '%u' "$target" 2>/dev/null || echo "")"
+  if [ "$owner_uid" != "$(id -u)" ]; then
+    die "path not owned by current user: $target"
+  fi
+  local tmode
+  tmode="$(stat -f '%p' "$target" 2>/dev/null || stat -c '%a' "$target" 2>/dev/null || echo "")"
+  if [ -n "$tmode" ]; then
+    while [ "${#tmode}" -gt 3 ]; do tmode="${tmode#?}"; done
+    if [ "$tmode" != "600" ]; then
+      die "file mode must be 0600: $target (got $tmode)"
+    fi
+  fi
+}
+
+# _validate_dir_perms PATH
+# Validates owner=$(id -u) and mode=0700 for an existing directory.
+_validate_dir_perms() {
+  local d="$1"
+  if [ ! -d "$d" ]; then
+    die "expected directory: $d"
+  fi
+  local owner_uid
+  owner_uid="$(stat -f '%u' "$d" 2>/dev/null || stat -c '%u' "$d" 2>/dev/null || echo "")"
+  if [ "$owner_uid" != "$(id -u)" ]; then
+    die "directory not owned by current user: $d"
+  fi
+  local dmode
+  dmode="$(stat -f '%p' "$d" 2>/dev/null || stat -c '%a' "$d" 2>/dev/null || echo "")"
+  if [ -n "$dmode" ]; then
+    while [ "${#dmode}" -gt 3 ]; do dmode="${dmode#?}"; done
+    if [ "$dmode" != "700" ]; then
+      die "directory mode must be 0700: $d (got $dmode)"
+    fi
+  fi
+}
+
+# validate_seed_path PATH
+# Read-only seed validation: reject symlinks on target + every raw ancestor.
+# Does NOT check ownership/mode (seed is committed, not runtime).
+validate_seed_path() {
+  local target="$1"
+  [ -f "$target" ] || die "seed file not found: $target"
+  _raw_ancestor_symlink_check "$target"
+}
+
 # validate_runtime_path TARGET_PATH [must_exist]
-# Security validation for runtime state files. Rejects symlinks on the target
-# and every existing raw ancestor (except system paths). Checks ownership and
-# mode of the immediate parent directory.
+# Full security validation: reject symlinks on target and every raw ancestor.
+# Validate file owner=current-user and mode=0600 (if exists).
+# Validate parent dir owner=current-user and mode=0700.
 validate_runtime_path() {
   local target="$1"
   local must_exist="${2:-false}"
 
-  # --- Raw symlink checks on target and every existing ancestor ---
+  _raw_ancestor_symlink_check "$target"
 
-  # Target must not be a symlink
-  if [ -L "$target" ]; then
-    die "state file must not be a symbolic link: $target"
-  fi
-
-  local parent_dir
-  parent_dir="$(dirname "$target")"
-
-  # Walk every existing raw ancestor; reject non-system symlinks
-  local raw_ancestor="$parent_dir"
-  while [ "$raw_ancestor" != "/" ]; do
-    if [ -L "$raw_ancestor" ]; then
-      if _is_system_path "$raw_ancestor"; then
-        break
-      fi
-      die "path component is a symbolic link: $raw_ancestor"
-    fi
-    if [ -e "$raw_ancestor" ] && [ ! -d "$raw_ancestor" ]; then
-      die "path component is not a directory: $raw_ancestor"
-    fi
-    raw_ancestor="$(dirname "$raw_ancestor")"
-  done
-
-  # --- Physical ancestor checks (resolves system symlinks) ---
-
-  local resolved_parent=""
-  if [ -d "$parent_dir" ]; then
-    resolved_parent="$(cd "$parent_dir" 2>/dev/null && pwd -P 2>/dev/null)" || true
-  fi
-
-  if [ -n "$resolved_parent" ]; then
-    local component="$resolved_parent"
-    while [ "$component" != "/" ]; do
-      if [ -e "$component" ] && [ ! -d "$component" ]; then
-        die "path component is not a directory: $component"
-      fi
-      component="$(dirname "$component")"
-    done
-  fi
-
-  # --- Existence check ---
-
+  # Existence check
   if $must_exist; then
     [ -f "$target" ] || die "state file not found: $target"
   elif [ -e "$target" ] && [ ! -f "$target" ]; then
     die "state file is not a regular file: $target"
   fi
 
-  # --- Parent ownership and mode (runtime dir only, not seed) ---
+  # Target ownership and mode
+  _validate_target_perms "$target" "$must_exist"
 
+  # Parent dir ownership and mode
+  local parent_dir
+  parent_dir="$(dirname "$target")"
   if [ -d "$parent_dir" ]; then
-    local owner_uid
-    owner_uid="$(stat -f '%u' "$parent_dir" 2>/dev/null || stat -c '%u' "$parent_dir" 2>/dev/null || echo "")"
-    if [ "$owner_uid" != "$(id -u)" ]; then
-      die "runtime parent directory not owned by current user: $parent_dir"
+    _validate_dir_perms "$parent_dir"
+  fi
+}
+
+# validate_lock_path LOCK_DIR
+# Same full validation as runtime path for the lock directory.
+validate_lock_path() {
+  local lock_dir="$1"
+  # Lock dir + metadata files must not be symlinked
+  if [ -L "$lock_dir" ]; then
+    die "lock directory must not be a symbolic link: $lock_dir"
+  fi
+  if [ -e "$lock_dir" ] && [ ! -d "$lock_dir" ]; then
+    die "lock path is not a directory: $lock_dir"
+  fi
+  for f in "$lock_dir"/pid "$lock_dir"/boot_id "$lock_dir"/acquired_at; do
+    if [ -L "$f" ]; then
+      die "lock metadata must not be a symbolic link: $f"
     fi
-    local dir_mode
-    dir_mode="$(stat -f '%p' "$parent_dir" 2>/dev/null || stat -c '%a' "$parent_dir" 2>/dev/null || echo "")"
-    if [ -n "$dir_mode" ]; then
-      while [ "${#dir_mode}" -gt 3 ]; do dir_mode="${dir_mode#?}"; done
-      if [ "$dir_mode" != "700" ]; then
-        die "runtime parent directory mode must be 0700: $parent_dir (got $dir_mode)"
-      fi
-    fi
+  done
+}
+
+# validate_backup_path BACKUP_PATH
+# Rejects symlinks on the backup target and its parent.
+validate_backup_path() {
+  local bak="$1"
+  if [ -L "$bak" ]; then
+    die "backup path must not be a symbolic link: $bak"
+  fi
+  local bak_parent
+  bak_parent="$(dirname "$bak")"
+  if [ -L "$bak_parent" ]; then
+    die "backup parent must not be a symbolic link: $bak_parent"
   fi
 }
 
 # create_runtime_parent PARENT_DIR
 # Create missing parent dirs under a validated ancestor with umask 077.
+# Then revalidate owner + mode per ADR §2 step 4.
 create_runtime_parent() {
   local parent_dir="$1"
   if [ -d "$parent_dir" ]; then
+    _validate_dir_perms "$parent_dir"
     return 0
   fi
 
-  # Find last existing ancestor
+  # Find last existing raw ancestor
   local p="$parent_dir"
   while [ "$p" != "/" ] && [ ! -d "$p" ] && [ ! -L "$p" ]; do
     p="$(dirname "$p")"
   done
 
   if [ -L "$p" ]; then
-    # System symlinks: resolve physically
-    if _is_system_path "$p"; then
-      p="$(cd "$p" 2>/dev/null && pwd -P 2>/dev/null)" || true
-    else
-      die "path component is a symbolic link: $p"
-    fi
-    if [ -z "$p" ] || [ ! -d "$p" ]; then
-      die "cannot resolve physical ancestor for: $parent_dir"
-    fi
+    die "ancestor is a symbolic link: $p"
   fi
 
   if [ ! -d "$p" ]; then
@@ -271,16 +292,11 @@ create_runtime_parent() {
     die "ancestor not writable: $p"
   fi
 
-  # Create missing suffix
   umask 077
   mkdir -p "$parent_dir"
 
-  # Revalidate ownership
-  local owner_uid
-  owner_uid="$(stat -f '%u' "$parent_dir" 2>/dev/null || stat -c '%u' "$parent_dir" 2>/dev/null || echo "")"
-  if [ "$owner_uid" != "$(id -u)" ]; then
-    die "created runtime parent not owned by current user: $parent_dir"
-  fi
+  # ADR §2 step 4: revalidate final runtime parent owner and 0700
+  _validate_dir_perms "$parent_dir"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -295,7 +311,6 @@ _release_lock() {
   fi
 }
 
-# _add_exit_trap COMMAND — chain a command onto the EXIT trap (Bash 3.2 compat).
 _add_exit_trap() {
   local cmd="$1"
   local existing
@@ -321,19 +336,17 @@ acquire_lock() {
   parent_dir="$(dirname "$runtime_state")"
   LOCK_DIR="$parent_dir/heartbeat.lock"
 
-  # Ensure parent exists
+  validate_lock_path "$LOCK_DIR"
+
   if [ ! -d "$parent_dir" ]; then
     die "runtime parent does not exist; run --init-runtime first"
   fi
 
   while true; do
     if mkdir "$LOCK_DIR" 2>/dev/null; then
-      # Lock acquired. Register cleanup IMMEDIATELY so any failure below
-      # still removes the lock directory.
       _register_lock_cleanup
 
-      # Write metadata. If any of these fail, the trap removes the lock dir.
-      chmod 0700 "$LOCK_DIR" 2>/dev/null || {
+      chmod 0700 "$LOCK_DIR" || {
         echo "FATAL: failed to chmod lock directory" >&2
         exit 1
       }
@@ -351,11 +364,13 @@ acquire_lock() {
         echo "FATAL: failed to write lock acquired_at metadata" >&2
         exit 1
       }
-      chmod 0600 "$LOCK_DIR/pid" "$LOCK_DIR/boot_id" "$LOCK_DIR/acquired_at" 2>/dev/null || true
+      chmod 0600 "$LOCK_DIR/pid" "$LOCK_DIR/boot_id" "$LOCK_DIR/acquired_at" || {
+        echo "FATAL: failed to chmod lock metadata files" >&2
+        exit 1
+      }
       return 0
     fi
 
-    # Lock exists — inspect it
     local lock_pid lock_boot
     lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
     lock_boot="$(cat "$LOCK_DIR/boot_id" 2>/dev/null || echo "")"
@@ -364,36 +379,28 @@ acquire_lock() {
       die "lock metadata unreadable — manual inspection required: $LOCK_DIR"
     fi
 
-    # Validate lock_pid is numeric
     case "$lock_pid" in
       ''|*[!0-9]*) die "lock PID invalid — manual inspection required: $LOCK_DIR" ;;
     esac
 
-    # (a) Live process → contention. Emit ACTION: STOP, no misleading work.
     if kill -0 "$lock_pid" 2>/dev/null; then
       echo "ACTION: STOP lock held by live process $lock_pid" >&2
       echo "FATAL: lock held by live process $lock_pid" >&2
       exit 2
     fi
 
-    # PID is dead — determine staleness
     if [ -z "$BOOT_ID" ]; then
-      # (d) Boot identity unavailable, but PID metadata is valid → exit 1
       die "lock from dead PID $lock_pid but boot identity unavailable — use --break-lock"
     fi
 
     if [ -n "$lock_boot" ] && [ "$lock_boot" != "unknown" ] && [ "$lock_boot" != "$BOOT_ID" ]; then
-      # (c) Cross-boot: stale
       :
     elif [ "$lock_boot" = "$BOOT_ID" ]; then
-      # (b) Same boot: stale
       :
     else
-      # (e) Lock metadata untrusted
       die "lock from dead PID $lock_pid but boot identity cannot be verified — manual inspection required: $LOCK_DIR"
     fi
 
-    # Break stale lock and retry
     rm -rf "$LOCK_DIR"
   done
 }
@@ -403,6 +410,8 @@ do_break_lock() {
   local parent_dir
   parent_dir="$(dirname "$runtime_state")"
   local lock_dir="$parent_dir/heartbeat.lock"
+
+  validate_lock_path "$lock_dir"
 
   if [ ! -d "$lock_dir" ]; then
     echo "No lock directory found at $lock_dir"
@@ -436,7 +445,6 @@ do_break_lock() {
 
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 
-# _python_validate_v2 STATE_PATH
 _python_validate_v2() {
   _HB_STATE="$1" python3 - <<'PY'
 import datetime, json, os, sys
@@ -493,7 +501,7 @@ else:
     if not is_int(maximum) or maximum < 1:
         errors.append("budget.max_expert_calls must be a positive integer")
 
-# previous_checkpoint: must be null or a dict with exact 7 fields
+# previous_checkpoint: must be null or dict with exact 7 fields, each fully validated
 pc = state.get("previous_checkpoint")
 if pc is not None:
     if not isinstance(pc, dict):
@@ -508,15 +516,15 @@ if pc is not None:
             errors.append("previous_checkpoint has unexpected fields: " + ",".join(sorted(extra)))
         if missing:
             errors.append("previous_checkpoint missing fields: " + ",".join(sorted(missing)))
-        # Validate types of each field
-        if pc.get("phase") and pc["phase"] not in phases:
-            errors.append("previous_checkpoint.phase invalid")
-        if not is_int(pc.get("cycle", 0)):
-            errors.append("previous_checkpoint.cycle must be an integer")
-        if not is_int(pc.get("expert_calls_this_cycle", -1)):
-            errors.append("previous_checkpoint.expert_calls_this_cycle must be an integer")
-        if not is_int(pc.get("max_expert_calls", -1)):
-            errors.append("previous_checkpoint.max_expert_calls must be an integer")
+        # Same domain constraints as current state
+        if pc.get("phase") not in phases:
+            errors.append("previous_checkpoint.phase must be a valid phase")
+        if not is_int(pc.get("cycle")) or pc.get("cycle", -1) < 0:
+            errors.append("previous_checkpoint.cycle must be a non-negative integer")
+        if not is_int(pc.get("expert_calls_this_cycle")) or pc.get("expert_calls_this_cycle", -1) < 0:
+            errors.append("previous_checkpoint.expert_calls_this_cycle must be a non-negative integer")
+        if not is_int(pc.get("max_expert_calls")) or pc.get("max_expert_calls", 0) < 1:
+            errors.append("previous_checkpoint.max_expert_calls must be a positive integer")
         if not valid_timestamp(pc.get("updated_at"), nullable=False):
             errors.append("previous_checkpoint.updated_at must be an ISO-8601 UTC timestamp")
         if not valid_timestamp(pc.get("last_heartbeat"), nullable=True):
@@ -530,11 +538,7 @@ if errors:
 PY
 }
 
-# _python_fsync_dir — perform directory fsync after os.replace.
-# On real fsync failure, exits 1 with diagnostic (uncertain commit outcome).
-# On _HB_FSYNC_FAIL_INJECT=1, simulates failure after os.replace.
 _python_fsync_dir() {
-  # Called inline via subshell; reads _HB_FSYNC_FAIL_INJECT from env.
   python3 - <<'PY'
 import os, sys
 
@@ -554,7 +558,6 @@ if directory:
 PY
 }
 
-# _python_init_runtime SEED_PATH RUNTIME_PATH
 _python_init_runtime() {
   _HB_SEED="$1" _HB_RUNTIME="$2" python3 - <<'PY'
 import json, os, sys, tempfile
@@ -590,6 +593,9 @@ PY
 }
 
 # _python_init_force SEED_PATH RUNTIME_PATH BACKUP_PATH
+# ADR §1/§4: backup with fsync before state replacement.
+# On _HB_FSYNC_BACKUP_INJECT=1, fails after backup os.replace+dirmsync
+# but before state replacement — tests backup ordering.
 _python_init_force() {
   _HB_SEED="$1" _HB_RUNTIME="$2" _HB_BACKUP="$3" python3 - <<'PY'
 import json, os, sys, tempfile
@@ -614,8 +620,21 @@ if os.path.exists(runtime_path):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    # Directory fsync after backup rename
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except OSError as exc:
+        print("FATAL: directory fsync failed after backup: " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
 
-# 2. Write new state from seed
+# 2. Injectable failure point: after backup fsync, before state replacement
+if os.environ.get("_HB_FSYNC_BACKUP_INJECT") == "1":
+    print("FATAL: simulated failure after backup fsync, before state init", file=sys.stderr)
+    raise SystemExit(1)
+
+# 3. Write new state from seed
 with open(seed_path) as handle:
     seed = json.load(handle)
 
@@ -642,7 +661,6 @@ finally:
 PY
 }
 
-# _python_write_state STATE_PATH PHASE CYCLE EXPERT_CALLS LAST_HB NOTES UPDATED_AT
 _python_write_state() {
   _HB_STATE_PATH="$1" \
   _HB_PHASE="$2" \
@@ -659,7 +677,6 @@ with open(path) as handle:
     state = json.load(handle)
 
 # Capture previous_checkpoint: flattened snapshot of mutable fields
-# ADR requires flattened expert_calls_this_cycle and max_expert_calls.
 budget = state.get("budget", {})
 prev = {
     "phase": state.get("phase"),
@@ -695,7 +712,6 @@ finally:
 PY
 }
 
-# _python_field STATE_PATH DOT_NOTATED_KEY
 _python_field() {
   _HB_STATE="$1" _HB_KEY="$2" python3 - <<'PY'
 import json, os
@@ -712,7 +728,7 @@ PY
 }
 
 # ────────────────────────────────────────────────────────────
-#  Tempfile cleanup (must run under lock, never in dry-run)
+#  Tempfile cleanup (under lock, never dry-run)
 # ────────────────────────────────────────────────────────────
 
 cleanup_tempfiles() {
@@ -741,29 +757,24 @@ fi
 # ────────────────────────────────────────────────────────────
 
 if $INIT_RUNTIME; then
-  # Validate seed (read-only — no ownership/mode check)
   validate_seed_path "$SEED_FILE"
 
-  # Validate runtime path ancestry
   validate_runtime_path "$STATE_FILE"
   create_runtime_parent "$(dirname "$STATE_FILE")"
 
-  # Acquire lock
   acquire_lock "$STATE_FILE"
 
-  # Cleanup stale tempfiles (under lock, never dry-run)
   cleanup_tempfiles
 
   if $FORCE_INIT; then
-    # Derive backup path from runtime state file
     _backup_path="${STATE_FILE}.bak"
-    if _python_init_force_out="$(_python_init_force "$SEED_FILE" "$STATE_FILE" "$_backup_path" 2>&1)"; then
+    validate_backup_path "$_backup_path"
+    if _out="$(_python_init_force "$SEED_FILE" "$STATE_FILE" "$_backup_path" 2>&1)"; then
       :
     else
-      echo "FATAL: $python_init_force_out" >&2
+      echo "FATAL: $_out" >&2
       exit 1
     fi
-    # Fsync directory after init
     _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
     echo "Runtime state re-initialized from seed: $STATE_FILE"
     exit 0
@@ -771,13 +782,12 @@ if $INIT_RUNTIME; then
     if [ -f "$STATE_FILE" ]; then
       die "runtime state already exists: $STATE_FILE (use --force to re-initialize)"
     fi
-    if _python_init_runtime_out="$(_python_init_runtime "$SEED_FILE" "$STATE_FILE" 2>&1)"; then
+    if _out="$(_python_init_runtime "$SEED_FILE" "$STATE_FILE" 2>&1)"; then
       :
     else
-      echo "FATAL: $python_init_runtime_out" >&2
+      echo "FATAL: $_out" >&2
       exit 1
     fi
-    # Fsync directory after init
     _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
     echo "Runtime state initialized: $STATE_FILE"
     exit 0
@@ -788,26 +798,22 @@ fi
 #  Normal heartbeat
 # ────────────────────────────────────────────────────────────
 
-# Validate runtime state path
 validate_runtime_path "$STATE_FILE" true
 
-# Acquire lock (skip for dry-run)
 if ! $DRY_RUN; then
   acquire_lock "$STATE_FILE"
 fi
 
-# Cleanup stale tempfiles (under lock, never dry-run)
 if ! $DRY_RUN; then
   cleanup_tempfiles
 fi
 
-# Validate runtime state as schema v2
 if ! validation_error="$(_python_validate_v2 "$STATE_FILE" 2>&1)"; then
   die "invalid runtime state: $validation_error"
 fi
 
 # ────────────────────────────────────────────────────────────
-#  Decision engine (unchanged logic from v1.1)
+#  Decision engine
 # ────────────────────────────────────────────────────────────
 
 state_field() {
@@ -836,7 +842,6 @@ write_state() {
   local phase="$1" cycle="$2" expert_calls="$3" last_heartbeat="$4" notes="$5"
   $DRY_RUN && return 0
   _python_write_state "$STATE_FILE" "$phase" "$cycle" "$expert_calls" "$last_heartbeat" "$notes" "$now_iso"
-  # Fsync directory after write
   _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
 }
 
@@ -860,7 +865,6 @@ cycle="$(state_field cycle)"
 expert_calls="$(state_field budget.expert_calls_this_cycle)"
 max_expert="$(state_field budget.max_expert_calls)"
 
-# Bootstrap is local-only. It does not require GitHub visibility.
 if [ "$phase" = "0_BOOTSTRAP" ]; then
   if ! git_status="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)"; then
     stop_action "local repository status unavailable — cannot run heartbeat" "STOP: git status failed"
@@ -876,7 +880,6 @@ if [ "$phase" = "0_BOOTSTRAP" ]; then
   exit 0
 fi
 
-# GitHub is the read-only control plane.
 command -v gh >/dev/null 2>&1 || {
   visibility_stop "GitHub visibility unavailable: gh not found"
   exit 2
@@ -894,7 +897,6 @@ fi
 printf '%s' "$prs_json" > "$runtime_tmp/prs.json"
 printf '%s' "$issues_json" > "$runtime_tmp/issues.json"
 
-# Output is five integers: WIP_COUNT STALE_PR STALE_ISSUE REVIEW_PR BUILD_ISSUE
 if ! _HB_PRS="$runtime_tmp/prs.json" \
   _HB_ISSUES="$runtime_tmp/issues.json" \
   _HB_NOW_EPOCH="$now_epoch" \
