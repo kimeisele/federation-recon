@@ -462,6 +462,7 @@ extract_cross_node_boundary_agreement() {
   local table_rows
   table_rows=$(printf '%s' "$rb_content" | rg '^\| \`' 2>/dev/null || true)
 
+  local checked_count=0
   while IFS= read -r row; do
     [ -z "$row" ] && continue
 
@@ -520,6 +521,7 @@ print(json.dumps([role, boundary], separators=(',', ':')))
     fi
     self_role=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')
     self_ob=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[1])')
+    checked_count=$(( checked_count + 1 ))
 
     # Both sides are now in scope. Record the exact metadata fields supporting
     # the comparison so a Finding cites central and self evidence.
@@ -549,8 +551,10 @@ print(json.dumps([role, boundary], separators=(',', ':')))
     fi
 
     if [ -n "$drift_reason" ]; then
-      local central_cid; central_cid=$(artifact_id "$central_claim")
-      local self_eid; self_eid=$(artifact_id "$self_ev")
+      local central_cid central_eid self_eid
+      central_cid=$(artifact_id "$central_claim")
+      central_eid=$(artifact_id "$central_ev")
+      self_eid=$(artifact_id "$self_ev")
 
       local drift
       drift=$(gen_drift_record "$central_cid" "$self_eid" "$drift_reason")
@@ -559,7 +563,7 @@ print(json.dumps([role, boundary], separators=(',', ':')))
 
       local finding_text="Cross-node boundary disagreement for ${repo_in_row}: ${drift_reason}"
       local finding
-      finding=$(gen_finding "$finding_text" "${central_ev},${self_ev}" \
+      finding=$(gen_finding "$finding_text" "${central_eid},${self_eid}" \
         "cross_repository_boundaries" "warning" "observed")
       FINDING_FILES["xna-${repo_in_row}"]="$finding"
       budget_track "$finding"
@@ -575,7 +579,7 @@ print(json.dumps([role, boundary], separators=(',', ':')))
   for key in "${!DRIFT_FILES[@]}"; do
     [[ "$key" == xna-* ]] && xna_drift_count=$(( xna_drift_count + 1 ))
   done
-  log "  Cross-node agreement: ${xna_drift_count} contradiction(s) found across 6 nodes"
+  log "  Cross-node agreement: ${xna_drift_count} contradiction(s) found across ${checked_count} nodes"
 }
 
 # ---- Phase 3: Deterministic Observations (§12.3 op 4) ------------------
@@ -1147,33 +1151,57 @@ print(json.dumps({
 " 2>/dev/null || echo '{"claim":"","ev":"","diff":""}')
 
       claim_id=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('claim',''))" <<< "$drift_data" 2>/dev/null || echo "")
+      ev_id=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('ev',''))" <<< "$drift_data" 2>/dev/null || echo "")
       diff_desc=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('diff',''))" <<< "$drift_data" 2>/dev/null || echo "")
 
-      # Find the target repo — look for the claim that generated this drift
-      local target="kimeisele/agent-world"
-      # Try to determine from claim mapping
-      for ckey in "${!CLAIM_FILES[@]}"; do
-        local cf="${CLAIM_FILES[$ckey]}"
-        if [ -f "$cf" ]; then
-          local cid
-          cid=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('claim_id',''))" 2>/dev/null || echo "")
-          if [ "$cid" = "$claim_id" ]; then
-            target=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('source_repository','kimeisele/agent-world'))" 2>/dev/null || echo "kimeisele/agent-world")
-            break
-          fi
-        fi
-      done
-
-      # Determine finding ref for this drift
-      local finding_ref=""
-      for fkey in "${!FINDING_FILES[@]}"; do
-        local ff="${FINDING_FILES[$fkey]}"
-        if [ -f "$ff" ]; then
-          finding_ref="${ff##*/}"
+      # Resolve the in-memory drift key. Cross-node keys encode the actual node;
+      # other drift records fall back to the claim source repository.
+      local drift_key=""
+      for dkey in "${!DRIFT_FILES[@]}"; do
+        if [ "${DRIFT_FILES[$dkey]}" = "$f" ]; then
+          drift_key="$dkey"
           break
         fi
       done
-      [ -z "$finding_ref" ] && finding_ref="findings/none"
+
+      local target="kimeisele/agent-world"
+      if [[ "$drift_key" == xna-* ]]; then
+        target="kimeisele/${drift_key#xna-}"
+      else
+        for ckey in "${!CLAIM_FILES[@]}"; do
+          local cf="${CLAIM_FILES[$ckey]}"
+          if [ -f "$cf" ]; then
+            local cid
+            cid=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('claim_id',''))" 2>/dev/null || echo "")
+            if [ "$cid" = "$claim_id" ]; then
+              target=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('source_repository','kimeisele/agent-world'))" 2>/dev/null || echo "kimeisele/agent-world")
+              break
+            fi
+          fi
+        done
+      fi
+
+      # Prefer the finding with the same in-memory key. For generic drift,
+      # deterministically match a finding that cites the drift evidence ID.
+      local finding_ref=""
+      if [ -n "$drift_key" ] && [ -n "${FINDING_FILES[$drift_key]:-}" ]; then
+        finding_ref="${FINDING_FILES[$drift_key]##*/}"
+      else
+        while IFS= read -r fkey; do
+          local ff="${FINDING_FILES[$fkey]}"
+          if [ -f "$ff" ] && python3 -c "
+import json
+from pathlib import Path
+d=json.load(open('$ff'))
+refs=[Path(str(r)).stem for r in d.get('evidence_refs', [])]
+raise SystemExit(0 if '$ev_id' in refs else 1)
+" 2>/dev/null; then
+            finding_ref="${ff##*/}"
+            break
+          fi
+        done < <(printf '%s\n' "${!FINDING_FILES[@]}" | sort)
+      fi
+      [ -z "$finding_ref" ] && finding_ref="none"
 
       attention_items_json+=$(cat <<ENDAI
 {

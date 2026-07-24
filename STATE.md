@@ -15,8 +15,8 @@
 
 | # | Target | Status | Procedure | Headline | Evidence |
 |---|---|---|---|---|---|
-| 1 | `kimeisele/agent-world` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-265cabb8cf9f.json, drift/drift-0064abff93ac.json |
-| 2 | `kimeisele/agent-world` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-265cabb8cf9f.json, drift/drift-d2d7cfe7156b.json |
+| 1 | `kimeisele/steward` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-5cd51c7f5fed.json, drift/drift-0064abff93ac.json |
+| 2 | `kimeisele/agent-internet` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-194863fb230b.json, drift/drift-d2d7cfe7156b.json |
 | 3 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
 
 ## Constitutional Observatory
