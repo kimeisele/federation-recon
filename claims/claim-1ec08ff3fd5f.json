@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-1ec08ff3fd5f",
+  "source_repository": "kimeisele/agent-internet",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/agent-internet/.well-known/agent-federation.json self-declares role: , owner_boundary: ",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-internet.json"
+}

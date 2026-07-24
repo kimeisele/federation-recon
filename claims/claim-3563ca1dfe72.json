@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-3563ca1dfe72",
+  "source_repository": "kimeisele/steward",
+  "source_path": ".well-known/agent-federation.json",
+  "claim_text": "kimeisele/steward/.well-known/agent-federation.json self-declares role: operator, owner_boundary: steward_surface",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/steward.json"
+}

@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-fdd37de3244c",
+  "source_repository": "kimeisele/agent-world",
+  "source_path": "docs/REPO_BOUNDARIES.md",
+  "claim_text": "REPO_BOUNDARIES.md (agent-world:docs/REPO_BOUNDARIES.md) asserts agent-city role: City Runtime, owns: mayor, council, economy, immigration, local campaigns, Pokedex",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
+}

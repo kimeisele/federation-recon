@@ -1,0 +1,7 @@
+{
+  "drift_id": "drift-c2f3cdbf9756",
+  "claim_observation": "claim-b7ad1a2defa9",
+  "evidence": "ev-7986f337baf8",
+  "difference": "Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.well-known/agent-federation.json has no role or owner_boundary field",
+  "detected_at": "2026-07-24T00:59:36Z"
+}

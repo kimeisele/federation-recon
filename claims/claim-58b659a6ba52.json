@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-58b659a6ba52",
+  "source_repository": "kimeisele/agent-world",
+  "source_path": "docs/REPO_BOUNDARIES.md",
+  "claim_text": "REPO_BOUNDARIES.md (agent-world:docs/REPO_BOUNDARIES.md) asserts steward role: Autonomous Engine, owns: autonomous execution (CLI/REPL/daemon/bot/API), self-healing, federation participation, multi-LLM orchestration",
+  "observed_at": "2026-07-24T00:59:36Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
+}

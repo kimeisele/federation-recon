@@ -3,11 +3,17 @@
   "procedure_version": "v0",
   "run_timestamp": "2026-07-24T00:59:36Z",
   "attention_items": [{
-  "target": "kimeisele/*",
+  "target": "kimeisele/agent-world",
   "status": "observed",
-  "attention_rank": 99,
-  "headline": "No boundary drift detected across all observed repositories",
-  "refs": ["findings/"]
+  "attention_rank": 1,
+  "headline": "Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.",
+  "refs": ["findings/finding-265cabb8cf9f.json", "drift/drift-c2f3cdbf9756.json"]
+},{
+  "target": "kimeisele/agent-world",
+  "status": "observed",
+  "attention_rank": 1,
+  "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
+  "refs": ["findings/finding-265cabb8cf9f.json", "drift/drift-f217a5ab2201.json"]
 },{
   "target": "kimeisele/agent-world",
   "status": "stale",
@@ -17,21 +23,21 @@
 }],
   "summary": {
   "pins": 7,
-  "claims": 30,
-  "evidence": 23,
-  "drift_records": 0,
-  "findings": 3,
+  "claims": 42,
+  "evidence": 35,
+  "drift_records": 2,
+  "findings": 6,
   "coverage_records": 7,
   "observed_repositories": 7,
   "partial_failures": 0
 },
   "budget": {
-  "total_bytes": 25716,
+  "total_bytes": 35949,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [pins:1830] [claims:13653] [evidence:21580] [drift:21580] [findings:22750] [coverage:25152] [self-observation:25716]"
+  "checkpoints": " [pins:1830] [claims:23885] [evidence:31812] [drift:31812] [findings:32983] [coverage:35385] [self-observation:35949]"
 },
   "self_observation": {
   "run_completed": true,
