@@ -9,12 +9,12 @@
       "procedure_version": "v0",
       "run_timestamp": "2026-07-24T00:59:36Z",
       "summary": {
-        "pins": 0,
+        "pins": 7,
         "claims": 30,
-        "evidence": 77,
+        "evidence": 23,
         "drift_records": 0,
-        "findings": 19,
-        "coverage_records": 21,
+        "findings": 3,
+        "coverage_records": 7,
         "observed_repositories": 7,
         "partial_failures": 0
       }
@@ -24,10 +24,10 @@
       "procedure_version": "v1",
       "run_timestamp": "2026-07-23T18:52:06Z",
       "summary": {
-        "pins": 0,
-        "evidence": 77,
-        "findings": 19,
-        "coverage_records": 21,
+        "pins": 14,
+        "evidence": 54,
+        "findings": 14,
+        "coverage_records": 14,
         "observed_nodes": 14,
         "stale_nodes": 2,
         "ok_nodes": 12,

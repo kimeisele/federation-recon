@@ -16,12 +16,12 @@
   "refs": ["findings/", "claims/"]
 }],
   "summary": {
-  "pins": 0,
+  "pins": 7,
   "claims": 30,
-  "evidence": 77,
+  "evidence": 23,
   "drift_records": 0,
-  "findings": 19,
-  "coverage_records": 21,
+  "findings": 3,
+  "coverage_records": 7,
   "observed_repositories": 7,
   "partial_failures": 0
 },
