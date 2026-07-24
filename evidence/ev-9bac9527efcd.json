@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-9bac9527efcd",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "manifest_field",
+  "value": "World Governance", "paths": ["docs/REPO_BOUNDARIES.md"]
+}

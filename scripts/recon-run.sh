@@ -1457,6 +1457,24 @@ main() {
   perform_self_observation
   budget_checkpoint "self-observation"
 
+  # Shared output directories retain other procedures. Prune only superseded
+  # v0 outputs after the complete new set exists, so a failed run cannot erase
+  # the last good state and transitions cannot leave contradictory Findings.
+  local keep_file
+  keep_file="$(mktemp)"
+  for key in "${!CLAIM_FILES[@]}"; do printf '%s\n' "${CLAIM_FILES[$key]}"; done > "$keep_file"
+  for key in "${!EVIDENCE_FILES[@]}"; do printf '%s\n' "${EVIDENCE_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!DRIFT_FILES[@]}"; do printf '%s\n' "${DRIFT_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!FINDING_FILES[@]}"; do printf '%s\n' "${FINDING_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!COVERAGE_FILES[@]}"; do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
+  python3 "$SCRIPT_DIR/clean-procedure-artifacts.py" \
+    --root "$REPO_ROOT" \
+    --procedure-id "$PROCEDURE_ID" \
+    --pin-prefix "pins/$PIN_NAMESPACE/" \
+    --keep-file "$keep_file" \
+    || { rm -f "$keep_file"; die "Failed to prune superseded $PROCEDURE_ID outputs"; }
+  rm -f "$keep_file"
+
   # Phase 8: Digest
   generate_digest
   budget_checkpoint "digest"
