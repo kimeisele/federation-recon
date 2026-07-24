@@ -31,6 +31,7 @@ export PIN_NAMESPACE="v0-boundary-drift"
 source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
+source "$SCRIPT_DIR/lib/boundary-agreement.sh"
 
 # ---- Configuration -----------------------------------------------------
 
@@ -438,6 +439,147 @@ extract_federation_roles_claims() {
   CLAIM_FILES["fr-aw"]="$claim"
   budget_track "$claim"
   log "  agent-world: FEDERATION_ROLES.md roles=${role_count}, last_audited=${last_audited}, maturity_table=${has_maturity_table}"
+}
+
+# ---- Phase 2g: Cross-Node Boundary Agreement (Issue #24) -----------------
+
+extract_cross_node_boundary_agreement() {
+  log "=== Phase 2g: Cross-Node Boundary Agreement (Issue #24) ==="
+  log "Comparing REPO_BOUNDARIES.md central claims vs .well-known self-declarations"
+
+  local aw_sha="${REPO_SHA[kimeisele/agent-world]:-}"
+  [ -z "$aw_sha" ] && { warn "  No pin for agent-world — skipping cross-node agreement"; return; }
+
+  # Fetch REPO_BOUNDARIES.md at the pinned agent-world SHA
+  local rb_content=""
+  rb_content=$(gh api "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${aw_sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  [ -z "$rb_content" ] && { warn "  REPO_BOUNDARIES.md not found in agent-world at ${aw_sha}"; return; }
+
+  local aw_pin="${PIN_FILES[agent-world]:-}"
+  [ -z "$aw_pin" ] && { warn "  No pin file for agent-world — skipping cross-node agreement"; return; }
+
+  # Parse table rows: | `repo` | **Role** | Code | Owns | DoesNotOwn |
+  local table_rows
+  table_rows=$(printf '%s' "$rb_content" | rg '^\| \`' 2>/dev/null || true)
+
+  local checked_count=0
+  while IFS= read -r row; do
+    [ -z "$row" ] && continue
+
+    # Extract repo name (first column, strip backticks/asterisks)
+    local repo_in_row=""
+    repo_in_row=$(printf '%s' "$row" | sed 's/^| *//' | sed 's/ *|.*//' | sed 's/`//g' | sed 's/\*\*//g' | xargs)
+    [ -z "$repo_in_row" ] && continue
+
+    # Only check repos in our DESCRIPTOR_REPOS set
+    local full_repo="kimeisele/${repo_in_row}"
+    local in_set=false
+    for r in "${DESCRIPTOR_REPOS[@]}"; do
+      [ "$r" = "$full_repo" ] && in_set=true && break
+    done
+    $in_set || { log "  SKIP: ${repo_in_row} not in observed descriptor set"; continue; }
+
+    local sha="${REPO_SHA[$full_repo]:-}"
+    [ -z "$sha" ] && { warn "  No pin for ${full_repo} — skipping cross-node check"; continue; }
+
+    local repo_pin="${PIN_FILES[${repo_in_row}]:-}"
+    [ -z "$repo_pin" ] && { warn "  No pin file for ${repo_in_row} — skipping"; continue; }
+
+    # Extract central role from REPO_BOUNDARIES.md (column 3)
+    local central_role=""
+    central_role=$(printf '%s' "$row" | cut -d'|' -f3 | sed 's/\*\*//g' | xargs)
+    [ -z "$central_role" ] && central_role="(not asserted)"
+
+    # Reuse the role Claim Observation produced by extract_boundary_table_claims.
+    # Cross-node agreement adds evidence and comparisons, not duplicate claims.
+    local central_claim="${CLAIM_FILES[rb-${repo_in_row}]:-}"
+    [ -z "$central_claim" ] && { warn "  No central role claim for ${repo_in_row} — skipping"; continue; }
+
+    # ---- Fetch .well-known/agent-federation.json at repo's pinned SHA ----
+    local wk_content=""
+    wk_content=$(gh api "repos/${full_repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+    # Issue #24 only compares repositories that actually have a descriptor.
+    if [ -z "$wk_content" ]; then
+      log "  SKIP: ${repo_in_row} has no .well-known descriptor at the pinned commit"
+      continue
+    fi
+
+    local parsed self_role self_ob
+    parsed=$(printf '%s' "$wk_content" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+role = d.get('role') or ''
+boundary = d.get('owner_boundary') or ''
+if not isinstance(role, str) or not isinstance(boundary, str):
+    raise ValueError('role and owner_boundary must be strings when present')
+print(json.dumps([role, boundary], separators=(',', ':')))
+" 2>/dev/null || true)
+    if [ -z "$parsed" ]; then
+      warn "  Invalid JSON or field types for ${repo_in_row} descriptor — skipping cross-node comparison"
+      continue
+    fi
+    self_role=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')
+    self_ob=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[1])')
+    checked_count=$(( checked_count + 1 ))
+
+    # Both sides are now in scope. Record the exact metadata fields supporting
+    # the comparison so a Finding cites central and self evidence.
+    local central_ev
+    central_ev=$(gen_evidence "$aw_pin" "manifest_field" \
+      "$central_role" \
+      "docs/REPO_BOUNDARIES.md")
+    EVIDENCE_FILES["xna-central-${repo_in_row}"]="$central_ev"
+    budget_track "$central_ev"
+
+    # ---- Self evidence: role and owner_boundary from .well-known ----
+    local self_ev_value="role=${self_role};owner_boundary=${self_ob}"
+    local self_ev
+    self_ev=$(gen_evidence "$repo_pin" "manifest_field" \
+      "$self_ev_value" \
+      ".well-known/agent-federation.json")
+    EVIDENCE_FILES["xna-self-${repo_in_row}"]="$self_ev"
+    budget_track "$self_ev"
+
+    # ---- Deterministic cross-node comparison ----
+    local agreement_status drift_reason=""
+    agreement_status=$(boundary_agreement_status true "$central_role" "$self_role" "$self_ob")
+    if [ "$agreement_status" = "role_mismatch" ]; then
+      drift_reason="Role mismatch: REPO_BOUNDARIES.md asserts role: ${central_role} but ${repo_in_row}/.well-known/agent-federation.json self-declares role: ${self_role} (normalized: $(normalize_boundary_role "$central_role") vs $(normalize_boundary_role "$self_role"))"
+    elif [ "$agreement_status" = "absent_self_declaration" ]; then
+      drift_reason="Absent self-declaration: REPO_BOUNDARIES.md asserts ${repo_in_row} role: ${central_role} but ${repo_in_row}/.well-known/agent-federation.json has no role or owner_boundary field"
+    fi
+
+    if [ -n "$drift_reason" ]; then
+      local central_cid central_eid self_eid
+      central_cid=$(artifact_id "$central_claim")
+      central_eid=$(artifact_id "$central_ev")
+      self_eid=$(artifact_id "$self_ev")
+
+      local drift
+      drift=$(gen_drift_record "$central_cid" "$self_eid" "$drift_reason")
+      DRIFT_FILES["xna-${repo_in_row}"]="$drift"
+      budget_track "$drift"
+
+      local finding_text="Cross-node boundary disagreement for ${repo_in_row}: ${drift_reason}"
+      local finding
+      finding=$(gen_finding "$finding_text" "${central_eid},${self_eid}" \
+        "cross_repository_boundaries" "warning" "observed")
+      FINDING_FILES["xna-${repo_in_row}"]="$finding"
+      budget_track "$finding"
+
+      log "  CROSS-NODE DRIFT: ${repo_in_row} — ${drift_reason}"
+    else
+      log "  OK: ${repo_in_row} — central ${central_role} has no deterministic contradiction in the self-declaration"
+    fi
+  done <<< "$table_rows"
+
+  # Summary count
+  local xna_drift_count=0
+  for key in "${!DRIFT_FILES[@]}"; do
+    [[ "$key" == xna-* ]] && xna_drift_count=$(( xna_drift_count + 1 ))
+  done
+  log "  Cross-node agreement: ${xna_drift_count} contradiction(s) found across ${checked_count} nodes"
 }
 
 # ---- Phase 3: Deterministic Observations (§12.3 op 4) ------------------
@@ -1009,33 +1151,57 @@ print(json.dumps({
 " 2>/dev/null || echo '{"claim":"","ev":"","diff":""}')
 
       claim_id=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('claim',''))" <<< "$drift_data" 2>/dev/null || echo "")
+      ev_id=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('ev',''))" <<< "$drift_data" 2>/dev/null || echo "")
       diff_desc=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('diff',''))" <<< "$drift_data" 2>/dev/null || echo "")
 
-      # Find the target repo — look for the claim that generated this drift
-      local target="kimeisele/agent-world"
-      # Try to determine from claim mapping
-      for ckey in "${!CLAIM_FILES[@]}"; do
-        local cf="${CLAIM_FILES[$ckey]}"
-        if [ -f "$cf" ]; then
-          local cid
-          cid=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('claim_id',''))" 2>/dev/null || echo "")
-          if [ "$cid" = "$claim_id" ]; then
-            target=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('source_repository','kimeisele/agent-world'))" 2>/dev/null || echo "kimeisele/agent-world")
-            break
-          fi
-        fi
-      done
-
-      # Determine finding ref for this drift
-      local finding_ref=""
-      for fkey in "${!FINDING_FILES[@]}"; do
-        local ff="${FINDING_FILES[$fkey]}"
-        if [ -f "$ff" ]; then
-          finding_ref="${ff##*/}"
+      # Resolve the in-memory drift key. Cross-node keys encode the actual node;
+      # other drift records fall back to the claim source repository.
+      local drift_key=""
+      for dkey in "${!DRIFT_FILES[@]}"; do
+        if [ "${DRIFT_FILES[$dkey]}" = "$f" ]; then
+          drift_key="$dkey"
           break
         fi
       done
-      [ -z "$finding_ref" ] && finding_ref="findings/none"
+
+      local target="kimeisele/agent-world"
+      if [[ "$drift_key" == xna-* ]]; then
+        target="kimeisele/${drift_key#xna-}"
+      else
+        for ckey in "${!CLAIM_FILES[@]}"; do
+          local cf="${CLAIM_FILES[$ckey]}"
+          if [ -f "$cf" ]; then
+            local cid
+            cid=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('claim_id',''))" 2>/dev/null || echo "")
+            if [ "$cid" = "$claim_id" ]; then
+              target=$(python3 -c "import json; d=json.load(open('$cf')); print(d.get('source_repository','kimeisele/agent-world'))" 2>/dev/null || echo "kimeisele/agent-world")
+              break
+            fi
+          fi
+        done
+      fi
+
+      # Prefer the finding with the same in-memory key. For generic drift,
+      # deterministically match a finding that cites the drift evidence ID.
+      local finding_ref=""
+      if [ -n "$drift_key" ] && [ -n "${FINDING_FILES[$drift_key]:-}" ]; then
+        finding_ref="${FINDING_FILES[$drift_key]##*/}"
+      else
+        while IFS= read -r fkey; do
+          local ff="${FINDING_FILES[$fkey]}"
+          if [ -f "$ff" ] && python3 -c "
+import json
+from pathlib import Path
+d=json.load(open('$ff'))
+refs=[Path(str(r)).stem for r in d.get('evidence_refs', [])]
+raise SystemExit(0 if '$ev_id' in refs else 1)
+" 2>/dev/null; then
+            finding_ref="${ff##*/}"
+            break
+          fi
+        done < <(printf '%s\n' "${!FINDING_FILES[@]}" | sort)
+      fi
+      [ -z "$finding_ref" ] && finding_ref="none"
 
       attention_items_json+=$(cat <<ENDAI
 {
@@ -1296,6 +1462,7 @@ main() {
   extract_self_observation_claims
   extract_world_constitution_claims
   extract_federation_roles_claims
+  extract_cross_node_boundary_agreement
   budget_checkpoint "claims"
 
   # Phase 3: Deterministic observations
@@ -1317,6 +1484,24 @@ main() {
   # Phase 7: Self-observation
   perform_self_observation
   budget_checkpoint "self-observation"
+
+  # Shared output directories retain other procedures. Prune only superseded
+  # v0 outputs after the complete new set exists, so a failed run cannot erase
+  # the last good state and transitions cannot leave contradictory Findings.
+  local keep_file
+  keep_file="$(mktemp)"
+  for key in "${!CLAIM_FILES[@]}"; do printf '%s\n' "${CLAIM_FILES[$key]}"; done > "$keep_file"
+  for key in "${!EVIDENCE_FILES[@]}"; do printf '%s\n' "${EVIDENCE_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!DRIFT_FILES[@]}"; do printf '%s\n' "${DRIFT_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!FINDING_FILES[@]}"; do printf '%s\n' "${FINDING_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!COVERAGE_FILES[@]}"; do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
+  python3 "$SCRIPT_DIR/clean-procedure-artifacts.py" \
+    --root "$REPO_ROOT" \
+    --procedure-id "$PROCEDURE_ID" \
+    --pin-prefix "pins/$PIN_NAMESPACE/" \
+    --keep-file "$keep_file" \
+    || { rm -f "$keep_file"; die "Failed to prune superseded $PROCEDURE_ID outputs"; }
+  rm -f "$keep_file"
 
   # Phase 8: Digest
   generate_digest

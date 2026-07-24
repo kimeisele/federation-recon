@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-7986f337baf8",
+  "repository_pin": "pins/v0-boundary-drift/agent-internet.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "manifest_field",
+  "value": "role=;owner_boundary=", "paths": [".well-known/agent-federation.json"]
+}

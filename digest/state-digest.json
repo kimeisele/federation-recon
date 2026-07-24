@@ -11,9 +11,9 @@
       "summary": {
         "pins": 7,
         "claims": 30,
-        "evidence": 23,
-        "drift_records": 0,
-        "findings": 3,
+        "evidence": 35,
+        "drift_records": 2,
+        "findings": 5,
         "coverage_records": 7,
         "observed_repositories": 7,
         "partial_failures": 0
@@ -38,6 +38,32 @@
   ],
   "attention_items": [
     {
+      "target": "kimeisele/steward",
+      "status": "observed",
+      "attention_rank": 1,
+      "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
+      "refs": [
+        "findings/finding-5cd51c7f5fed.json",
+        "drift/drift-0064abff93ac.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    },
+    {
+      "target": "kimeisele/agent-internet",
+      "status": "observed",
+      "attention_rank": 1,
+      "headline": "Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.",
+      "refs": [
+        "findings/finding-194863fb230b.json",
+        "drift/drift-d2d7cfe7156b.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    },
+    {
       "target": "kimeisele/agent-world",
       "status": "stale",
       "attention_rank": 2,
@@ -45,18 +71,6 @@
       "refs": [
         "findings/",
         "claims/"
-      ],
-      "non_peer": false,
-      "procedure_id": "v0-boundary-drift",
-      "procedure_version": "v0"
-    },
-    {
-      "target": "kimeisele/*",
-      "status": "observed",
-      "attention_rank": 99,
-      "headline": "No boundary drift detected across all observed repositories",
-      "refs": [
-        "findings/"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",
@@ -90,7 +104,7 @@
     }
   ],
   "summary": {
-    "total_attention_items": 2,
+    "total_attention_items": 3,
     "total_observatory_items": 2,
     "total_procedures": 2
   }
