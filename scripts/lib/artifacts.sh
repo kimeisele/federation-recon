@@ -15,6 +15,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 PROCEDURE_ID="boundary-drift-recon-v0"
 PROCEDURE_VERSION="v0"
 
+# Per-procedure pin namespace (set by runner before sourcing).
+# v0 writes pins/v0-boundary-drift/<slug>.json
+# v1 writes pins/v1-census/<slug>.json
+PIN_NAMESPACE="${PIN_NAMESPACE:-}"
+
 # ---- Repository Pin (§8.1) ---------------------------------------------
 # gen_repository_pin <repo_slug> <ref> <sha> <timestamp> [dirty]
 gen_repository_pin() {
@@ -32,7 +37,13 @@ gen_repository_pin() {
 }
 ENDJSON
   )
-  local file="pins/${repo#*/}.json"
+  local slug="${repo#*/}"
+  local file
+  if [ -n "$PIN_NAMESPACE" ]; then
+    file="pins/${PIN_NAMESPACE}/${slug}.json"
+  else
+    file="pins/${slug}.json"
+  fi
   write_json "$file" "$json"
   log "Pin: $repo → $sha ($file)"
   printf '%s' "$file"

@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-0605c610375b",
+  "repository_pin": "pins/v1-census/agent-city.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "city_runtime", "paths": [".well-known/agent-federation.json"], "hashes": {"field": "role"}
+}

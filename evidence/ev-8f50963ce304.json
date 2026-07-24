@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-8f50963ce304",
-  "repository_pin": "pins/agent-city.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
-  "observation_type": "file_count",
-  "value": "{\"char_count\": 1505, \"article_count\": 5}", "paths": ["docs/CONSTITUTION.md"]
-}

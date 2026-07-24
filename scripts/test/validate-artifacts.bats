@@ -141,7 +141,7 @@ sys.exit(0)
 @test "validate_json_syntax: valid JSON passes" {
   # shellcheck disable=SC1091
   source "$REPO_ROOT/scripts/lib/helpers.sh"
-  run validate_json_syntax "$REPO_ROOT/pins/federation-recon.json"
+  run validate_json_syntax "$REPO_ROOT/pins/v0-boundary-drift/federation-recon.json"
   [ "$status" -eq 0 ]
 }
 
@@ -160,7 +160,7 @@ sys.exit(0)
   # shellcheck disable=SC1091
   source "$REPO_ROOT/scripts/lib/helpers.sh"
   run validate_json_schema \
-    "$REPO_ROOT/pins/federation-recon.json" \
+    "$REPO_ROOT/pins/v0-boundary-drift/federation-recon.json" \
     "$REPO_ROOT/schemas/repository-pin.schema.json"
   [ "$status" -eq 0 ]
 }

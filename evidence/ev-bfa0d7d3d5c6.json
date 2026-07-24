@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-bfa0d7d3d5c6",
+  "repository_pin": "pins/v1-census/steward-protocol.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-12T09:38:24Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

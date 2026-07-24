@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-internet",
   "source_path": ".well-known/agent-federation.json",
   "claim_text": "kimeisele/agent-internet/.well-known/agent-federation.json exists at commit dcd0206434b21d8c0ec2fac81e2aafc856401831 (content parseable JSON)",
-  "observed_at": "2026-07-23T18:51:24Z",
-  "repository_pin": "pins/agent-internet.json"
+  "observed_at": "2026-07-24T00:24:41Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-internet.json"
 }

@@ -16,10 +16,10 @@
   "refs": ["findings/finding-a6dcd59a8492.json"]
 }],
   "summary": {
-  "pins": 14,
-  "evidence": 69,
+  "pins": 0,
+  "evidence": 75,
   "findings": 19,
-  "coverage_records": 14,
+  "coverage_records": 21,
   "observed_nodes": 14,
   "stale_nodes": 2,
   "ok_nodes": 12,
@@ -27,12 +27,12 @@
   "staleness_threshold_days": 60
 },
   "budget": {
-  "total_bytes": 33194,
+  "total_bytes": 33994,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:3673] [evidence:22178] [findings:28279] [coverage:32610] [self-observation:33194]"
+  "checkpoints": " [discovery:0] [pins:3673] [evidence:22838] [findings:28939] [coverage:33410] [self-observation:33994]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }

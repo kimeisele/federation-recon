@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-4d08801b0346",
+  "repository_pin": "pins/v1-census/agent-red-team.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-21T04:46:40Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

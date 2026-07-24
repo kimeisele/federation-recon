@@ -1,6 +1,6 @@
 # Federation Digest
 
-**Composed:** 2026-07-23T18:52:06Z
+**Composed:** 2026-07-24T00:24:41Z
 **Procedures:** 2 (see digest/ for per-procedure details)
 **Attention items:** 2 (2 observatory)
 
@@ -8,8 +8,8 @@
 
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
-| `v0-boundary-drift` | `v0` | 2026-07-23T18:51 | claims=28, coverage_records=14, drift_records=0, evidence=69, findings=19, observed_repositories=7, partial_failures=0, pins=14 |
-| `v1-census` | `v1` | 2026-07-23T18:52 | coverage_records=14, error_nodes=0, evidence=69, findings=19, observed_nodes=14, ok_nodes=12, pins=14, stale_nodes=2, staleness_threshold_days=60 |
+| `v0-boundary-drift` | `v0` | 2026-07-24T00:24 | claims=28, coverage_records=21, drift_records=0, evidence=75, findings=19, observed_repositories=7, partial_failures=0, pins=0 |
+| `v1-census` | `v1` | 2026-07-23T18:52 | coverage_records=21, error_nodes=0, evidence=75, findings=19, observed_nodes=14, ok_nodes=12, pins=0, stale_nodes=2, staleness_threshold_days=60 |
 
 ## Ranked Attention (needs operator decision)
 

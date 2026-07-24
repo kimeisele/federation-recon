@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-6f8071247f6d",
+  "repository_pin": "pins/v0-boundary-drift/steward-federation.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_existence",
+  "value": true, "paths": [".well-known/agent-federation.json"]
+}

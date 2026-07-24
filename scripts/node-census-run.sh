@@ -27,6 +27,9 @@ set -o errexit -o nounset -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Per-procedure pin namespace — must be set BEFORE sourcing artifacts.sh
+export PIN_NAMESPACE="v1-census"
+
 # Source libraries
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/helpers.sh"
@@ -42,7 +45,7 @@ STALE_DAYS="${RECON_STALE_DAYS:-60}"
 SELF_REPO="kimeisele/federation-recon"
 
 # Output directories
-mkdir -p "$REPO_ROOT/pins" "$REPO_ROOT/evidence"
+mkdir -p "$REPO_ROOT/pins/$PIN_NAMESPACE" "$REPO_ROOT/evidence"
 mkdir -p "$REPO_ROOT/findings" "$REPO_ROOT/coverage"
 mkdir -p "$REPO_ROOT/digest"
 
@@ -358,7 +361,7 @@ generate_findings() {
     if [ -z "$sha" ]; then
       NODE_STATUS["$slug"]="error"
       local ev_ref="${EVIDENCE_FILES["wk-exists-${slug}"]:-}"
-      [ -z "$ev_ref" ] && ev_ref="pins/${slug}.json"
+      [ -z "$ev_ref" ] && ev_ref="pins/v1-census/${slug}.json"
 
       local finding_error
       finding_error=$(gen_finding "Node ${repo} could not be resolved — no commit SHA obtained" \
@@ -429,7 +432,7 @@ generate_findings() {
     done
     # Fallback to pin
     if $first; then
-      ev_refs="pins/${slug}.json"
+      ev_refs="pins/v1-census/${slug}.json"
     fi
 
     local finding
@@ -507,7 +510,7 @@ perform_self_observation() {
       fi
     fi
   done
-  [ -z "$self_ev_refs" ] && self_ev_refs="pins/federation-recon.json"
+  [ -z "$self_ev_refs" ] && self_ev_refs="pins/v1-census/federation-recon.json"
 
   local finding_self
   finding_self=$(gen_finding "$self_statement" "$self_ev_refs" \
@@ -796,7 +799,7 @@ main() {
   local reproduce=false
   if [ "${1:-}" = "--reproduce" ]; then
     reproduce=true
-    RECON_REPRO_DIR="${RECON_PINS_DIR:-pins}"
+    RECON_REPRO_DIR="${RECON_PINS_DIR:-pins}/v1-census"
     log "Reproduction mode — using pins from ${RECON_REPRO_DIR}"
   fi
 
