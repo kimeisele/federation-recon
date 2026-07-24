@@ -1,7 +1,7 @@
 {
   "procedure_id": "v1-census",
   "procedure_version": "v1",
-  "run_timestamp": "2026-07-23T18:52:06Z",
+  "run_timestamp": "2026-07-24T15:24:49Z",
   "attention_items": [{
   "target": "kimeisele/agent-village",
   "status": "observed",
@@ -17,8 +17,8 @@
 }],
   "summary": {
   "pins": 14,
-  "evidence": 54,
-  "findings": 14,
+  "evidence": 59,
+  "findings": 18,
   "coverage_records": 14,
   "observed_nodes": 14,
   "stale_nodes": 2,

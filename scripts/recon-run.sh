@@ -107,7 +107,7 @@ resolve_pins() {
 
     # Resolve live if we don't have a pinned SHA
     if [ -z "$sha" ]; then
-      ref=$(gh api "repos/${repo}" --jq '.default_branch' 2>/dev/null || echo "master")
+      ref=$(gh api "repos/${repo}" --jq '.default_branch' 2>/dev/null || echo "main")
       sha=$(gh api "repos/${repo}/git/ref/heads/${ref}" --jq '.object.sha' 2>/dev/null || true)
     fi
 

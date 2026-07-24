@@ -117,7 +117,7 @@ for item in arr:
   # FR-CON-011: add self
   local self_slug="${SELF_REPO#*/}"
   NODE_SLUGS+=("$self_slug")
-  REPO_REF["$SELF_REPO"]="master"
+  REPO_REF["$SELF_REPO"]="main"
   log "  Self-observation: added ${SELF_REPO} (FR-CON-011)"
 }
 
@@ -850,7 +850,7 @@ main() {
     done
     if ! $self_found; then
       NODE_SLUGS+=("federation-recon")
-      REPO_REF["$SELF_REPO"]="master"
+      REPO_REF["$SELF_REPO"]="main"
     fi
     log "  Loaded ${#NODE_SLUGS[@]} nodes from pins directory"
   else
