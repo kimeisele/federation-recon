@@ -99,6 +99,13 @@ if [ -z "$STATE_FILE" ]; then
   STATE_FILE="${OPERATOR_STATE_FILE:-$REPO_ROOT/operator/.runtime/state.json}"
 fi
 
+# Normalize to absolute lexical path (no symlink resolution) so
+# _raw_ancestor_symlink_check can walk ancestors without hitting '.'.
+case "$STATE_FILE" in
+  /*) ;;  # already absolute
+  *) STATE_FILE="$PWD/$STATE_FILE" ;;
+esac
+
 # ────────────────────────────────────────────────────────────
 #  Boot identity (for stale-lock detection)
 # ────────────────────────────────────────────────────────────

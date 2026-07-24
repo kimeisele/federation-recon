@@ -654,3 +654,58 @@ EOF
   run _run_heartbeat --init-runtime --break-lock
   [ "$status" -eq 1 ]
 }
+
+# ────────────────────────────────────────────────────────────
+#  Regression: relative paths must not hang
+# ────────────────────────────────────────────────────────────
+
+@test "relative --state-file path works (CLI)" {
+  _seed_v1 > "$WORKDIR/operator/state.json"
+  mkdir -p "$WORKDIR/rel"
+  chmod 0700 "$WORKDIR/rel"
+  (
+    cd "$WORKDIR"
+    run env PATH="$WORKDIR/mockbin:$PATH" \
+      HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+      /bin/bash "$WORKDIR/operator/heartbeat.sh" --init-runtime --state-file rel/runtime.json
+    [ "$status" -eq 0 ]
+    [ -f "$WORKDIR/rel/runtime.json" ]
+    [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/rel/runtime.json'))['schema_version'])")" = "2" ]
+  )
+}
+
+@test "relative OPERATOR_STATE_FILE path works (env)" {
+  _seed_v1 > "$WORKDIR/operator/state.json"
+  mkdir -p "$WORKDIR/rel"
+  chmod 0700 "$WORKDIR/rel"
+  (
+    cd "$WORKDIR"
+    run env PATH="$WORKDIR/mockbin:$PATH" \
+      HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+      OPERATOR_STATE_FILE=rel/runtime.json \
+      /bin/bash "$WORKDIR/operator/heartbeat.sh" --init-runtime
+    [ "$status" -eq 0 ]
+    [ -f "$WORKDIR/rel/runtime.json" ]
+  )
+}
+
+@test "relative --state-file normal heartbeat works" {
+  _seed_v1 > "$WORKDIR/operator/state.json"
+  mkdir -p "$WORKDIR/rel"
+  chmod 0700 "$WORKDIR/rel"
+  # Init with relative path
+  (
+    cd "$WORKDIR"
+    PATH="$WORKDIR/mockbin:$PATH" HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+      /bin/bash "$WORKDIR/operator/heartbeat.sh" --init-runtime --state-file rel/runtime.json >/dev/null
+  )
+  # Normal heartbeat with relative path
+  (
+    cd "$WORKDIR"
+    run env PATH="$WORKDIR/mockbin:$PATH" \
+      HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+      /bin/bash "$WORKDIR/operator/heartbeat.sh" --state-file rel/runtime.json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ACTION: ADVANCE"* ]]
+  )
+}
