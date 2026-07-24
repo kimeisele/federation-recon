@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/steward",
   "source_path": ".well-known/agent-federation.json",
   "claim_text": "kimeisele/steward/.well-known/agent-federation.json asserts owner_boundary=\"steward_surface\" (kind=\"agent_federation_descriptor\")",
-  "observed_at": "2026-07-23T18:51:24Z",
-  "repository_pin": "pins/steward.json"
+  "observed_at": "2026-07-24T00:18:02Z",
+  "repository_pin": "pins/v0-boundary-drift/steward.json"
 }

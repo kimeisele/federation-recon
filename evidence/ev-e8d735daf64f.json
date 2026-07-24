@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-e8d735daf64f",
+  "repository_pin": "pins/v1-census/steward.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "operator", "paths": [".well-known/agent-federation.json"], "hashes": {"field": "role"}
+}

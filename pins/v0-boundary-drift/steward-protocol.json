@@ -1,0 +1,8 @@
+{
+  "repository": "kimeisele/steward-protocol",
+  "requested_ref": "main",
+  "resolved_commit_sha": "34a8a0efc25c15ef7c07dd4fb50aeb2510c071e8",
+  "observation_timestamp": "2026-07-24T00:18:02Z",
+  "acquisition_method": "gh-api",
+  "dirty_state_assertion": false
+}

@@ -23,6 +23,9 @@ set -o errexit -o nounset -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Per-procedure pin namespace — must be set BEFORE sourcing artifacts.sh
+export PIN_NAMESPACE="v0-boundary-drift"
+
 # Source libraries
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/helpers.sh"
@@ -60,7 +63,7 @@ PUBLIC_SURFACE_AI_SOURCE="agent-internet:docs/PUBLIC_FEDERATION_SURFACE.md"
 SELF_SOURCE="federation-recon:docs/founding-package-v0.2.md"
 
 # Output directories
-mkdir -p "$REPO_ROOT/pins" "$REPO_ROOT/claims" "$REPO_ROOT/evidence"
+mkdir -p "$REPO_ROOT/pins/$PIN_NAMESPACE" "$REPO_ROOT/claims" "$REPO_ROOT/evidence"
 mkdir -p "$REPO_ROOT/drift" "$REPO_ROOT/findings" "$REPO_ROOT/coverage"
 mkdir -p "$REPO_ROOT/digest"
 
@@ -200,7 +203,7 @@ extract_boundary_table_claims() {
   local sha="${REPO_SHA[$repo]:-}"
   [ -z "$sha" ] && { warn "  No pin for ${repo} — skipping boundary table claims"; return; }
 
-  local pin_id="pins/agent-world.json"
+  local pin_id="${PIN_FILES[agent-world]}"
 
   local content=""
   content=$(gh api "repos/${repo}/contents/docs/REPO_BOUNDARIES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
@@ -263,7 +266,7 @@ extract_constitution_claims() {
   local repo="kimeisele/steward-protocol"
   local sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pins/steward-protocol.json"
+    local pin_id="${PIN_FILES[steward-protocol]}"
     local content=""
     content=$(gh api "repos/${repo}/contents/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -286,7 +289,7 @@ extract_constitution_claims() {
   repo="kimeisele/agent-city"
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pins/agent-city.json"
+    local pin_id="${PIN_FILES[agent-city]}"
     local content=""
     content=$(gh api "repos/${repo}/contents/docs/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -309,7 +312,7 @@ extract_constitution_claims() {
   repo="kimeisele/agent-internet"
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
-    local pin_id="pins/agent-internet.json"
+    local pin_id="${PIN_FILES[agent-internet]}"
     local content=""
     content=$(gh api "repos/${repo}/contents/docs/PUBLIC_FEDERATION_SURFACE.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$content" ]; then
@@ -336,7 +339,7 @@ extract_self_observation_claims() {
   local sha="${REPO_SHA[$repo]:-}"
   [ -z "$sha" ] && { warn "  No pin for self — skipping self-observation claims"; return; }
 
-  local pin_id="pins/federation-recon.json"
+  local pin_id="${PIN_FILES[federation-recon]}"
 
   # We already know our own invariants — check if the founding package exists
   local fp_exists="no"
@@ -1087,7 +1090,7 @@ main() {
   local reproduce=false
   if [ "${1:-}" = "--reproduce" ]; then
     reproduce=true
-    RECON_REPRO_DIR="${RECON_PINS_DIR:-pins}"
+    RECON_REPRO_DIR="${RECON_PINS_DIR:-pins}/v0-boundary-drift"
     log "Reproduction mode — using pins from ${RECON_REPRO_DIR}"
   fi
 

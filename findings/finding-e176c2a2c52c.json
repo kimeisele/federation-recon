@@ -2,7 +2,7 @@
   "finding_id": "finding-e176c2a2c52c",
   "lifecycle_state": "observed",
   "statement": "Node kimeisele/steward-federation is OK — descriptor present, role=agent_federation_descriptor, tier=none, charter=true, last commit 2026-07-23T18:50:24Z",
-  "evidence_refs": ["ev-6605e8cdd725", "ev-b73e11a51f81", "ev-afa776ea0af1", "ev-6605e8cdd725", "ev-30c2786b0a22"],
+  "evidence_refs": ["ev-2aaa8618bf4e", "ev-bd46657b8b92", "ev-11f76fd07a7d", "ev-2aaa8618bf4e", "ev-62e16e42ae17"],
   "domain": "node_census",
   "severity": "info",
   "created_at": "2026-07-23T18:52:06Z"

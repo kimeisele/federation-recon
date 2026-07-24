@@ -2,7 +2,7 @@
   "finding_id": "finding-961664550605",
   "lifecycle_state": "observed",
   "statement": "Node kimeisele/agent-music is OK — descriptor present, role=agent_federation_descriptor, tier=node, charter=true, last commit 2026-07-23T17:50:52Z",
-  "evidence_refs": ["ev-400f609132db", "ev-a906b42c1ed5", "ev-ca055ced94dc", "ev-400f609132db", "ev-2b620991a4da"],
+  "evidence_refs": ["ev-bb370e8e9a8b", "ev-4682ffe52735", "ev-60fc8de4964f", "ev-bb370e8e9a8b", "ev-c7dda75d56e3"],
   "domain": "node_census",
   "severity": "info",
   "created_at": "2026-07-23T18:52:06Z"

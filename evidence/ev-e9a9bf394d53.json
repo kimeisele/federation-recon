@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-e9a9bf394d53",
-  "repository_pin": "pins/agent-internet.json",
-  "procedure_id": "node-census-v1",
-  "procedure_version": "v1",
-  "observation_type": "file_existence",
-  "value": true, "paths": ["docs/authority/charter.md"]
-}

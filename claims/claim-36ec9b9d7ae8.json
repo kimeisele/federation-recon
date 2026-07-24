@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/steward-protocol",
   "source_path": "CONSTITUTION.md",
   "claim_text": "kimeisele/steward-protocol/CONSTITUTION.md asserts status as SUPREME LAW (Layer 0); contains 10 articles; has_supreme_law=yes",
-  "observed_at": "2026-07-23T18:51:24Z",
-  "repository_pin": "pins/steward-protocol.json"
+  "observed_at": "2026-07-24T00:18:02Z",
+  "repository_pin": "pins/v0-boundary-drift/steward-protocol.json"
 }

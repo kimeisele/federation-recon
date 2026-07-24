@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-2c8a0151b0d1",
+  "repository_pin": "pins/v0-boundary-drift/agent-city.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_existence",
+  "value": true, "paths": [".well-known/agent-federation.json"]
+}

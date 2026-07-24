@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-a051764a80dc",
-  "repository_pin": "pins/steward-federation.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
-  "observation_type": "file_count",
-  "value": 11, "paths": ["/ (repository root)"]
-}

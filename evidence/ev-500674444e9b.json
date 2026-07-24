@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-500674444e9b",
-  "repository_pin": "pins/hermes-sankhya-25.json",
-  "procedure_id": "node-census-v1",
-  "procedure_version": "v1",
-  "observation_type": "manifest_field",
-  "value": "node", "paths": [".well-known/agent-federation.json"], "hashes": {"field": "tier_or_layer"}
-}

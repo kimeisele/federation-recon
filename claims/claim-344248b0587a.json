@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": "docs/REPO_BOUNDARIES.md",
   "claim_text": "kimeisele/agent-world/docs/REPO_BOUNDARIES.md (last audited: 2026-03-15) asserts agent-internet role is \"Control Plane + Projection\"",
-  "observed_at": "2026-07-23T18:51:24Z",
-  "repository_pin": "pins/agent-world.json"
+  "observed_at": "2026-07-24T00:18:02Z",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json"
 }

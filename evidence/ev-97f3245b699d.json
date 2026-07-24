@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-97f3245b699d",
-  "repository_pin": "pins/steward.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
-  "observation_type": "manifest_field",
-  "value": "steward_surface", "paths": [".well-known/agent-federation.json"], "hashes": {"owner_boundary": "8aabed3d729416005a66864501b3286c81f04eff6662daed8432350f0468e8d5"}
-}

@@ -1,0 +1,10 @@
+{
+  "coverage_id": "cov-03a57479a742",
+  "repository_pin": "pins/v1-census/steward-protocol.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "capabilities_used": ["git", "gh", "rg", "python3", "jq"],
+  "capabilities_missing": [],
+  "result": "success",
+  "inspected_at": "2026-07-23T18:52:06Z"
+}

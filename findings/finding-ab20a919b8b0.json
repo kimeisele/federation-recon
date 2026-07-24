@@ -2,7 +2,7 @@
   "finding_id": "finding-ab20a919b8b0",
   "lifecycle_state": "observed",
   "statement": "Node kimeisele/agent-red-team is OK — descriptor present, role=agent_federation_descriptor, tier=node, charter=true, last commit 2026-07-21T04:46:40Z",
-  "evidence_refs": ["ev-7b14d3eb365e", "ev-89266473e2f7", "ev-b820efc5bc0e", "ev-7b14d3eb365e", "ev-0c1a0db3317f"],
+  "evidence_refs": ["ev-26d19e943397", "ev-aa7b50bbcdfd", "ev-19ffb078449e", "ev-26d19e943397", "ev-4d08801b0346"],
   "domain": "node_census",
   "severity": "info",
   "created_at": "2026-07-23T18:52:06Z"

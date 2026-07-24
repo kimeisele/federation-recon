@@ -2,7 +2,7 @@
   "finding_id": "finding-aa331f6e7cb3",
   "lifecycle_state": "stale",
   "statement": "Node kimeisele/agent-village is STALE — missing .well-known/agent-federation.json descriptor",
-  "evidence_refs": ["ev-318c49b77892", "ev-0b6692e799bd", "ev-72f9082e7a93"],
+  "evidence_refs": ["ev-a96a09046904", "ev-4d43f585c855", "ev-62242c0c5098"],
   "domain": "node_census",
   "severity": "warning",
   "created_at": "2026-07-23T18:52:06Z"

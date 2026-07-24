@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-0abe41148bc4",
+  "repository_pin": "pins/v1-census/agent-world.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "agent_federation_descriptor", "paths": [".well-known/agent-federation.json"], "hashes": {"field": "role"}
+}

@@ -7,6 +7,10 @@
 # agent clone the repo, re-run --reproduce, and verify the committed evidence
 # was not tampered with.
 #
+# Also verifies ORDER INDEPENDENCE: with per-procedure pin namespaces (v2.1),
+# running v0-then-v1 and v1-then-v0 must produce identical pins. This resolves
+# the last-writer-wins problem documented in Issue #18.
+#
 # Requires network + gh (fetches pinned repository contents), so it is run
 # manually or on a schedule, NOT on every PR. The fast offline PR gate is
 # scripts/ci-checks.sh.
@@ -18,11 +22,41 @@ snap() {
     | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
 }
 
+snap_pins() {
+  find pins -name '*.json' -type f 2>/dev/null \
+    | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
+}
+
 run_reproduce() {
   RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce      >/dev/null 2>&1 || return 1
   RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1 || return 1
   bash scripts/compose-digest.sh                                  >/dev/null 2>&1 || return 1
 }
+
+run_reproduce_reverse() {
+  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce      >/dev/null 2>&1 || return 1
+  bash scripts/compose-digest.sh                                  >/dev/null 2>&1 || return 1
+}
+
+echo "=== Phase 1: Order-independence check (v0->v1 vs v1->v0 pins) ==="
+run_reproduce || { echo "FAIL: reproduce (v0->v1) pipeline errored"; exit 1; }
+A="$(snap_pins)"
+echo "  v0->v1 pins hash: $A"
+
+run_reproduce_reverse || { echo "FAIL: reproduce (v1->v0) pipeline errored"; exit 1; }
+B="$(snap_pins)"
+echo "  v1->v0 pins hash: $B"
+
+if [ "$A" = "$B" ]; then
+  echo "  PASS: pins are order-independent (v0->v1 == v1->v0)"
+else
+  echo "FAIL: pin order-dependence detected — per-procedure namespace violated"
+  exit 1
+fi
+
+echo ""
+echo "=== Phase 2: Reproduce stability (byte-identical artifact set) ==="
 
 echo "Establishing reproduce fixpoint..."
 run_reproduce || { echo "FAIL: reproduce pipeline errored"; exit 1; }
