@@ -16,10 +16,10 @@
   "refs": ["findings/finding-a6dcd59a8492.json"]
 }],
   "summary": {
-  "pins": 0,
-  "evidence": 77,
-  "findings": 19,
-  "coverage_records": 21,
+  "pins": 14,
+  "evidence": 54,
+  "findings": 14,
+  "coverage_records": 14,
   "observed_nodes": 14,
   "stale_nodes": 2,
   "ok_nodes": 12,

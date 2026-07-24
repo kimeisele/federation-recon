@@ -664,13 +664,19 @@ ENDAI
     esac
   done
 
+  # Per-procedure counts: pins are namespaced; evidence/coverage/findings live in
+  # shared dirs and are attributed by procedure_id (see scripts/lib/count_procedure.py).
+  local pc_pins pc_ev pc_cov pc_find pc_drift
+  read -r pc_pins pc_ev pc_cov pc_find pc_drift < <(
+    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0"
+  )
   local summary_json
   summary_json=$(cat <<ENDJSON
 {
-  "pins": $(count_dir pins),
-  "evidence": $(count_dir evidence),
-  "findings": $(count_dir findings),
-  "coverage_records": $(count_dir coverage),
+  "pins": ${pc_pins},
+  "evidence": ${pc_ev},
+  "findings": ${pc_find},
+  "coverage_records": ${pc_cov},
   "observed_nodes": ${#NODE_SLUGS[@]},
   "stale_nodes": ${stale_count},
   "ok_nodes": ${ok_count},

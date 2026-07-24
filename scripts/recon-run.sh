@@ -1095,16 +1095,22 @@ ENDAI
 
   attention_items_json+="]"
 
-  # Build summary
+  # Build summary — per-procedure counts (pins are namespaced; evidence/coverage/
+  # findings/drift live in shared dirs, so attribute by procedure_id). claims are
+  # produced only by v0, so a plain directory count is correct for them.
+  local pc_pins pc_ev pc_cov pc_find pc_drift
+  read -r pc_pins pc_ev pc_cov pc_find pc_drift < <(
+    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0"
+  )
   local summary_json
   summary_json=$(cat <<ENDJSON
 {
-  "pins": $(count_dir pins),
+  "pins": ${pc_pins},
   "claims": $(count_dir claims),
-  "evidence": $(count_dir evidence),
-  "drift_records": $(count_dir drift),
-  "findings": $(count_dir findings),
-  "coverage_records": $(count_dir coverage),
+  "evidence": ${pc_ev},
+  "drift_records": ${pc_drift},
+  "findings": ${pc_find},
+  "coverage_records": ${pc_cov},
   "observed_repositories": ${#OBSERVED_REPOS[@]},
   "partial_failures": ${PARTIAL_FAILURES}
 }
