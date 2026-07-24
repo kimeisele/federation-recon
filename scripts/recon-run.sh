@@ -440,6 +440,163 @@ extract_federation_roles_claims() {
   log "  agent-world: FEDERATION_ROLES.md roles=${role_count}, last_audited=${last_audited}, maturity_table=${has_maturity_table}"
 }
 
+# ---- Phase 2g: Cross-Node Boundary Agreement (Issue #24) -----------------
+
+extract_cross_node_boundary_agreement() {
+  log "=== Phase 2g: Cross-Node Boundary Agreement (Issue #24) ==="
+  log "Comparing REPO_BOUNDARIES.md central claims vs .well-known self-declarations"
+
+  local aw_sha="${REPO_SHA[kimeisele/agent-world]:-}"
+  [ -z "$aw_sha" ] && { warn "  No pin for agent-world — skipping cross-node agreement"; return; }
+
+  # Fetch REPO_BOUNDARIES.md at the pinned agent-world SHA
+  local rb_content=""
+  rb_content=$(gh api "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${aw_sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  [ -z "$rb_content" ] && { warn "  REPO_BOUNDARIES.md not found in agent-world at ${aw_sha}"; return; }
+
+  local aw_pin="${PIN_FILES[agent-world]}"
+
+  # Parse table rows: | `repo` | **Role** | Code | Owns | DoesNotOwn |
+  local table_rows
+  table_rows=$(printf '%s' "$rb_content" | rg '^\| \`' 2>/dev/null || true)
+
+  # Helper: normalize role strings for deterministic comparison
+  # Lowercase, replace underscores with spaces, collapse whitespace, trim.
+  _normalize_role() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '_' ' ' | sed 's/  */ /g; s/^ *//;s/ *$//'
+  }
+
+  while IFS= read -r row; do
+    [ -z "$row" ] && continue
+
+    # Extract repo name (first column, strip backticks/asterisks)
+    local repo_in_row=""
+    repo_in_row=$(printf '%s' "$row" | sed 's/^| *//' | sed 's/ *|.*//' | sed 's/`//g' | sed 's/\*\*//g' | xargs)
+    [ -z "$repo_in_row" ] && continue
+
+    # Only check repos in our DESCRIPTOR_REPOS set
+    local full_repo="kimeisele/${repo_in_row}"
+    local in_set=false
+    for r in "${DESCRIPTOR_REPOS[@]}"; do
+      [ "$r" = "$full_repo" ] && in_set=true && break
+    done
+    $in_set || { log "  SKIP: ${repo_in_row} not in observed descriptor set"; continue; }
+
+    local sha="${REPO_SHA[$full_repo]:-}"
+    [ -z "$sha" ] && { warn "  No pin for ${full_repo} — skipping cross-node check"; continue; }
+
+    local repo_pin="${PIN_FILES[${repo_in_row}]}"
+    [ -z "$repo_pin" ] && { warn "  No pin file for ${repo_in_row} — skipping"; continue; }
+
+    # Extract central role from REPO_BOUNDARIES.md (column 3)
+    local central_role=""
+    central_role=$(printf '%s' "$row" | cut -d'|' -f3 | sed 's/\*\*//g' | xargs)
+    [ -z "$central_role" ] && central_role="(not asserted)"
+
+    # Extract central owns from REPO_BOUNDARIES.md (column 5)
+    local central_owns=""
+    central_owns=$(printf '%s' "$row" | cut -d'|' -f5 | xargs)
+
+    # ---- Create central claim (what REPO_BOUNDARIES.md says about this node) ----
+    local central_text="REPO_BOUNDARIES.md (agent-world:docs/REPO_BOUNDARIES.md) asserts ${repo_in_row} role: ${central_role}, owns: ${central_owns}"
+    local central_claim
+    central_claim=$(gen_claim_observation "kimeisele/agent-world" "docs/REPO_BOUNDARIES.md" \
+      "$central_text" "$aw_pin" "$RUN_TIMESTAMP")
+    CLAIM_FILES["xna-central-${repo_in_row}"]="$central_claim"
+    budget_track "$central_claim"
+
+    # ---- Central evidence: the raw role string from REPO_BOUNDARIES.md ----
+    local central_ev
+    central_ev=$(gen_evidence "$aw_pin" "manifest_field" \
+      "$central_role" \
+      "docs/REPO_BOUNDARIES.md")
+    EVIDENCE_FILES["xna-central-${repo_in_row}"]="$central_ev"
+    budget_track "$central_ev"
+
+    # ---- Fetch .well-known/agent-federation.json at repo's pinned SHA ----
+    local wk_content=""
+    wk_content=$(gh api "repos/${full_repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+    local self_role="" self_ob=""
+    if [ -n "$wk_content" ]; then
+      self_role=$(printf '%s' "$wk_content" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('role',''))" 2>/dev/null || echo "")
+      self_ob=$(printf '%s' "$wk_content" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('owner_boundary',''))" 2>/dev/null || echo "")
+    fi
+
+    # ---- Create self claim (what .well-known says about this node) ----
+    local self_text=""
+    if [ -n "$wk_content" ]; then
+      self_text="${full_repo}/.well-known/agent-federation.json self-declares role: ${self_role}, owner_boundary: ${self_ob}"
+    else
+      self_text="${full_repo}/.well-known/agent-federation.json not found at commit ${sha}"
+    fi
+    local self_claim
+    self_claim=$(gen_claim_observation "$full_repo" ".well-known/agent-federation.json" \
+      "$self_text" "$repo_pin" "$RUN_TIMESTAMP")
+    CLAIM_FILES["xna-self-${repo_in_row}"]="$self_claim"
+    budget_track "$self_claim"
+
+    # ---- Self evidence: role and owner_boundary from .well-known ----
+    local self_ev_value="role=${self_role};owner_boundary=${self_ob}"
+    local self_ev
+    self_ev=$(gen_evidence "$repo_pin" "manifest_field" \
+      "$self_ev_value" \
+      ".well-known/agent-federation.json")
+    EVIDENCE_FILES["xna-self-${repo_in_row}"]="$self_ev"
+    budget_track "$self_ev"
+
+    # ---- Deterministic cross-node comparison ----
+    local drift_detected=false
+    local drift_reason=""
+
+    local norm_central; norm_central=$(_normalize_role "$central_role")
+    local norm_self_role; norm_self_role=$(_normalize_role "$self_role")
+
+    if [ -n "$self_role" ]; then
+      # Self-declared role present: compare normalized strings
+      if [ "$norm_central" != "$norm_self_role" ]; then
+        drift_detected=true
+        drift_reason="Role mismatch: REPO_BOUNDARIES.md asserts role: ${central_role} but ${repo_in_row}/.well-known/agent-federation.json self-declares role: ${self_role} (normalized: ${norm_central} vs ${norm_self_role})"
+      fi
+    elif [ -n "$self_ob" ]; then
+      # owner_boundary present but no role field — acceptable, no drift
+      :
+    else
+      # Neither role nor owner_boundary in self-declaration
+      drift_detected=true
+      drift_reason="Absent self-declaration: REPO_BOUNDARIES.md asserts ${repo_in_row} role: ${central_role} but ${repo_in_row}/.well-known/agent-federation.json has no role or owner_boundary field"
+    fi
+
+    if $drift_detected; then
+      local central_cid; central_cid=$(artifact_id "$central_claim")
+      local self_eid; self_eid=$(artifact_id "$self_ev")
+
+      local drift
+      drift=$(gen_drift_record "$central_cid" "$self_eid" "$drift_reason")
+      DRIFT_FILES["xna-${repo_in_row}"]="$drift"
+      budget_track "$drift"
+
+      local finding_text="Cross-node boundary disagreement for ${repo_in_row}: ${drift_reason}"
+      local finding
+      finding=$(gen_finding "$finding_text" "${self_ev}" \
+        "cross_repository_boundaries" "warning" "observed")
+      FINDING_FILES["xna-${repo_in_row}"]="$finding"
+      budget_track "$finding"
+
+      log "  CROSS-NODE DRIFT: ${repo_in_row} — ${drift_reason}"
+    else
+      log "  OK: ${repo_in_row} — central ${central_role} consistent with self-declaration"
+    fi
+  done <<< "$table_rows"
+
+  # Summary count
+  local xna_drift_count=0
+  for key in "${!DRIFT_FILES[@]}"; do
+    [[ "$key" == xna-* ]] && xna_drift_count=$(( xna_drift_count + 1 ))
+  done
+  log "  Cross-node agreement: ${xna_drift_count} contradiction(s) found across 6 nodes"
+}
+
 # ---- Phase 3: Deterministic Observations (§12.3 op 4) ------------------
 
 run_deterministic_observations() {
@@ -1296,6 +1453,7 @@ main() {
   extract_self_observation_claims
   extract_world_constitution_claims
   extract_federation_roles_claims
+  extract_cross_node_boundary_agreement
   budget_checkpoint "claims"
 
   # Phase 3: Deterministic observations
