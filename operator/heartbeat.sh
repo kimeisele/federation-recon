@@ -3,41 +3,68 @@
 #
 # Phases: 0_BOOTSTRAP → 1_CLASSIFY → 2_DELEGATE → 3_REVIEW → 4_INTEGRATE → 5_SWEEP
 #
-# v1.1 reads a validated checkpoint and read-only GitHub metadata, emits exactly
-# one ACTION, and optionally advances the selected state file. It never executes
-# BUILD/REVIEW/SWEEP/INTEGRATE actions.
+# v1.2 adds durable runtime-state with single-writer locking, schema v2,
+# previous_checkpoint audit, crash-safe writes, and explicit init/force/break-lock
+# modes. The committed operator/state.json (schema v1) is the immutable bootstrap
+# seed. Runtime state defaults to operator/.runtime/state.json.
 #
 # Usage:
-#   bash operator/heartbeat.sh [--dry-run] [--state-file PATH]
+#   bash operator/heartbeat.sh [--init-runtime [--force]] [--break-lock]
+#                              [--dry-run] [--state-file PATH]
 #
 # Environment:
-#   OPERATOR_STATE_FILE  default state path override
+#   OPERATOR_STATE_FILE  default runtime state path override
 #   HEARTBEAT_NOW        fixed ISO-8601 UTC time for deterministic testing
+#   _HB_FSYNC_FAIL_INJECT  set to 1 to simulate directory fsync failure (tests)
 
 set -o errexit -o nounset -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STATE_FILE="${OPERATOR_STATE_FILE:-$REPO_ROOT/operator/state.json}"
+SEED_FILE="$REPO_ROOT/operator/state.json"
+STATE_FILE=""
 DRY_RUN=false
+INIT_RUNTIME=false
+FORCE_INIT=false
+BREAK_LOCK=false
 STALE_DAYS_PR=7
 STALE_DAYS_ISSUE=14
 
 usage() {
   cat <<'EOF'
-Usage: bash operator/heartbeat.sh [--dry-run] [--state-file PATH]
+Usage: bash operator/heartbeat.sh [--init-runtime [--force]] [--break-lock]
+                                   [--dry-run] [--state-file PATH]
 
-  --dry-run          decide without modifying the state file
-  --state-file PATH  use an explicit checkpoint path
+  --init-runtime     initialize runtime state from the immutable seed
+  --force            with --init-runtime: backup current state, re-init from seed
+  --break-lock       remove a stuck lock directory (PID dead, boot-id missing)
+  --dry-run          decide without modifying the runtime state file
+  --state-file PATH  use an explicit runtime checkpoint path
 
-Exit status: 0 = decision/policy stop, 1 = invalid local state/configuration,
-             2 = required Git or GitHub visibility unavailable
+Exit status: 0 = success / decision, 1 = local irrecoverable,
+             2 = transient / lock contention
 EOF
 }
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 
+# ────────────────────────────────────────────────────────────
+#  Argument parsing
+# ────────────────────────────────────────────────────────────
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --init-runtime)
+      INIT_RUNTIME=true
+      shift
+      ;;
+    --force)
+      FORCE_INIT=true
+      shift
+      ;;
+    --break-lock)
+      BREAK_LOCK=true
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -57,18 +84,389 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ -f "$STATE_FILE" ] || die "state file not found: $STATE_FILE"
-[ ! -L "$STATE_FILE" ] || die "state file must not be a symbolic link: $STATE_FILE"
+if $FORCE_INIT && ! $INIT_RUNTIME; then
+  die "--force requires --init-runtime"
+fi
+
+mode_count=0
+$INIT_RUNTIME && mode_count=$((mode_count + 1))
+$BREAK_LOCK && mode_count=$((mode_count + 1))
+if [ "$mode_count" -gt 1 ]; then
+  die "--init-runtime and --break-lock are mutually exclusive"
+fi
+
+if [ -z "$STATE_FILE" ]; then
+  STATE_FILE="${OPERATOR_STATE_FILE:-$REPO_ROOT/operator/.runtime/state.json}"
+fi
+
+# Normalize to absolute lexical path (no symlink resolution) so
+# _raw_ancestor_symlink_check can walk ancestors without hitting '.'.
+case "$STATE_FILE" in
+  /*) ;;  # already absolute
+  *) STATE_FILE="$PWD/$STATE_FILE" ;;
+esac
+
+# ────────────────────────────────────────────────────────────
+#  Boot identity (for stale-lock detection)
+# ────────────────────────────────────────────────────────────
+
+get_boot_id() {
+  if [ -r /proc/sys/kernel/random/boot_id ]; then
+    cat /proc/sys/kernel/random/boot_id
+  elif command -v sysctl >/dev/null 2>&1; then
+    sysctl -n kern.boottime 2>/dev/null || true
+  fi
+}
+
+BOOT_ID="$(get_boot_id)"
+
+# ────────────────────────────────────────────────────────────
+#  Path validation (§2 of ADR)
+# ────────────────────────────────────────────────────────────
+
+# _raw_ancestor_symlink_check PATH
+# Rejects symlinks on the given path and every existing raw ancestor component
+# from the filesystem root. Dies on first symlink or non-directory file found.
+_raw_ancestor_symlink_check() {
+  local target="$1"
+
+  if [ -L "$target" ]; then
+    die "path component is a symbolic link: $target"
+  fi
+  if [ -e "$target" ] && [ ! -d "$target" ] && [ ! -f "$target" ]; then
+    die "path component is not a regular file or directory: $target"
+  fi
+
+  local ancestor
+  ancestor="$(dirname "$target")"
+  while [ "$ancestor" != "/" ]; do
+    if [ -L "$ancestor" ]; then
+      die "path component is a symbolic link: $ancestor"
+    fi
+    if [ -e "$ancestor" ] && [ ! -d "$ancestor" ]; then
+      die "path component is not a directory: $ancestor"
+    fi
+    ancestor="$(dirname "$ancestor")"
+  done
+}
+
+# _stat_num GNU_FMT BSD_FMT PATH
+# Reads one numeric stat field portably. GNU is probed FIRST: BSD stat rejects
+# -c outright (exit 1) and falls through cleanly, whereas on Linux `stat -f` is
+# filesystem-stat mode, which would answer a *different* question with exit 0
+# and silently defeat a BSD-first fallback. Non-numeric or empty output is a
+# hard failure — the ownership and mode checks are a security boundary and must
+# fail closed rather than be skipped.
+_stat_num() {
+  local gnu_fmt="$1" bsd_fmt="$2" path="$3" out
+  out="$(stat -c "$gnu_fmt" "$path" 2>/dev/null || stat -f "$bsd_fmt" "$path" 2>/dev/null || echo "")"
+  case "$out" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$out"
+}
+
+# _validate_target_perms PATH [require_file]
+# For an existing path: reject symlinks, validate owner=$(id -u), mode=0600.
+_validate_target_perms() {
+  local target="$1"
+  local require_file="${2:-false}"
+
+  if [ -L "$target" ]; then
+    die "path must not be a symbolic link: $target"
+  fi
+  if [ ! -e "$target" ]; then
+    return 0
+  fi
+  if $require_file && [ ! -f "$target" ]; then
+    die "expected regular file: $target"
+  fi
+
+  local owner_uid
+  owner_uid="$(_stat_num '%u' '%u' "$target")" || die "cannot read owner of: $target"
+  if [ "$owner_uid" != "$(id -u)" ]; then
+    die "path not owned by current user: $target"
+  fi
+  local tmode
+  tmode="$(_stat_num '%a' '%p' "$target")" || die "cannot read mode of: $target"
+  while [ "${#tmode}" -gt 3 ]; do tmode="${tmode#?}"; done
+  if [ "$tmode" != "600" ]; then
+    die "file mode must be 0600: $target (got $tmode)"
+  fi
+}
+
+# _validate_dir_perms PATH
+# Validates owner=$(id -u) and mode=0700 for an existing directory.
+_validate_dir_perms() {
+  local d="$1"
+  if [ ! -d "$d" ]; then
+    die "expected directory: $d"
+  fi
+  local owner_uid
+  owner_uid="$(_stat_num '%u' '%u' "$d")" || die "cannot read owner of: $d"
+  if [ "$owner_uid" != "$(id -u)" ]; then
+    die "directory not owned by current user: $d"
+  fi
+  local dmode
+  dmode="$(_stat_num '%a' '%p' "$d")" || die "cannot read mode of: $d"
+  while [ "${#dmode}" -gt 3 ]; do dmode="${dmode#?}"; done
+  if [ "$dmode" != "700" ]; then
+    die "directory mode must be 0700: $d (got $dmode)"
+  fi
+}
+
+# validate_seed_path PATH
+# Read-only seed validation: reject symlinks on target + every raw ancestor.
+# Does NOT check ownership/mode (seed is committed, not runtime).
+validate_seed_path() {
+  local target="$1"
+  [ -f "$target" ] || die "seed file not found: $target"
+  _raw_ancestor_symlink_check "$target"
+}
+
+# validate_runtime_path TARGET_PATH [must_exist]
+# Full security validation: reject symlinks on target and every raw ancestor.
+# Validate file owner=current-user and mode=0600 (if exists).
+# Validate parent dir owner=current-user and mode=0700.
+validate_runtime_path() {
+  local target="$1"
+  local must_exist="${2:-false}"
+
+  _raw_ancestor_symlink_check "$target"
+
+  # Existence check
+  if $must_exist; then
+    [ -f "$target" ] || die "state file not found: $target"
+  elif [ -e "$target" ] && [ ! -f "$target" ]; then
+    die "state file is not a regular file: $target"
+  fi
+
+  # Target ownership and mode
+  _validate_target_perms "$target" "$must_exist"
+
+  # Parent dir ownership and mode
+  local parent_dir
+  parent_dir="$(dirname "$target")"
+  if [ -d "$parent_dir" ]; then
+    _validate_dir_perms "$parent_dir"
+  fi
+}
+
+# validate_lock_path LOCK_DIR
+# Same full validation as runtime path for the lock directory.
+validate_lock_path() {
+  local lock_dir="$1"
+  # Lock dir + metadata files must not be symlinked
+  if [ -L "$lock_dir" ]; then
+    die "lock directory must not be a symbolic link: $lock_dir"
+  fi
+  if [ -e "$lock_dir" ] && [ ! -d "$lock_dir" ]; then
+    die "lock path is not a directory: $lock_dir"
+  fi
+  for f in "$lock_dir"/pid "$lock_dir"/boot_id "$lock_dir"/acquired_at; do
+    if [ -L "$f" ]; then
+      die "lock metadata must not be a symbolic link: $f"
+    fi
+  done
+}
+
+# validate_backup_path BACKUP_PATH
+# Rejects symlinks on the backup target and its parent.
+validate_backup_path() {
+  local bak="$1"
+  if [ -L "$bak" ]; then
+    die "backup path must not be a symbolic link: $bak"
+  fi
+  local bak_parent
+  bak_parent="$(dirname "$bak")"
+  if [ -L "$bak_parent" ]; then
+    die "backup parent must not be a symbolic link: $bak_parent"
+  fi
+}
+
+# create_runtime_parent PARENT_DIR
+# Create missing parent dirs under a validated ancestor with umask 077.
+# Then revalidate owner + mode per ADR §2 step 4.
+create_runtime_parent() {
+  local parent_dir="$1"
+  if [ -d "$parent_dir" ]; then
+    _validate_dir_perms "$parent_dir"
+    return 0
+  fi
+
+  # Find last existing raw ancestor
+  local p="$parent_dir"
+  while [ "$p" != "/" ] && [ ! -d "$p" ] && [ ! -L "$p" ]; do
+    p="$(dirname "$p")"
+  done
+
+  if [ -L "$p" ]; then
+    die "ancestor is a symbolic link: $p"
+  fi
+
+  if [ ! -d "$p" ]; then
+    die "cannot find existing ancestor for: $parent_dir"
+  fi
+  if [ ! -w "$p" ]; then
+    die "ancestor not writable: $p"
+  fi
+
+  umask 077
+  mkdir -p "$parent_dir"
+
+  # ADR §2 step 4: revalidate final runtime parent owner and 0700
+  _validate_dir_perms "$parent_dir"
+}
+
+# ────────────────────────────────────────────────────────────
+#  Lock protocol (§3 of ADR)
+# ────────────────────────────────────────────────────────────
+
+LOCK_DIR=""
+
+_release_lock() {
+  if [ -n "${LOCK_DIR:-}" ] && [ -d "$LOCK_DIR" ]; then
+    rm -rf "$LOCK_DIR"
+  fi
+}
+
+_add_exit_trap() {
+  local cmd="$1"
+  local existing
+  existing="$(trap -p EXIT 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "trap -- '' EXIT" ]; then
+    existing="${existing#trap -- }"
+    existing="${existing% EXIT}"
+    [ "${existing#\'}" != "$existing" ] && existing="${existing#\'}"
+    [ "${existing%\'}" != "$existing" ] && existing="${existing%\'}"
+    trap "$cmd; $existing" EXIT
+  else
+    trap "$cmd" EXIT
+  fi
+}
+
+_register_lock_cleanup() {
+  _add_exit_trap '_release_lock'
+}
+
+acquire_lock() {
+  local runtime_state="$1"
+  local parent_dir
+  parent_dir="$(dirname "$runtime_state")"
+  LOCK_DIR="$parent_dir/heartbeat.lock"
+
+  validate_lock_path "$LOCK_DIR"
+
+  if [ ! -d "$parent_dir" ]; then
+    die "runtime parent does not exist; run --init-runtime first"
+  fi
+
+  while true; do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      _register_lock_cleanup
+
+      chmod 0700 "$LOCK_DIR" || {
+        echo "FATAL: failed to chmod lock directory" >&2
+        exit 1
+      }
+      local now_iso
+      now_iso="${HEARTBEAT_NOW:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+      echo "$$" > "$LOCK_DIR/pid" || {
+        echo "FATAL: failed to write lock PID metadata" >&2
+        exit 1
+      }
+      echo "${BOOT_ID:-unknown}" > "$LOCK_DIR/boot_id" || {
+        echo "FATAL: failed to write lock boot_id metadata" >&2
+        exit 1
+      }
+      echo "$now_iso" > "$LOCK_DIR/acquired_at" || {
+        echo "FATAL: failed to write lock acquired_at metadata" >&2
+        exit 1
+      }
+      chmod 0600 "$LOCK_DIR/pid" "$LOCK_DIR/boot_id" "$LOCK_DIR/acquired_at" || {
+        echo "FATAL: failed to chmod lock metadata files" >&2
+        exit 1
+      }
+      return 0
+    fi
+
+    local lock_pid lock_boot
+    lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
+    lock_boot="$(cat "$LOCK_DIR/boot_id" 2>/dev/null || echo "")"
+
+    if [ -z "$lock_pid" ]; then
+      die "lock metadata unreadable — manual inspection required: $LOCK_DIR"
+    fi
+
+    case "$lock_pid" in
+      ''|*[!0-9]*) die "lock PID invalid — manual inspection required: $LOCK_DIR" ;;
+    esac
+
+    if kill -0 "$lock_pid" 2>/dev/null; then
+      echo "ACTION: STOP lock held by live process $lock_pid" >&2
+      echo "FATAL: lock held by live process $lock_pid" >&2
+      exit 2
+    fi
+
+    if [ -z "$BOOT_ID" ]; then
+      die "lock from dead PID $lock_pid but boot identity unavailable — use --break-lock"
+    fi
+
+    if [ -n "$lock_boot" ] && [ "$lock_boot" != "unknown" ] && [ "$lock_boot" != "$BOOT_ID" ]; then
+      :
+    elif [ "$lock_boot" = "$BOOT_ID" ]; then
+      :
+    else
+      die "lock from dead PID $lock_pid but boot identity cannot be verified — manual inspection required: $LOCK_DIR"
+    fi
+
+    rm -rf "$LOCK_DIR"
+  done
+}
+
+do_break_lock() {
+  local runtime_state="$1"
+  local parent_dir
+  parent_dir="$(dirname "$runtime_state")"
+  local lock_dir="$parent_dir/heartbeat.lock"
+
+  validate_lock_path "$lock_dir"
+
+  if [ ! -d "$lock_dir" ]; then
+    echo "No lock directory found at $lock_dir"
+    exit 0
+  fi
+
+  local lock_pid
+  lock_pid="$(cat "$lock_dir/pid" 2>/dev/null || echo "")"
+
+  if [ -z "$lock_pid" ]; then
+    die "lock metadata unreadable — cannot break: $lock_dir"
+  fi
+
+  case "$lock_pid" in
+    ''|*[!0-9]*) die "lock PID invalid — cannot break: $lock_dir" ;;
+  esac
+
+  if kill -0 "$lock_pid" 2>/dev/null; then
+    die "lock held by live process $lock_pid — refusing to break"
+  fi
+
+  echo "Breaking lock from dead PID $lock_pid"
+  rm -rf "$lock_dir"
+  echo "Lock removed."
+  exit 0
+}
+
+# ────────────────────────────────────────────────────────────
+#  State I/O (Python helpers)
+# ────────────────────────────────────────────────────────────
+
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 
-# Validate the checkpoint before any GitHub query or mutation. Booleans do not
-# count as integers in Python even though bool subclasses int.
-validate_state() {
-  _HB_STATE="$STATE_FILE" python3 - <<'PY'
-import datetime
-import json
-import os
-import sys
+_python_validate_v2() {
+  _HB_STATE="$1" python3 - <<'PY'
+import datetime, json, os, sys
 
 path = os.environ["_HB_STATE"]
 try:
@@ -98,8 +496,8 @@ def valid_timestamp(value, nullable=False):
         return False
 
 errors = []
-if state.get("schema_version") != 1:
-    errors.append("schema_version must equal 1")
+if state.get("schema_version") != 2:
+    errors.append("schema_version must equal 2")
 if state.get("phase") not in phases:
     errors.append("phase is missing or unsupported")
 if not is_int(state.get("cycle")) or state["cycle"] < 0:
@@ -122,21 +520,220 @@ else:
     if not is_int(maximum) or maximum < 1:
         errors.append("budget.max_expert_calls must be a positive integer")
 
+# previous_checkpoint: must be null or dict with exact 7 fields, each fully validated
+pc = state.get("previous_checkpoint")
+if pc is not None:
+    if not isinstance(pc, dict):
+        errors.append("previous_checkpoint must be null or an object")
+    else:
+        required_pc_fields = {"phase", "cycle", "expert_calls_this_cycle",
+                              "max_expert_calls", "last_heartbeat", "updated_at", "notes"}
+        actual_fields = set(pc.keys())
+        extra = actual_fields - required_pc_fields
+        missing = required_pc_fields - actual_fields
+        if extra:
+            errors.append("previous_checkpoint has unexpected fields: " + ",".join(sorted(extra)))
+        if missing:
+            errors.append("previous_checkpoint missing fields: " + ",".join(sorted(missing)))
+        # Same domain constraints as current state
+        if pc.get("phase") not in phases:
+            errors.append("previous_checkpoint.phase must be a valid phase")
+        if not is_int(pc.get("cycle")) or pc.get("cycle", -1) < 0:
+            errors.append("previous_checkpoint.cycle must be a non-negative integer")
+        if not is_int(pc.get("expert_calls_this_cycle")) or pc.get("expert_calls_this_cycle", -1) < 0:
+            errors.append("previous_checkpoint.expert_calls_this_cycle must be a non-negative integer")
+        if not is_int(pc.get("max_expert_calls")) or pc.get("max_expert_calls", 0) < 1:
+            errors.append("previous_checkpoint.max_expert_calls must be a positive integer")
+        if not valid_timestamp(pc.get("updated_at"), nullable=False):
+            errors.append("previous_checkpoint.updated_at must be an ISO-8601 UTC timestamp")
+        if not valid_timestamp(pc.get("last_heartbeat"), nullable=True):
+            errors.append("previous_checkpoint.last_heartbeat must be null or ISO-8601 UTC")
+        if not isinstance(pc.get("notes"), str):
+            errors.append("previous_checkpoint.notes must be a string")
+
 if errors:
     print("; ".join(errors), file=sys.stderr)
     raise SystemExit(1)
 PY
 }
 
-if ! validation_error="$(validate_state 2>&1)"; then
-  die "invalid state file: $validation_error"
-fi
+_python_fsync_dir() {
+  python3 - <<'PY'
+import os, sys
 
-state_field() {
-  local key="$1"
-  _HB_STATE="$STATE_FILE" _HB_KEY="$key" python3 - <<'PY'
-import json
-import os
+if os.environ.get("_HB_FSYNC_FAIL_INJECT") == "1":
+    print("FATAL: simulated directory fsync failure after os.replace", file=sys.stderr)
+    raise SystemExit(1)
+
+directory = os.environ.get("_HB_FSYNC_DIR", "")
+if directory:
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except OSError as exc:
+        print("FATAL: directory fsync failed after os.replace: " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
+PY
+}
+
+_python_init_runtime() {
+  _HB_SEED="$1" _HB_RUNTIME="$2" python3 - <<'PY'
+import json, os, sys, tempfile
+
+seed_path = os.environ["_HB_SEED"]
+runtime_path = os.environ["_HB_RUNTIME"]
+
+with open(seed_path) as handle:
+    seed = json.load(handle)
+
+if seed.get("schema_version") != 1:
+    print("seed schema_version must be 1", file=sys.stderr)
+    raise SystemExit(1)
+
+runtime = dict(seed)
+runtime["schema_version"] = 2
+runtime["previous_checkpoint"] = None
+
+directory = os.path.dirname(os.path.abspath(runtime_path))
+fd, temporary = tempfile.mkstemp(prefix=".heartbeat-state-", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w") as handle:
+        json.dump(runtime, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, runtime_path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+# _python_init_force SEED_PATH RUNTIME_PATH BACKUP_PATH
+# ADR §1/§4: backup with fsync before state replacement.
+# On _HB_FSYNC_BACKUP_INJECT=1, fails after backup os.replace+dirmsync
+# but before state replacement — tests backup ordering.
+_python_init_force() {
+  _HB_SEED="$1" _HB_RUNTIME="$2" _HB_BACKUP="$3" python3 - <<'PY'
+import json, os, sys, tempfile
+
+seed_path = os.environ["_HB_SEED"]
+runtime_path = os.environ["_HB_RUNTIME"]
+backup_path = os.environ["_HB_BACKUP"]
+directory = os.path.dirname(os.path.abspath(runtime_path))
+
+# 1. Backup current runtime state if it exists
+if os.path.exists(runtime_path):
+    fd, temporary = tempfile.mkstemp(prefix=".heartbeat-backup-", dir=directory, text=True)
+    try:
+        with open(runtime_path) as src:
+            current = src.read()
+        with os.fdopen(fd, "w") as dst:
+            dst.write(current)
+            dst.flush()
+            os.fsync(dst.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, backup_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    # Directory fsync after backup rename
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except OSError as exc:
+        print("FATAL: directory fsync failed after backup: " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
+
+# 2. Injectable failure point: after backup fsync, before state replacement
+if os.environ.get("_HB_FSYNC_BACKUP_INJECT") == "1":
+    print("FATAL: simulated failure after backup fsync, before state init", file=sys.stderr)
+    raise SystemExit(1)
+
+# 3. Write new state from seed
+with open(seed_path) as handle:
+    seed = json.load(handle)
+
+if seed.get("schema_version") != 1:
+    print("seed schema_version must be 1", file=sys.stderr)
+    raise SystemExit(1)
+
+runtime = dict(seed)
+runtime["schema_version"] = 2
+runtime["previous_checkpoint"] = None
+
+fd, temporary = tempfile.mkstemp(prefix=".heartbeat-state-", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w") as handle:
+        json.dump(runtime, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, runtime_path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+_python_write_state() {
+  _HB_STATE_PATH="$1" \
+  _HB_PHASE="$2" \
+  _HB_CYCLE="$3" \
+  _HB_EXPERT_CALLS="$4" \
+  _HB_LAST_HEARTBEAT="$5" \
+  _HB_NOTES="$6" \
+  _HB_UPDATED_AT="$7" \
+  python3 - <<'PY' || die "failed to write state file"
+import json, os, sys, tempfile
+
+path = os.environ["_HB_STATE_PATH"]
+with open(path) as handle:
+    state = json.load(handle)
+
+# Capture previous_checkpoint: flattened snapshot of mutable fields
+budget = state.get("budget", {})
+prev = {
+    "phase": state.get("phase"),
+    "cycle": state.get("cycle"),
+    "expert_calls_this_cycle": budget.get("expert_calls_this_cycle"),
+    "max_expert_calls": budget.get("max_expert_calls"),
+    "last_heartbeat": state.get("last_heartbeat"),
+    "updated_at": state.get("updated_at"),
+    "notes": state.get("notes"),
+}
+
+state["previous_checkpoint"] = prev
+state["updated_at"] = os.environ["_HB_UPDATED_AT"]
+state["phase"] = os.environ["_HB_PHASE"]
+state["cycle"] = int(os.environ["_HB_CYCLE"])
+state["budget"]["expert_calls_this_cycle"] = int(os.environ["_HB_EXPERT_CALLS"])
+state["last_heartbeat"] = os.environ["_HB_LAST_HEARTBEAT"] or None
+state["notes"] = os.environ["_HB_NOTES"]
+
+directory = os.path.dirname(os.path.abspath(path))
+fd, temporary = tempfile.mkstemp(prefix=".heartbeat-state-", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w") as handle:
+        json.dump(state, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+_python_field() {
+  _HB_STATE="$1" _HB_KEY="$2" python3 - <<'PY'
+import json, os
 
 with open(os.environ["_HB_STATE"]) as handle:
     value = json.load(handle)
@@ -149,9 +746,102 @@ else:
 PY
 }
 
+# ────────────────────────────────────────────────────────────
+#  Tempfile cleanup (under lock, never dry-run)
+# ────────────────────────────────────────────────────────────
+
+cleanup_tempfiles() {
+  local parent_dir
+  parent_dir="$(dirname "$STATE_FILE")"
+  if [ -d "$parent_dir" ]; then
+    local f
+    for f in "$parent_dir"/.heartbeat-state-* "$parent_dir"/.heartbeat-backup-*; do
+      [ -e "$f" ] || continue
+      rm -f "$f"
+    done
+  fi
+}
+
+# ────────────────────────────────────────────────────────────
+#  --break-lock mode
+# ────────────────────────────────────────────────────────────
+
+if $BREAK_LOCK; then
+  validate_runtime_path "$STATE_FILE"
+  do_break_lock "$STATE_FILE"
+fi
+
+# ────────────────────────────────────────────────────────────
+#  --init-runtime mode
+# ────────────────────────────────────────────────────────────
+
+if $INIT_RUNTIME; then
+  validate_seed_path "$SEED_FILE"
+
+  validate_runtime_path "$STATE_FILE"
+  create_runtime_parent "$(dirname "$STATE_FILE")"
+
+  acquire_lock "$STATE_FILE"
+
+  cleanup_tempfiles
+
+  if $FORCE_INIT; then
+    _backup_path="${STATE_FILE}.bak"
+    validate_backup_path "$_backup_path"
+    if _out="$(_python_init_force "$SEED_FILE" "$STATE_FILE" "$_backup_path" 2>&1)"; then
+      :
+    else
+      echo "FATAL: $_out" >&2
+      exit 1
+    fi
+    _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
+    echo "Runtime state re-initialized from seed: $STATE_FILE"
+    exit 0
+  else
+    if [ -f "$STATE_FILE" ]; then
+      die "runtime state already exists: $STATE_FILE (use --force to re-initialize)"
+    fi
+    if _out="$(_python_init_runtime "$SEED_FILE" "$STATE_FILE" 2>&1)"; then
+      :
+    else
+      echo "FATAL: $_out" >&2
+      exit 1
+    fi
+    _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
+    echo "Runtime state initialized: $STATE_FILE"
+    exit 0
+  fi
+fi
+
+# ────────────────────────────────────────────────────────────
+#  Normal heartbeat
+# ────────────────────────────────────────────────────────────
+
+validate_runtime_path "$STATE_FILE" true
+
+if ! $DRY_RUN; then
+  acquire_lock "$STATE_FILE"
+fi
+
+if ! $DRY_RUN; then
+  cleanup_tempfiles
+fi
+
+if ! validation_error="$(_python_validate_v2 "$STATE_FILE" 2>&1)"; then
+  die "invalid runtime state: $validation_error"
+fi
+
+# ────────────────────────────────────────────────────────────
+#  Decision engine
+# ────────────────────────────────────────────────────────────
+
+state_field() {
+  _python_field "$STATE_FILE" "$1"
+}
+
 now_iso="${HEARTBEAT_NOW:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 runtime_tmp="$(mktemp -d)"
-trap 'rm -rf "$runtime_tmp"' EXIT
+_add_exit_trap 'rm -rf "$runtime_tmp"'
 if ! _HB_NOW="$now_iso" python3 - > "$runtime_tmp/now-epoch" 2>/dev/null <<'PY'
 import datetime
 import os
@@ -170,45 +860,8 @@ now_epoch="$(cat "$runtime_tmp/now-epoch")"
 write_state() {
   local phase="$1" cycle="$2" expert_calls="$3" last_heartbeat="$4" notes="$5"
   $DRY_RUN && return 0
-
-  _HB_STATE="$STATE_FILE" \
-  _HB_PHASE="$phase" \
-  _HB_CYCLE="$cycle" \
-  _HB_EXPERT_CALLS="$expert_calls" \
-  _HB_LAST_HEARTBEAT="$last_heartbeat" \
-  _HB_NOTES="$notes" \
-  _HB_UPDATED_AT="$now_iso" \
-  python3 - <<'PY' || die "failed to write state file"
-import json
-import os
-import stat
-import tempfile
-
-path = os.environ["_HB_STATE"]
-original_mode = stat.S_IMODE(os.stat(path).st_mode)
-with open(path) as handle:
-    state = json.load(handle)
-state["updated_at"] = os.environ["_HB_UPDATED_AT"]
-state["phase"] = os.environ["_HB_PHASE"]
-state["cycle"] = int(os.environ["_HB_CYCLE"])
-state["budget"]["expert_calls_this_cycle"] = int(os.environ["_HB_EXPERT_CALLS"])
-state["last_heartbeat"] = os.environ["_HB_LAST_HEARTBEAT"] or None
-state["notes"] = os.environ["_HB_NOTES"]
-
-directory = os.path.dirname(os.path.abspath(path))
-fd, temporary = tempfile.mkstemp(prefix=".heartbeat-state-", dir=directory, text=True)
-try:
-    with os.fdopen(fd, "w") as handle:
-        json.dump(state, handle, indent=2)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.chmod(temporary, original_mode)
-    os.replace(temporary, path)
-finally:
-    if os.path.exists(temporary):
-        os.unlink(temporary)
-PY
+  _python_write_state "$STATE_FILE" "$phase" "$cycle" "$expert_calls" "$last_heartbeat" "$notes" "$now_iso"
+  _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
 }
 
 emit_action() {
@@ -231,7 +884,6 @@ cycle="$(state_field cycle)"
 expert_calls="$(state_field budget.expert_calls_this_cycle)"
 max_expert="$(state_field budget.max_expert_calls)"
 
-# Bootstrap is local-only. It does not require GitHub visibility.
 if [ "$phase" = "0_BOOTSTRAP" ]; then
   if ! git_status="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)"; then
     stop_action "local repository status unavailable — cannot run heartbeat" "STOP: git status failed"
@@ -247,8 +899,6 @@ if [ "$phase" = "0_BOOTSTRAP" ]; then
   exit 0
 fi
 
-# GitHub is the read-only control plane. Any incomplete or malformed view must
-# stop the dispatcher rather than masquerade as an empty backlog.
 command -v gh >/dev/null 2>&1 || {
   visibility_stop "GitHub visibility unavailable: gh not found"
   exit 2
@@ -266,8 +916,6 @@ fi
 printf '%s' "$prs_json" > "$runtime_tmp/prs.json"
 printf '%s' "$issues_json" > "$runtime_tmp/issues.json"
 
-# Output is five integers, so untrusted GitHub text never becomes shell syntax:
-# WIP_COUNT STALE_PR STALE_ISSUE REVIEW_PR BUILD_ISSUE. Zero means none.
 if ! _HB_PRS="$runtime_tmp/prs.json" \
   _HB_ISSUES="$runtime_tmp/issues.json" \
   _HB_NOW_EPOCH="$now_epoch" \

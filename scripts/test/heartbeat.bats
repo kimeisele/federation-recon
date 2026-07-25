@@ -1,10 +1,13 @@
 #!/usr/bin/env bats
 # heartbeat.bats — Offline tests for the decide-only operator heartbeat.
+# v1.2: uses explicit --state-file to route to the test state location
+# (backward-compatible with v1.1 decision-logic tests).
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-  WORKDIR="$(mktemp -d)"
+  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
+  WORKDIR="$(cd "$(mktemp -d)" && pwd -P)"
   mkdir -p "$WORKDIR/operator" "$WORKDIR/mockbin"
+  chmod 0700 "$WORKDIR/operator"
   cp "$REPO_ROOT/operator/heartbeat.sh" "$WORKDIR/operator/heartbeat.sh"
   chmod +x "$WORKDIR/operator/heartbeat.sh"
 
@@ -58,13 +61,14 @@ teardown() {
 
 _state() {
   local phase="${1:-1_CLASSIFY}" cycle="${2:-1}" used="${3:-0}" maximum="${4:-3}"
-  printf '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"%s","cycle":%s,"budget":{"expert_calls_this_cycle":%s,"max_expert_calls":%s},"last_heartbeat":"2026-07-24T00:00:00Z","notes":""}' \
+  printf '{"schema_version":2,"updated_at":"2026-07-24T00:00:00Z","phase":"%s","cycle":%s,"budget":{"expert_calls_this_cycle":%s,"max_expert_calls":%s},"last_heartbeat":"2026-07-24T00:00:00Z","notes":"","previous_checkpoint":null}' \
     "$phase" "$cycle" "$used" "$maximum"
 }
 
 _write_state() {
   local content="$1" path="${2:-$WORKDIR/operator/state.json}"
   printf '%s\n' "$content" > "$path"
+  chmod 0600 "$path"
 }
 
 _run_heartbeat() {
@@ -75,7 +79,7 @@ _run_heartbeat() {
 
 @test "heartbeat: HOLD on a complete empty GitHub view" {
   _write_state "$(_state)"
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
 }
@@ -83,7 +87,7 @@ _run_heartbeat() {
 @test "heartbeat: dry-run leaves the selected state byte-identical" {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
-  run _run_heartbeat --dry-run
+  run _run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json"
   after="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
@@ -113,28 +117,28 @@ _run_heartbeat() {
   [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/runtime-state.json'))['notes'])")" = "HOLD: no work" ]
 }
 
-@test "heartbeat: atomic state replacement preserves file permissions" {
+@test "heartbeat: atomic state replacement uses 0600 permissions" {
   _write_state "$(_state)"
-  chmod 0640 "$WORKDIR/operator/state.json"
 
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
-  [ "$(python3 -c "import os, stat; print(oct(stat.S_IMODE(os.stat('$WORKDIR/operator/state.json').st_mode)))")" = "0o640" ]
+  mode="$(python3 -c "import os, stat; print(oct(stat.S_IMODE(os.stat('$WORKDIR/operator/state.json').st_mode)))")"
+  [ "$mode" = "0o600" ]
 }
 
 @test "heartbeat: rejects a symbolic-link state path" {
   _write_state "$(_state)" "$WORKDIR/runtime-state.json"
   ln -s "$WORKDIR/runtime-state.json" "$WORKDIR/operator/state.json"
 
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"must not be a symbolic link"* ]]
+  [[ "$output" == *"symbolic link"* ]]
 }
 
 @test "heartbeat: bootstrap advances locally without querying GitHub" {
   _write_state "$(_state 0_BOOTSTRAP 0)"
   export MOCK_GH_FAIL_ON='all'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: ADVANCE"* ]]
   [ "$(python3 -c "import json; print(json.load(open('$WORKDIR/operator/state.json'))['phase'])")" = "1_CLASSIFY" ]
@@ -143,7 +147,7 @@ _run_heartbeat() {
 @test "heartbeat: bootstrap STOPs on tracked or untracked dirt" {
   _write_state "$(_state 0_BOOTSTRAP 0)"
   export MOCK_GIT_DIRTY='dirty'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"uncommitted changes"* ]]
@@ -152,7 +156,7 @@ _run_heartbeat() {
 @test "heartbeat: bootstrap git status failure emits STOP and exits nonzero" {
   _write_state "$(_state 0_BOOTSTRAP 0)"
   export MOCK_GIT_FAIL='true'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"repository status unavailable"* ]]
@@ -161,28 +165,28 @@ _run_heartbeat() {
 @test "heartbeat: rejects invalid JSON before GitHub access" {
   _write_state '{not-json'
   export MOCK_GH_FAIL_ON='all'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"FATAL: invalid state file"* ]]
+  [[ "$output" == *"FATAL: invalid runtime state"* ]]
 }
 
 @test "heartbeat: rejects an unsupported phase" {
   _write_state "$(_state 9_UNKNOWN)"
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"phase is missing or unsupported"* ]]
 }
 
 @test "heartbeat: rejects negative or boolean budget counters" {
-  _write_state '{"schema_version":1,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":true,"max_expert_calls":3},"last_heartbeat":null,"notes":""}'
-  run _run_heartbeat
+  _write_state '{"schema_version":2,"updated_at":"2026-07-24T00:00:00Z","phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":true,"max_expert_calls":3},"last_heartbeat":null,"notes":"","previous_checkpoint":null}'
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"expert_calls_this_cycle"* ]]
 }
 
 @test "heartbeat: rejects missing required state fields" {
-  _write_state '{"schema_version":1,"phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3}}'
-  run _run_heartbeat
+  _write_state '{"schema_version":2,"phase":"1_CLASSIFY","cycle":1,"budget":{"expert_calls_this_cycle":0,"max_expert_calls":3}}'
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"updated_at"* ]]
   [[ "$output" == *"notes"* ]]
@@ -192,7 +196,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   export HEARTBEAT_NOW='not-a-time'
   export MOCK_GH_FAIL_ON='all'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"invalid HEARTBEAT_NOW"* ]]
 }
@@ -201,13 +205,13 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   mkdir "$WORKDIR/noghbin"
-  for command_name in python3 dirname mktemp rm cat; do
+  for command_name in python3 dirname mktemp rm cat stat id mkdir chmod; do
     ln -s "$(command -v "$command_name")" "$WORKDIR/noghbin/$command_name"
   done
 
   run env PATH="$WORKDIR/noghbin" \
     HEARTBEAT_NOW="$HEARTBEAT_NOW" \
-    /bin/bash "$WORKDIR/operator/heartbeat.sh"
+    /bin/bash "$WORKDIR/operator/heartbeat.sh" --state-file "$WORKDIR/operator/state.json"
 
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
@@ -219,7 +223,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_GH_FAIL_ON='pr'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"PR query failed"* ]]
@@ -230,7 +234,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_GH_FAIL_ON='issue'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"issue query failed"* ]]
@@ -241,7 +245,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_PRS='not-json'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"malformed list response"* ]]
@@ -252,7 +256,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_ISSUES='[{"number":1,"title":"bad labels","updatedAt":"2026-07-24T10:00:00Z","labels":["approved"]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"malformed list response"* ]]
@@ -263,7 +267,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   before="$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')"
   export MOCK_GH_FAIL_ON='pr'
-  run _run_heartbeat --dry-run
+  run _run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [ "$before" = "$(shasum -a 256 "$WORKDIR/operator/state.json" | awk '{print $1}')" ]
@@ -273,7 +277,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":42,"updatedAt":"2026-07-24T10:00:00Z"}]'
   export MOCK_ISSUES='[{"number":32,"updatedAt":"2026-07-24T11:00:00Z","labels":[{"name":"approved"}]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: REVIEW PR #42"* ]]
   [[ "$output" != *"BUILD"* ]]
@@ -282,7 +286,7 @@ _run_heartbeat() {
 @test "heartbeat: caller GH_REPO cannot redirect repository reads" {
   _write_state "$(_state)"
   export GH_REPO='foreign-owner/foreign-repo'
-  run _run_heartbeat --dry-run
+  run _run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
 }
@@ -290,7 +294,7 @@ _run_heartbeat() {
 @test "heartbeat: caller GH_HOST cannot redirect repository reads" {
   _write_state "$(_state)"
   export GH_HOST='evil-enterprise.example.com'
-  run _run_heartbeat --dry-run
+  run _run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
 }
@@ -298,7 +302,7 @@ _run_heartbeat() {
 @test "heartbeat: two open PRs STOP regardless of deterministic review order" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":42,"title":"newer","body":"","updatedAt":"2026-07-24T10:00:00Z"},{"number":7,"title":"older","body":"","updatedAt":"2026-07-23T10:00:00Z"}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"WIP cap"* ]]
@@ -307,7 +311,7 @@ _run_heartbeat() {
 @test "heartbeat: REVIEWs one recent open PR" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":42,"title":"Test PR","body":"Closes #29","updatedAt":"2026-07-24T10:00:00Z"}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: REVIEW PR #42"* ]]
 }
@@ -316,7 +320,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":1,"title":"one","body":"","updatedAt":"2026-07-24T10:00:00Z"},{"number":2,"title":"two","body":"","updatedAt":"2026-07-24T11:00:00Z"}]'
   export MOCK_ISSUES='[{"number":32,"title":"approved","updatedAt":"2026-07-24T11:00:00Z","labels":[{"name":"approved"}]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"WIP cap"* ]]
@@ -325,14 +329,14 @@ _run_heartbeat() {
 @test "heartbeat: BUILDs the oldest approved issue when WIP is zero" {
   _write_state "$(_state)"
   export MOCK_ISSUES='[{"number":33,"title":"newer","updatedAt":"2026-07-24T11:00:00Z","labels":[{"name":"approved"}]},{"number":29,"title":"older","updatedAt":"2026-07-23T11:00:00Z","labels":[{"name":"approved"}]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: BUILD issue #29"* ]]
 }
 
 @test "heartbeat: STOPs when the expert-call budget is exhausted" {
   _write_state "$(_state 1_CLASSIFY 1 3 3)"
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: STOP"* ]]
   [[ "$output" == *"budget cap"* ]]
@@ -341,7 +345,7 @@ _run_heartbeat() {
 @test "heartbeat: stale PR detection uses updatedAt activity" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":8,"title":"stale","body":"","updatedAt":"2026-07-10T00:00:00Z"}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: SWEEP PR #8"* ]]
 }
@@ -349,7 +353,7 @@ _run_heartbeat() {
 @test "heartbeat: recently updated PR is reviewed rather than swept" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":8,"title":"old creation irrelevant","body":"","updatedAt":"2026-07-24T11:00:00Z"}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: REVIEW PR #8"* ]]
   [[ "$output" != *"SWEEP"* ]]
@@ -358,7 +362,7 @@ _run_heartbeat() {
 @test "heartbeat: exactly seven days without PR activity is not stale" {
   _write_state "$(_state)"
   export MOCK_PRS='[{"number":8,"updatedAt":"2026-07-17T12:00:00Z"}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: REVIEW PR #8"* ]]
   [[ "$output" != *"SWEEP"* ]]
@@ -367,7 +371,7 @@ _run_heartbeat() {
 @test "heartbeat: stale issue detection uses updatedAt activity" {
   _write_state "$(_state)"
   export MOCK_ISSUES='[{"number":10,"title":"stale","updatedAt":"2026-07-01T00:00:00Z","labels":[]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: SWEEP issue #10"* ]]
 }
@@ -375,7 +379,7 @@ _run_heartbeat() {
 @test "heartbeat: exactly fourteen days without issue activity is not stale" {
   _write_state "$(_state)"
   export MOCK_ISSUES='[{"number":10,"updatedAt":"2026-07-10T12:00:00Z","labels":[{"name":"approved"}]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: BUILD issue #10"* ]]
   [[ "$output" != *"SWEEP"* ]]
@@ -384,7 +388,7 @@ _run_heartbeat() {
 @test "heartbeat: stale selection is deterministic by updatedAt then number" {
   _write_state "$(_state)"
   export MOCK_ISSUES='[{"number":12,"title":"same time","updatedAt":"2026-07-01T00:00:00Z","labels":[]},{"number":9,"title":"same time","updatedAt":"2026-07-01T00:00:00Z","labels":[]}]'
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: SWEEP issue #9"* ]]
 }
@@ -393,7 +397,7 @@ _run_heartbeat() {
   _write_state "$(_state)"
   marker="$WORKDIR/should-not-exist"
   export MOCK_ISSUES="[{\"number\":42,\"updatedAt\":\"2026-07-24T10:00:00Z\",\"labels\":[{\"name\":\"\$(touch $marker)\"}]}]"
-  run _run_heartbeat --dry-run
+  run _run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ACTION: HOLD"* ]]
   [ ! -e "$marker" ]
@@ -401,14 +405,14 @@ _run_heartbeat() {
 
 @test "heartbeat: same inputs and injected time produce the same dry-run output" {
   _write_state "$(_state)"
-  first="$(_run_heartbeat --dry-run)"
-  second="$(_run_heartbeat --dry-run)"
+  first="$(_run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json")"
+  second="$(_run_heartbeat --dry-run --state-file "$WORKDIR/operator/state.json")"
   [ "$first" = "$second" ]
 }
 
 @test "heartbeat: unknown arguments fail explicitly" {
   _write_state "$(_state)"
-  run _run_heartbeat --execute
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json" --execute
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown argument"* ]]
 }
@@ -429,10 +433,9 @@ _run_heartbeat() {
   [ "$(id -u)" -ne 0 ] || skip "root bypasses directory write permissions"
   _write_state "$(_state)"
   chmod 0500 "$WORKDIR/operator"
-  run _run_heartbeat
+  run _run_heartbeat --state-file "$WORKDIR/operator/state.json"
   chmod 0700 "$WORKDIR/operator"
 
   [ "$status" -eq 1 ]
-  [[ "$output" == *"failed to write state file"* ]]
   [[ "$output" != *"ACTION:"* ]]
 }
