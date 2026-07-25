@@ -1,0 +1,10 @@
+{
+  "coverage_id": "cov-d8f505f7a740",
+  "repository_pin": "pins/v2-consumption/steward.json",
+  "procedure_id": "v2-consumption",
+  "procedure_version": "v2",
+  "capabilities_used": ["git", "gh", "rg", "python3", "jq"],
+  "capabilities_missing": [],
+  "result": "success",
+  "inspected_at": "2026-07-25T05:59:55Z"
+}

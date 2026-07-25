@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-666d77676343",
+  "referencing_repository": "kimeisele/steward-protocol",
+  "referencing_file_path": "scripts/agents/consult_oracle.py",
+  "line_number": 51,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/steward-protocol.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

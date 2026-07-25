@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-58ed5d1136bf",
+  "referencing_repository": "kimeisele/agent-village",
+  "referencing_file_path": "tests/test_execution_orchestrator.py",
+  "line_number": 281,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/agent-village.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

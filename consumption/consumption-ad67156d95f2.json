@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-ad67156d95f2",
+  "referencing_repository": "kimeisele/steward",
+  "referencing_file_path": "tests/test_context_contract.py",
+  "line_number": 589,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/steward.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

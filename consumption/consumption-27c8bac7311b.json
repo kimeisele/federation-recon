@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-27c8bac7311b",
+  "referencing_repository": "kimeisele/steward-protocol",
+  "referencing_file_path": "docs/architecture/docstring_analysis/docstrings.json",
+  "line_number": 8123,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/steward-protocol.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

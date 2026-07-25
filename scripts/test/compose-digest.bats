@@ -128,7 +128,7 @@ print('OK: federation-recon not in attention items')
 "
 }
 
-@test "compose-digest: agent-village also NOT in attention items" {
+@test "compose-digest: agent-village also NOT in attention items from census" {
   _run_composer 2>/dev/null
 
   python3 -c "
@@ -138,11 +138,12 @@ with open('digest/state-digest.json') as f:
     d = json.load(f)
 
 attention = d.get('attention_items', [])
-att_targets = [it['target'] for it in attention]
-
-assert 'kimeisele/agent-village' not in att_targets, \
-    f'agent-village illegally in attention: {att_targets}'
-print('OK: agent-village not in attention items')
+# agent-village may appear in attention from v2-consumption (consumption records),
+# but should NOT appear from v1-census (census descriptor items).
+census_village = [it for it in attention if it.get('procedure_id') == 'v1-census' and it.get('target') == 'kimeisele/agent-village']
+assert len(census_village) == 0, \
+    f'agent-village illegally in census attention: {census_village}'
+print('OK: agent-village not in census attention items')
 "
 }
 

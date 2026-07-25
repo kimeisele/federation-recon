@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-6436bd39ca9f",
+  "referencing_repository": "kimeisele/steward",
+  "referencing_file_path": "specs/HEARTBEAT_FAILURE_PROPAGATION_SYSTEM_SPEC.md",
+  "line_number": 118,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/steward.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-d67480ea3a6f",
+  "referencing_repository": "kimeisele/steward",
+  "referencing_file_path": "docs/PHASE1_BEFUND_steward.md",
+  "line_number": 339,
+  "referenced_finding_id": null,
+  "reference_type": "drift_path",
+  "repository_pin": "pins/v2-consumption/steward.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-cc7cdc62a117",
+  "referencing_repository": "kimeisele/steward",
+  "referencing_file_path": "specs/context_bridge_evidence/FEATURE_01_SLICE_A_PRODUCTION.md",
+  "line_number": 5,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/steward.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

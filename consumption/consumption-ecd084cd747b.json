@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-ecd084cd747b",
+  "referencing_repository": "kimeisele/agent-city",
+  "referencing_file_path": "city/review_governance/merge_authority.py",
+  "line_number": 125,
+  "referenced_finding_id": null,
+  "reference_type": "evidence_path",
+  "repository_pin": "pins/v2-consumption/agent-city.json",
+  "observed_at": "2026-07-25T05:59:55Z",
+  "cycle": 2
+}

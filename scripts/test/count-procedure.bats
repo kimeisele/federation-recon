@@ -45,8 +45,9 @@ field() {
 @test "coverage is attributed by procedure_id and sums to disk total" {
   v0="$(run_counts boundary-drift-recon-v0 v0-boundary-drift | field coverage)"
   v1="$(run_counts node-census-v1 v1-census | field coverage)"
+  v2="$(run_counts v2-consumption v2-consumption | field coverage)"
   total="$(ls coverage/*.json | wc -l | tr -d ' ')"
-  [ "$(( v0 + v1 ))" -eq "$total" ]
+  [ "$(( v0 + v1 + v2 ))" -eq "$total" ]
 }
 
 @test "an unknown procedure_id yields zero attributed artifacts" {
@@ -56,9 +57,9 @@ field() {
   [ "$(echo "$result" | field findings)" -eq 0 ]
 }
 
-@test "--sh emits five space-separated integers" {
+@test "--sh emits six space-separated integers" {
   out="$(python3 scripts/lib/count_procedure.py boundary-drift-recon-v0 v0-boundary-drift --sh)"
-  # exactly 5 fields, all integers
-  [ "$(echo "$out" | wc -w | tr -d ' ')" -eq 5 ]
+  # exactly 6 fields, all integers
+  [ "$(echo "$out" | wc -w | tr -d ' ')" -eq 6 ]
   for n in $out; do [[ "$n" =~ ^[0-9]+$ ]]; done
 }

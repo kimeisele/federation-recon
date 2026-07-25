@@ -126,13 +126,14 @@ validate_dir "evidence" "$SCHEMA_DIR/evidence.schema.json" "Evidence"
 validate_dir "drift" "$SCHEMA_DIR/drift-record.schema.json" "Drift Records"
 validate_dir "findings" "$SCHEMA_DIR/finding.schema.json" "Findings"
 validate_dir "coverage" "$SCHEMA_DIR/coverage-record.schema.json" "Coverage Records"
+validate_dir "consumption" "$SCHEMA_DIR/consumption-record.schema.json" "Consumption Records"
 
 # Referential integrity (#11): every repository_pin must resolve to a real pin
 # file, so the Claim/Evidence -> Pin -> raw repo navigation chain is not broken.
 # The schema only requires repository_pin to be a string; this checks it points
 # somewhere real.
 ref_err=0
-for f in claims/*.json evidence/*.json; do
+for f in claims/*.json evidence/*.json consumption/*.json; do
   [ -f "$f" ] || continue
   ref=$(python3 -c "import json;print(json.load(open('$f')).get('repository_pin',''))" 2>/dev/null)
   [ -z "$ref" ] && continue
