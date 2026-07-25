@@ -3,7 +3,14 @@
 Standing prompt for red-teaming **code, gates and mechanisms**. The sibling of
 `governance/consultation-prompt.md`, which covers constitutional text.
 
-Send this verbatim, plus the complete raw diff. Never a summary of the diff.
+**Checkout mode, not diff mode.** Run this as an agent inside a working
+checkout, with the ability to execute commands. Questions 1 and 3 demand
+*executed* evasions and *run* mutations; a reviewer holding only a diff can
+only imagine them, and imagined answers are worth a fraction of executed ones
+while looking identical in the report. If a review must be run without a
+checkout, every answer to 1, 3 and 8 must be explicitly labelled **not
+executed**. The cheaper mode is the weaker one and will win by default unless
+this is stated.
 
 ## Why this exists in this exact shape
 
@@ -45,6 +52,21 @@ wants the outcome the mechanism forbids. Enumerate the cheapest evasions. Mark
 each one you actually executed, and say how long it took. An evasion you
 demonstrated is worth more than five you imagined.
 
+**1b. Is the diff itself the attack?** Question 1 points outward at a
+hypothetical attacker. Point it at the author too: does this change weaken,
+narrow, bypass or delete any existing check — an added `|| true`, a narrowed
+trigger path, a test removed as "flaky", a widened permission, a file list that
+quietly omits one entry? Does the author benefit from that? The most probable
+self-interested change is not a bad new mechanism; it is a small loosening of an
+existing one.
+
+**1c. Are the author's factual claims true?** Check every factual claim in the
+PR description, the commit messages and any committed review artifact against
+the repository, the data and the CI logs. This repository has shipped a PR whose
+description asserted "CI rejects any PR..." while the gate never fired in CI, and
+a remediation claim of "re-run live" that a timestamp disproved. Verifying the
+mechanism is not verifying the author.
+
 **2. Does it fire in the environment it was built for?** Local success is weak
 evidence. For anything touching CI: does it run under a detached HEAD, a shallow
 clone, an absent environment variable, a missing binary? Check the workflow
@@ -61,6 +83,22 @@ Overclaiming is worse than the underlying weakness, because it invites trust the
 mechanism cannot carry. If the honest claim is much weaker than the apparent
 one, the documentation must say so.
 
+**4b. Do the change's factual premises hold?** Do not accept the premises the
+change is built on. Recompute them. **Open the data and read the outliers** — the
+single most damaging finding in this repository's history came from refusing the
+claim "`correlation_id` is empty in all 9,874 messages", counting for oneself,
+getting 9,873, and reading the one exception. A count is not a reading. Right
+value and working instrument are different properties, and a mechanism can
+report the correct number today while being incapable of reporting any other.
+
+**4c. Read the substrate, not only the diff.** Most material findings here have
+been in *unchanged* code the change newly depends on: an outbox cleared on
+partial push, nonce state that dies with the process, a required field silently
+backfilled, a scheduled job that never runs the new procedure. Read everything
+the diff calls, everything meant to call the diff, the workflow files, and the
+data it will run against. A diff-scoped review answers "how do you defeat this"
+about new code and never learns it stands on sand.
+
 **5. Which failure mode looks like success?** Find the paths where an error, an
 absence or a missing dependency produces a plausible value instead of a refusal.
 `|| true`, silent fallbacks, empty-result-on-error, defaults that fill in for
@@ -70,7 +108,28 @@ indistinguishable.
 **6. What would nobody notice during a long unattended session?** No human is
 watching. What accumulates, drifts, or silently degrades?
 
-**7. Anything else materially wrong or dangerous.**
+**7. Is this the right thing, not merely a correct thing?** A change can be
+well-tested, fire in CI, be mutation-hardened and honestly documented — and still
+entrench a bad interface, solve a problem nobody has, add an unsustainable
+dependency, or ratchet the operator's authority. Every question above is
+verification-shaped, because every defect that motivated them was. This one is
+not. Answer it deliberately rather than letting it fall into "anything else".
+
+**8. What is missing?** A diff shows what was added; it is structurally blind to
+what was left out. The absent scheduled job, the absent positive control, the
+absent question in a checklist. Ask what a complete version of this change would
+contain that this one does not.
+
+**9. Run the new mechanism against the change that introduces it.** One command,
+outsized hit rate: this repository shipped a gate that failed its own PR. If the
+change adds a check, execute it against its own diff.
+
+**10. If this is a follow-up round, were the prior conditions literally met?**
+Quote each numbered condition from the previous review and state whether it was
+satisfied in substance and in letter. Verifying the fix is the second half of
+rejecting.
+
+**11. Anything else materially wrong or dangerous.**
 
 Be blunt. Recommend rejection if warranted. A rubber-stamp review is worse than
 no review, because it manufactures the appearance of a check.
@@ -85,6 +144,27 @@ End with a line reading exactly `verdict: APPROVE` or `verdict: REJECT`.
 
 ## For the operator receiving the review
 
-Read the whole document, not the verdict line. That specific failure — reading
-`verdict: APPROVE` and merging past a numbered blocking condition below it —
-put an unratified constitutional amendment onto `main`. See #55.
+Not "read carefully". This repository's own thesis is that such instructions do
+not work: `docs/operator-lessons.md` said "do not verify by proxy" and its author
+violated it hours later. Holding every reviewed mechanism to *method, not prose*
+while holding the operator's own obligation to prose is the contradiction this
+section previously contained.
+
+**The obligation is mechanical.** Before merging, commit a point-by-point
+response that quotes each numbered finding from the review and states, for each,
+one of: fixed (with the commit), rejected (with the reason), or deferred (with
+the issue number). A finding that is not quoted has not been read. The failure
+this replaces — reading `verdict: APPROVE` and merging past a numbered blocking
+condition beneath it — put an unratified constitutional amendment onto `main`
+(#55).
+
+## Known gap
+
+Nothing triggers this template. No workflow invokes it and no gate requires its
+report, so by the standard of question 2 it is a prop: a review prompt that no
+process invokes fires exactly as often as someone remembers. The consultation
+gate covers constitutional files only. Until code red-team reports have a
+required committed path, their absence is not greppable and this document is a
+convention, not a control. Tracked as a follow-up; stated here rather than
+omitted, because a checklist that hides its own edges is more dangerous than one
+that admits them.
