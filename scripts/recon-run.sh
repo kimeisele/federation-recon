@@ -32,6 +32,7 @@ source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
 source "$SCRIPT_DIR/lib/boundary-agreement.sh"
+source "$SCRIPT_DIR/lib/constitution.sh"
 
 # ---- Configuration -----------------------------------------------------
 
@@ -592,25 +593,7 @@ print(json.dumps([role, boundary], separators=(',', ':')))
 
 # ---- Phase 2h: Constitution Observation (issue #45) --------------------
 
-# Hash a constitutional file at the given git commit SHA.
-# Uses git show to get the committed content, NOT the working tree.
-# The hash is computed ONLY from the file content; no artifact is included.
-constitution_file_hash() {
-  local sha="$1" path="$2"
-  # Try the pinned SHA first for determinism (FR-CON-012).
-  # Fall back to HEAD if the pinned commit is not available locally
-  # (e.g. during branch development or shallow clones).
-  local content
-  content=$(git show "${sha}:${path}" 2>/dev/null) || true
-  if [ -z "$content" ]; then
-    content=$(git show "HEAD:${path}" 2>/dev/null) || true
-  fi
-  if [ -z "$content" ]; then
-    printf ''
-    return
-  fi
-  printf '%s' "$content" | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
-}
+# hash a constitutional file at the given git commit SHA — see scripts/lib/constitution.sh
 
 observe_constitution() {
   log "=== Phase 2h: Constitution Observation (issue #45) ==="
