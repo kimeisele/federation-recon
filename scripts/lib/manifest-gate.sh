@@ -29,9 +29,13 @@ check_pin_manifest_membership() {
   # Extract repository slugs from the adopted-observed-set table.
   # Table rows have the shape: | `kimeisele/<slug>` | ... | yes |
   # Parse the first backtick-delimited column, strip the kimeisele/ prefix.
+  # grep, not rg: ci-checks.sh is the fast OFFLINE gate and must not acquire
+  # new external dependencies. rg is absent from the invariants CI job, where
+  # this failed closed with "could not parse any adopted repository" — correct
+  # behaviour, wrong dependency. grep is everywhere.
   local allowed_slugs
   allowed_slugs=$(
-    rg '^\| \x60kimeisele/' "$manifest_file" \
+    grep -E '^\| `kimeisele/' "$manifest_file" \
     | sed -n 's/^| `kimeisele\/\([^`]*\)` .*/\1/p' \
     | sort
   )
