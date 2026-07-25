@@ -2,15 +2,15 @@
 
 **Composed:** 2026-07-25T05:59:55Z
 **Procedures:** 3 (see digest/ for per-procedure details)
-**Attention items:** 4 (2 observatory)
+**Attention items:** 4 (1 observatory)
 
 ## Procedure Summary
 
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
 | `v0-boundary-drift` | `v0` | 2026-07-24T15:23 | claims=30, coverage_records=7, drift_records=2, evidence=35, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
-| `v1-census` | `v1` | 2026-07-24T15:24 | coverage_records=14, error_nodes=0, evidence=59, findings=18, observed_nodes=14, ok_nodes=12, pins=14, stale_nodes=2, staleness_threshold_days=60 |
-| `v2-consumption` | `v2` | 2026-07-25T05:59 | coverage_records=13, cycle=1, finding_references=0, observed_repositories=13, partial_failures=0, pins=13, repo_references=0, total_consumption_records=0 |
+| `v1-census` | `v1` | 2026-07-24T15:24 | coverage_records=7, error_nodes=0, evidence=30, findings=7, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
+| `v2-consumption` | `v2` | 2026-07-25T05:59 | coverage_records=6, cycle=1, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
 
 ## Ranked Attention (needs operator decision)
 
@@ -28,8 +28,7 @@ liveness (FR-CON-011) but are not ranked as federation attention items.
 
 | # | Target | Status | Procedure | Headline |
 |---|---|---|---|---|
-| 1 | `kimeisele/agent-village` | ✅ observed | `v1-census` | Constitutional non-peer kimeisele/agent-village — no descriptor expected (§5) |
-| 2 | `kimeisele/federation-recon` | ✅ observed | `v1-census` | Constitutional non-peer kimeisele/federation-recon — no descriptor expected (§5) |
+| 1 | `kimeisele/federation-recon` | ✅ observed | `v1-census` | Constitutional non-peer kimeisele/federation-recon — no descriptor expected (§5) |
 
 ## Budget
 

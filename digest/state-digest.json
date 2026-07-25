@@ -24,13 +24,13 @@
       "procedure_version": "v1",
       "run_timestamp": "2026-07-24T15:24:49Z",
       "summary": {
-        "pins": 14,
-        "evidence": 59,
-        "findings": 18,
-        "coverage_records": 14,
-        "observed_nodes": 14,
-        "stale_nodes": 2,
-        "ok_nodes": 12,
+        "pins": 7,
+        "evidence": 30,
+        "findings": 7,
+        "coverage_records": 7,
+        "observed_nodes": 7,
+        "stale_nodes": 1,
+        "ok_nodes": 6,
         "error_nodes": 0,
         "staleness_threshold_days": 60
       }
@@ -40,12 +40,12 @@
       "procedure_version": "v2",
       "run_timestamp": "2026-07-25T05:59:55Z",
       "summary": {
-        "pins": 13,
+        "pins": 6,
         "finding_references": 0,
         "repo_references": 0,
         "total_consumption_records": 0,
-        "coverage_records": 13,
-        "observed_repositories": 13,
+        "coverage_records": 6,
+        "observed_repositories": 6,
         "partial_failures": 0,
         "cycle": 1
       }
@@ -106,18 +106,6 @@
   ],
   "constitutional_observatory": [
     {
-      "target": "kimeisele/agent-village",
-      "status": "observed",
-      "attention_rank": 90,
-      "headline": "Constitutional non-peer kimeisele/agent-village \u2014 no descriptor expected (\u00a75)",
-      "refs": [
-        "findings/finding-aa331f6e7cb3.json"
-      ],
-      "non_peer": true,
-      "procedure_id": "v1-census",
-      "procedure_version": "v1"
-    },
-    {
       "target": "kimeisele/federation-recon",
       "status": "observed",
       "attention_rank": 90,
@@ -132,7 +120,7 @@
   ],
   "summary": {
     "total_attention_items": 4,
-    "total_observatory_items": 2,
+    "total_observatory_items": 1,
     "total_procedures": 3
   }
 }
