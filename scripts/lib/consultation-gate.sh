@@ -25,16 +25,19 @@ _consultation_const_files() {
   done
 }
 
-# _consultation_diff
+# _consultation_diff <outfile>
 # Computes the diff for constitutional files vs origin/main.
-# Factored out so the gate function can accept an override.
+# Writes diff to <outfile>. Returns 0 on success, 1 if origin/main cannot
+# be resolved (shallow clone, no remote).
+# Factored out so callers and tests can inject a synthetic diff.
 _consultation_diff() {
+  local outfile="$1"
   local const_files
   const_files=()
   while IFS= read -r f; do
     const_files+=("$f")
   done < <(_consultation_const_files)
-  git diff "origin/main...HEAD" -- "${const_files[@]}" 2>/dev/null || true
+  git diff "origin/main...HEAD" -- "${const_files[@]}" >"$outfile" 2>/dev/null
 }
 
 # check_consultation_gate <pr_number> [diff_text]
@@ -56,15 +59,39 @@ check_consultation_gate() {
   local pr_number="${1:-}"
   local diff_override="${2:-}"
 
-  # No PR context → silent pass (push to main, not a PR check).
-  [ -z "$pr_number" ] && return 0
+  # No PR context → silent pass (push to main, local dev, not a PR check).
+  if [ -z "$pr_number" ]; then
+    # On a pull_request event, missing PR number is a CI wiring defect.
+    # A guard that skips when it cannot identify its subject is not a guard.
+    if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+      echo "FAIL — consultation gate: running on pull_request event but no PR number available." >&2
+      echo "       CONSULTATION_PR_NUMBER is unset. The CI job must set it from" >&2
+      echo "       github.event.pull_request.number. A guard that skips when it" >&2
+      echo "       cannot identify its subject is not a guard." >&2
+      return 1
+    fi
+    return 0
+  fi
 
   # ---- Determine the diff ----
   local diff_out
+  local diff_tmp
   if [ $# -ge 2 ]; then
     diff_out="$diff_override"
   else
-    diff_out=$(_consultation_diff)
+    diff_tmp=$(mktemp)
+    if _consultation_diff "$diff_tmp"; then
+      diff_out=$(cat "$diff_tmp")
+      rm -f "$diff_tmp"
+    else
+      rm -f "$diff_tmp"
+      echo "FAIL — consultation gate: cannot resolve origin/main for diff computation." >&2
+      echo "       This likely means the clone is shallow (fetch-depth: 1). The CI" >&2
+      echo "       job must use fetch-depth: 0 to make origin/main available." >&2
+      echo "       A resolution failure must not look like a clean result — that is" >&2
+      echo "       the exact defect class documented in docs/operator-lessons.md." >&2
+      return 1
+    fi
   fi
 
   if [ -z "$diff_out" ]; then

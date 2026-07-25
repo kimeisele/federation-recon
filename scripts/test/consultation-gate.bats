@@ -454,3 +454,116 @@ ARTIFACT
   [ "$status" -eq 0 ]
   [[ "$output" == *"no constitutional files touched"* ]]
 }
+
+# ===========================================================================
+# CI-LIKE CONDITION TESTS — The existing tests all supply a PR number
+# explicitly, so the entire class of defect where the gate receives no PR
+# number in CI is untested. These tests exercise the conditions the gate
+# actually encounters in GitHub Actions: detached HEAD, branch name with no
+# digits, CONSULTATION_PR_NUMBER unset on a pull_request event, shallow clone
+# without origin/main.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Negative: pull_request event with no PR number
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: pull_request event, no PR number — fail" {
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no PR number available"* ]]
+  [[ "$output" == *"CONSULTATION_PR_NUMBER is unset"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Negative: pull_request event with CONSULTATION_PR_NUMBER empty
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: pull_request event, CONSULTATION_PR_NUMBER empty — fail" {
+  CONSULTATION_PR_NUMBER="" GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no PR number available"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Negative: detached HEAD on pull_request — fail (branch fallback yields HEAD)
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: detached HEAD on pull_request — fail" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+  cd "$WORKDIR"
+
+  git init -q
+  git config user.email "test@test"
+  git config user.name "Test"
+  touch CLAUDE.md
+  git add CLAUDE.md
+  git commit -m "init" -q
+  git checkout --detach -q
+
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no PR number available"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Negative: branch name with no digits on pull_request — fail
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: branch with no digits on pull_request — fail" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+  cd "$WORKDIR"
+
+  git init -q
+  git config user.email "test@test"
+  git config user.name "Test"
+  git checkout -b fix/security-patch -q
+
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no PR number available"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Negative: shallow clone without origin/main — fail
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: shallow clone without origin/main — fail" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+  cd "$WORKDIR"
+
+  git init -q
+  git config user.email "test@test"
+  git config user.name "Test"
+  touch CLAUDE.md
+  git add CLAUDE.md
+  git commit -m "init" -q
+
+  # No origin remote at all — _consultation_diff will fail.
+  # Gate gets a PR number but no diff override, so it must compute the diff.
+  run check_consultation_gate 99
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot resolve origin/main"* ]]
+  [[ "$output" == *"fetch-depth: 0"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Positive: push event (not pull_request), no PR number — silent pass
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: push event, no PR number — silent pass" {
+  GITHUB_EVENT_NAME=push run check_consultation_gate ""
+  [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Positive: no GITHUB_EVENT_NAME, no PR number — silent pass (local dev)
+# ---------------------------------------------------------------------------
+
+@test "consultation-gate: local dev (no GITHUB_EVENT_NAME), no PR number — silent pass" {
+  run check_consultation_gate ""
+  [ "$status" -eq 0 ]
+}

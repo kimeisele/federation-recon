@@ -116,9 +116,10 @@ the work and receives no session context**, before any of:
 A consultation is valid only if the prompt is the committed neutral template in
 `governance/consultation-prompt.md` plus the complete raw diff, and the full
 prompt and full response are committed verbatim as
-`governance/consultations/<pr>.md` with a `verdict:` line of `APPROVE` or
+`governance/consultations/<pr>.md` (PR-keyed, NOT issue-keyed — the artifact file name matches the pull request number) with a `verdict:` line of `APPROVE` or
 `REJECT`. CI rejects any PR touching the files above that lacks a valid
-consultation artifact. A REJECT blocks adoption unless a model from a third
+consultation artifact at `governance/consultations/<pr>.md` (PR-keyed, not
+issue-keyed). A REJECT blocks adoption unless a model from a third
 provider approves the identical diff, both transcripts committed. A
 constitutional consultation is never skipped for budget or availability reasons;
 if it cannot be performed, the change waits. Every consultation attempted for a
@@ -128,6 +129,19 @@ indistinguishable from shopping for a favourable answer.
 
 Independence of weights is not independence of information: a consultation that
 receives the operator's framing instead of the raw diff is not a check.
+
+**What the artifact gate proves and does not prove.** The CI gate checks that a
+file exists at the expected path containing the raw diff hunk headers, a reviewer
+line, a provider line, and a `verdict:` line. It proves a file exists containing
+those strings. It does NOT prove that any review occurred, that any reviewer saw
+the diff, that any model was consulted, or that the verdict came from an
+independent provider. A fully passing forged artifact can be produced in under a
+second: the raw diff, four header lines, and `verdict: APPROVE`. The gate's value
+is that it raises the cost of skipping review from free to deliberate fabrication
+and makes the omission visible in the diff — every committer must either obtain a
+real consultation or forge one, and a forged artifact is a committed, timestamped,
+diffable record of deception. The gate delivers visibility, not verification.
+Claiming enforcement it does not deliver invites the trust it cannot support.
 
 Every constitutional consultation must include the cumulative diff from the
 adoption baseline pinned in `docs/founding-decision-record.md`, not only the
