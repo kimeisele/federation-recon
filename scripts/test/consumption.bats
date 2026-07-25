@@ -8,6 +8,12 @@ REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 
 setup() {
   cd "$REPO_ROOT"
+  # Single source of truth, shared with production. Never re-declare a detection
+  # pattern inside a test: the defect this suite exists to catch was a broken
+  # production pattern, and a test carrying its own copy passes no matter what
+  # production does.
+  source "$REPO_ROOT/scripts/lib/consumption-patterns.sh"
+  export CONSUMPTION_PATTERN_FINDING_ID CONSUMPTION_PATTERN_REPO_SLUG
 }
 
 # ---------------------------------------------------------------------------
@@ -94,13 +100,15 @@ for key in data:
 @test "positive control: real Finding ID is detected by production search pattern" {
   local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-positive"
 
-  # This is the EXACT rg invocation from search_repo_for_consumption (line 191-194).
-  # We test it against a fixture to prove the instrument can detect real Finding IDs.
+  # Sources the SAME pattern definition production uses. Copying the pattern
+  # into the test would defeat the purpose: the bug this test exists to catch
+  # was a broken production pattern, and a test carrying its own copy passes
+  # regardless of what production does.
   run bash -c "
     cd '$fixture_dir'
     rg -n --no-heading --sort path --hidden \
-      -e 'finding-[0-9a-f]{12}' \
-      -e 'federation-recon' \
+      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
+      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
       . 2>/dev/null || true
   "
 
@@ -121,8 +129,8 @@ for key in data:
   run bash -c "
     cd '$fixture_dir'
     rg -n --no-heading --sort path --hidden \
-      -e 'finding-[0-9a-f]{12}' \
-      -e 'federation-recon' \
+      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
+      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
       . 2>/dev/null || true
   "
 
@@ -142,7 +150,7 @@ for key in data:
   local match_text="see finding-0fc027b8a436 for details"
   local ref_type=""
 
-  if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
+  if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
     ref_type="finding_id"
   elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
     ref_type="repo_reference"
@@ -155,7 +163,7 @@ for key in data:
   local match_text="uses federation-recon as a dependency"
   local ref_type=""
 
-  if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
+  if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
     ref_type="finding_id"
   elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
     ref_type="repo_reference"
@@ -176,8 +184,8 @@ for key in data:
   run bash -c "
     cd '$tmpdir'
     rg -n --no-heading --sort path --hidden \
-      -e 'finding-[0-9a-f]{12}' \
-      -e 'federation-recon' \
+      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
+      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true
   "
   [ -z "$output" ]
@@ -192,8 +200,8 @@ for key in data:
   run bash -c "
     cd '$tmpdir'
     rg -n --no-heading --sort path --hidden \
-      -e 'finding-[0-9a-f]{12}' \
-      -e 'federation-recon' \
+      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
+      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true
   "
   [ -z "$output" ]
@@ -208,8 +216,8 @@ for key in data:
   run bash -c "
     cd '$tmpdir'
     rg -n --no-heading --sort path --hidden \
-      -e 'finding-[0-9a-f]{12}' \
-      -e 'federation-recon' \
+      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
+      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true
   "
   [ -z "$output" ]

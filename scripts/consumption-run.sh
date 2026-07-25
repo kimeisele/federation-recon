@@ -42,6 +42,7 @@ trap cleanup_tmp_dirs EXIT INT TERM
 source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
+source "$SCRIPT_DIR/lib/consumption-patterns.sh"
 
 # ---- Configuration -----------------------------------------------------
 
@@ -198,8 +199,8 @@ search_repo_for_consumption() {
 
   local matches
   matches=$(cd "$tmpdir" && rg -n --no-heading --sort path --hidden \
-    -e 'finding-[0-9a-f]{12}' \
-    -e 'federation-recon' \
+    -e "$CONSUMPTION_PATTERN_FINDING_ID" \
+    -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
     . 2>/dev/null || true)
 
   if [ -z "$matches" ]; then
@@ -232,9 +233,9 @@ search_repo_for_consumption() {
     local ref_type="" finding_id=""
     local match_text="${rest#*:}"
 
-    if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
+    if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
       ref_type="finding_id"
-      finding_id=$(printf '%s' "$match_text" | rg -o 'finding-[0-9a-f]{12}' | head -1)
+      finding_id=$(printf '%s' "$match_text" | rg -o "$CONSUMPTION_PATTERN_FINDING_ID" | head -1)
     elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
       ref_type="repo_reference"
       finding_id=""
