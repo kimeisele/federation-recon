@@ -4,3 +4,6 @@
 
 # Operator v1.2 runtime state directory (never committed)
 operator/.runtime/
+
+# F-02 Consumption Measurement temp clone directories (never committed)
+.consumption-tmp-*

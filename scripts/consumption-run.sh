@@ -28,6 +28,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Per-procedure pin namespace — must be set BEFORE sourcing artifacts.sh
 export PIN_NAMESPACE="v2-consumption"
 
+# Clean stale temp directories left by aborted prior runs (from any agent)
+find "$REPO_ROOT" -maxdepth 1 -type d -name '.consumption-tmp-*' -exec rm -rf {} + 2>/dev/null || true
+
+# Trap: clean any temp directory created during this run on exit, abort, or interrupt
+cleanup_tmp_dirs() {
+  find "$REPO_ROOT" -maxdepth 1 -type d -name '.consumption-tmp-*' -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_tmp_dirs EXIT INT TERM
+
 # Source libraries
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/helpers.sh"
@@ -188,8 +197,8 @@ search_repo_for_consumption() {
   # destroy the falsifier (see PR #46 review, Blocker 1).
 
   local matches
-  matches=$(cd "$tmpdir" && rg -n --no-heading --sort path \
-    -e 'finding-[0-9a-f]\{12\}' \
+  matches=$(cd "$tmpdir" && rg -n --no-heading --sort path --hidden \
+    -e 'finding-[0-9a-f]{12}' \
     -e 'federation-recon' \
     . 2>/dev/null || true)
 
@@ -223,9 +232,9 @@ search_repo_for_consumption() {
     local ref_type="" finding_id=""
     local match_text="${rest#*:}"
 
-    if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]\{12\}'; then
+    if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
       ref_type="finding_id"
-      finding_id=$(printf '%s' "$match_text" | rg -o 'finding-[0-9a-f]\{12\}' | head -1)
+      finding_id=$(printf '%s' "$match_text" | rg -o 'finding-[0-9a-f]{12}' | head -1)
     elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
       ref_type="repo_reference"
       finding_id=""
@@ -333,7 +342,7 @@ perform_self_observation() {
 
   local total_repos=${#REPO_SLUGS[@]}
   local pinned_repos=0
-  for slug in "${!PIN_FILES[@]}"; do pinned_repos=$(( pinned_repos + 1 )); done
+  for slug in $(for s in "${!PIN_FILES[@]}"; do echo "$s"; done | sort); do pinned_repos=$(( pinned_repos + 1 )); done
 
   if [ "$pinned_repos" -lt "$total_repos" ]; then
     self_ok="false"
@@ -351,7 +360,10 @@ perform_self_observation() {
 
   local self_ev_refs=""
   local first=true
-  for key in "${!COVERAGE_FILES[@]}"; do
+  local sorted_cov_keys
+  sorted_cov_keys=$(for k in "${!COVERAGE_FILES[@]}"; do echo "$k"; done | sort)
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
     if [ -n "${COVERAGE_FILES[$key]}" ] && [ -f "${COVERAGE_FILES[$key]}" ]; then
       local cid
       cid=$(artifact_id "${COVERAGE_FILES[$key]}")
@@ -360,7 +372,7 @@ perform_self_observation() {
         first=false
       fi
     fi
-  done
+  done <<< "$sorted_cov_keys"
   [ -z "$self_ev_refs" ] && self_ev_refs="pins/v2-consumption/${REPO_SLUGS[0]}.json"
 
   local finding_self
@@ -378,13 +390,16 @@ generate_digest() {
   log "=== Phase 6: Generate sub-digest (composition contract) ==="
 
   # Count consumption records on disk, split by type
-  count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | wc -l | tr -d ' '; }
+  # Exclude cycle-ledger.json — it is a per-cycle ledger, not a consumption record
+  count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | { grep -v 'cycle-ledger.json' || true; } | wc -l | tr -d ' '; }
   local total_consumption
   total_consumption=$(count_dir consumption)
 
   local finding_id_count=0 repo_ref_count=0
   for rec_file in consumption/*.json; do
     [ -f "$rec_file" ] || continue
+    # Skip cycle-ledger.json
+    [[ "$(basename "$rec_file")" == "cycle-ledger.json" ]] && continue
     local rtype
     rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
     case "$rtype" in
@@ -418,6 +433,7 @@ ENDAI
 
       for rec_file in consumption/*.json; do
         [ -f "$rec_file" ] || continue
+        [[ "$(basename "$rec_file")" == "cycle-ledger.json" ]] && continue
         local rtype
         rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
         [ "$rtype" = "finding_id" ] || continue
@@ -457,6 +473,7 @@ ENDAI
 
       for rec_file in consumption/*.json; do
         [ -f "$rec_file" ] || continue
+        [[ "$(basename "$rec_file")" == "cycle-ledger.json" ]] && continue
         local rtype
         rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
         [ "$rtype" = "repo_reference" ] || continue
@@ -531,6 +548,77 @@ ENDJSON
   log "Sub-digest written to digest/v2-consumption.json"
 }
 
+# ---- Cycle Ledger ---------------------------------------------------------
+
+update_cycle_ledger() {
+  local ledger_file="consumption/cycle-ledger.json"
+
+  # Read existing ledger (JSON array) or start a new one
+  local ledger_json="[]"
+  if [ -f "$ledger_file" ]; then
+    ledger_json=$(python3 -c "
+import json
+with open('$ledger_file') as f:
+    data = json.load(f)
+print(json.dumps(data))
+" 2>/dev/null || echo "[]")
+  fi
+
+  # Check if this cycle already has an entry (idempotent)
+  local already_present
+  already_present=$(python3 -c "
+import json
+data = json.loads('''$ledger_json''')
+for entry in data:
+    if entry.get('cycle') == $CYCLE:
+        print('yes')
+        break
+" 2>/dev/null || echo "")
+
+  if [ "$already_present" = "yes" ]; then
+    log "  Cycle ${CYCLE} already recorded in cycle-ledger — skipping append"
+    return 0
+  fi
+
+  # Count finding_references and repo_references on disk
+  local finding_id_count=0 repo_ref_count=0
+  for rec_file in consumption/*.json; do
+    [ -f "$rec_file" ] || continue
+    [[ "$(basename "$rec_file")" == "cycle-ledger.json" ]] && continue
+    local rtype
+    rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
+    case "$rtype" in
+      finding_id)    finding_id_count=$(( finding_id_count + 1 )) ;;
+      repo_reference) repo_ref_count=$(( repo_ref_count + 1 )) ;;
+    esac
+  done
+
+  # Append new cycle entry
+  local new_entry
+  new_entry=$(cat <<ENDENTRY
+{
+  "cycle": ${CYCLE},
+  "finding_references": ${finding_id_count},
+  "repo_references": ${repo_ref_count},
+  "observed_repositories": ${#REPO_SLUGS[@]},
+  "timestamp": $(json_val "$RUN_TIMESTAMP")
+}
+ENDENTRY
+  )
+
+  local updated_ledger
+  updated_ledger=$(python3 -c "
+import json
+data = json.loads('''$ledger_json''')
+data.append(json.loads('''$new_entry'''))
+print(json.dumps(data, indent=2))
+")
+
+  write_json "$ledger_file" "$updated_ledger"
+  budget_track "$ledger_file"
+  log "  Cycle-ledger updated: cycle=${CYCLE}, finding_references=${finding_id_count}, repo_references=${repo_ref_count}"
+}
+
 # ---- Phase 7: Budget Enforcement ----------------------------------------
 
 enforce_budget() {
@@ -567,6 +655,8 @@ validate_outputs() {
   local consumption_validated=0
   for f in consumption/*.json; do
     [ -f "$f" ] || continue
+    # Skip cycle-ledger.json — it has its own structure, not a consumption record
+    [[ "$(basename "$f")" == "cycle-ledger.json" ]] && continue
     if ! validate_json_schema "$f" "schemas/consumption-record.schema.json"; then
       warn "Schema error: $f"
       errors=$(( errors + 1 ))
@@ -702,7 +792,7 @@ main() {
   local keep_file
   keep_file="$(mktemp)"
   for rec in "${CONSUMPTION_RECORDS[@]}"; do printf '%s\n' "$rec"; done > "$keep_file"
-  for key in "${!COVERAGE_FILES[@]}"; do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
+  for key in $(for k in "${!COVERAGE_FILES[@]}"; do echo "$k"; done | sort); do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
   python3 "$SCRIPT_DIR/clean-procedure-artifacts.py" \
     --root "$REPO_ROOT" \
     --procedure-id "$PROCEDURE_ID" \
@@ -713,6 +803,7 @@ main() {
 
   # Phase 6: Digest
   generate_digest
+  update_cycle_ledger
   budget_checkpoint "digest"
 
   # Phase 7: Budget enforcement

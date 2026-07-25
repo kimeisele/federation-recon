@@ -28,7 +28,11 @@ import os
 def _load(path):
     try:
         with open(path) as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        # Skip non-dict files (e.g. cycle-ledger.json is a JSON array)
+        if not isinstance(data, dict):
+            return {}
+        return data
     except Exception:
         return {}
 

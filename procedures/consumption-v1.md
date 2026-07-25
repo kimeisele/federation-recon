@@ -30,6 +30,10 @@ Unqualified substrings like `findings/`, `drift/`, or `evidence/` are intentiona
 
 Self-references (federation-recon referencing its own Findings) are excluded.
 
+### Ignore policy
+
+ripgrep skips hidden files and directories (dot-prefixed) and gitignored files by default. This federation stores machine-readable descriptors in `.well-known/`, a hidden directory. The search uses `--hidden` to include dot-prefixed files. It does **not** use `--no-ignore`: gitignored files (build artifacts, `node_modules/`, vendored dependencies, etc.) are not meaningful consumption signals and would introduce noise and nondeterminism from uncommitted build outputs.
+
 ## Consumption Record
 
 Metadata only: referencing repository slug, file path, line number, referenced Finding ID (null for repo_reference), reference type (`finding_id` or `repo_reference`), repository pin, and cycle. No source excerpts (FR-CON-008).
@@ -43,7 +47,27 @@ If the honest result is zero Finding references, zero MUST be committed plainly.
 
 ## Cycle counting
 
-F-02 is defined over "ten completed operational cycles." Each Consumption Record stores which cycle it belongs to. The cycle is derived from committed artifacts: previous sub-digest's cycle + 1, or 1 if this is the first run. In reproduce mode, the cycle is frozen from the committed sub-digest.
+F-02 is defined over "ten completed operational cycles." A **cycle** is one complete execution of this procedure against the current pin set, producing a committed sub-digest. Each cycle corresponds to one run of the daily census workflow (`.github/workflows/node-census.yml`). The procedure runs as part of that workflow alongside census and recon.
+
+Each Consumption Record stores which cycle it belongs to. The cycle number is derived from committed artifacts: previous sub-digest's cycle + 1, or 1 if this is the first run. In reproduce mode, the cycle is frozen from the committed sub-digest.
+
+### Cycle ledger
+
+An append-only per-cycle ledger at `consumption/cycle-ledger.json` records each cycle's results in a JSON array, one entry per completed cycle. This makes F-02 evaluable directly from a checkout without git archaeology:
+
+```json
+[
+  {
+    "cycle": 1,
+    "finding_references": 0,
+    "repo_references": 0,
+    "observed_repositories": 13,
+    "timestamp": "2026-07-25T06:00:00Z"
+  }
+]
+```
+
+The ledger is an append-only log. When a new cycle completes, a new entry is appended. No entry is ever modified or removed.
 
 ## Operations
 

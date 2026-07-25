@@ -32,7 +32,7 @@ ERRORS=0
 VALIDATED=0
 
 validate_dir() {
-  local dir="$1" schema="$2" label="$3"
+  local dir="$1" schema="$2" label="$3" skip_pat="${4:-}"
   local count=0 err=0
 
   if [ ! -d "$dir" ]; then
@@ -42,6 +42,11 @@ validate_dir() {
 
   for f in "$dir"/*.json; do
     [ -f "$f" ] || continue
+
+    # Skip files matching the optional fourth argument
+    if [ -n "$skip_pat" ] && [[ "$(basename "$f")" == "$skip_pat" ]]; then
+      continue
+    fi
 
     # Basic JSON syntax check
     if ! validate_json_syntax "$f"; then
@@ -126,7 +131,7 @@ validate_dir "evidence" "$SCHEMA_DIR/evidence.schema.json" "Evidence"
 validate_dir "drift" "$SCHEMA_DIR/drift-record.schema.json" "Drift Records"
 validate_dir "findings" "$SCHEMA_DIR/finding.schema.json" "Findings"
 validate_dir "coverage" "$SCHEMA_DIR/coverage-record.schema.json" "Coverage Records"
-validate_dir "consumption" "$SCHEMA_DIR/consumption-record.schema.json" "Consumption Records"
+validate_dir "consumption" "$SCHEMA_DIR/consumption-record.schema.json" "Consumption Records" "cycle-ledger.json"
 
 # Referential integrity (#11): every repository_pin must resolve to a real pin
 # file, so the Claim/Evidence -> Pin -> raw repo navigation chain is not broken.
@@ -135,6 +140,7 @@ validate_dir "consumption" "$SCHEMA_DIR/consumption-record.schema.json" "Consump
 ref_err=0
 for f in claims/*.json evidence/*.json consumption/*.json; do
   [ -f "$f" ] || continue
+  [[ "$(basename "$f")" == "cycle-ledger.json" ]] && continue
   ref=$(python3 -c "import json;print(json.load(open('$f')).get('repository_pin',''))" 2>/dev/null)
   [ -z "$ref" ] && continue
   if [ ! -f "$ref" ]; then

@@ -47,7 +47,7 @@
         "coverage_records": 13,
         "observed_repositories": 13,
         "partial_failures": 0,
-        "cycle": 2
+        "cycle": 1
       }
     }
   ],
@@ -56,7 +56,7 @@
       "target": "kimeisele/*",
       "status": "observed",
       "attention_rank": 0,
-      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 2 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
+      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 1 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
       "refs": [
         "consumption/"
       ],

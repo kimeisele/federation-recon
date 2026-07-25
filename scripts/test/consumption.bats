@@ -67,6 +67,7 @@ assert s.get('additionalProperties') == False
 @test "committed consumption records validate against schema (if any)" {
   for f in consumption/*.json; do
     [ -f "$f" ] || continue
+    [[ "$(basename "$f")" == "cycle-ledger.json" ]] && continue
     run python3 -c "
 import json, sys
 with open('schemas/consumption-record.schema.json') as sf:
@@ -87,21 +88,98 @@ for key in data:
 }
 
 # ---------------------------------------------------------------------------
-# Unqualified substrings must NOT produce consumption records (Blocker 1)
+# Positive control: a real Finding ID MUST produce a consumption record
+# ---------------------------------------------------------------------------
+
+@test "positive control: real Finding ID is detected by production search pattern" {
+  local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-positive"
+
+  # This is the EXACT rg invocation from search_repo_for_consumption (line 191-194).
+  # We test it against a fixture to prove the instrument can detect real Finding IDs.
+  run bash -c "
+    cd '$fixture_dir'
+    rg -n --no-heading --sort path --hidden \
+      -e 'finding-[0-9a-f]{12}' \
+      -e 'federation-recon' \
+      . 2>/dev/null || true
+  "
+
+  # The fixture contains finding-0fc027b8a436 → rg MUST produce output
+  [ -n "$output" ]
+  # The output must contain the file path and the Finding ID
+  [[ "$output" =~ doc\.md ]]
+  [[ "$output" =~ finding-0fc027b8a436 ]]
+}
+
+# ---------------------------------------------------------------------------
+# Negative control: finding-a{12} (literal braces) MUST NOT match
+# ---------------------------------------------------------------------------
+
+@test "negative control: literal 'finding-a{12}' is NOT detected by production search pattern" {
+  local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-negative"
+
+  run bash -c "
+    cd '$fixture_dir'
+    rg -n --no-heading --sort path --hidden \
+      -e 'finding-[0-9a-f]{12}' \
+      -e 'federation-recon' \
+      . 2>/dev/null || true
+  "
+
+  # The literal-braces.md file contains 'finding-a{12}' which has literal braces,
+  # NOT a 12-char hex string. ripgrep with Rust regex must NOT match this.
+  # Assert: the only possible match would be for 'federation-recon', and there
+  # is none, so output must be empty.
+  [ -z "$output" ]
+}
+
+# ---------------------------------------------------------------------------
+# Reference-type classification: finding_id vs repo_reference
+# ---------------------------------------------------------------------------
+
+@test "reference-type classification: Finding ID match classifies as finding_id" {
+  # Simulate the classification logic from search_repo_for_consumption (lines 226-232)
+  local match_text="see finding-0fc027b8a436 for details"
+  local ref_type=""
+
+  if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
+    ref_type="finding_id"
+  elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
+    ref_type="repo_reference"
+  fi
+
+  [ "$ref_type" = "finding_id" ]
+}
+
+@test "reference-type classification: repo mention classifies as repo_reference" {
+  local match_text="uses federation-recon as a dependency"
+  local ref_type=""
+
+  if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]{12}'; then
+    ref_type="finding_id"
+  elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
+    ref_type="repo_reference"
+  fi
+
+  [ "$ref_type" = "repo_reference" ]
+}
+
+# ---------------------------------------------------------------------------
+# Falsifier: unqualified substrings must NOT produce consumption records
 # ---------------------------------------------------------------------------
 
 @test "falsifier: file containing 'evidence/' produces NO consumption record" {
-  # The string 'evidence/' is a coincidental vocabulary match, not evidence
-  # that a Finding was cited. This test proves the falsifier is not fooled.
   local tmpdir
   tmpdir=$(mktemp -d)
   echo "This file mentions evidence/ in passing — not a Finding reference." > "$tmpdir/test.md"
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+    rg -n --no-heading --sort path --hidden \
+      -e 'finding-[0-9a-f]{12}' \
+      -e 'federation-recon' \
+      . 2>/dev/null || true
   "
-  # rg should produce zero matches for 'evidence/' since it is not in our patterns
   [ -z "$output" ]
   rm -rf "$tmpdir"
 }
@@ -113,7 +191,10 @@ for key in data:
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+    rg -n --no-heading --sort path --hidden \
+      -e 'finding-[0-9a-f]{12}' \
+      -e 'federation-recon' \
+      . 2>/dev/null || true
   "
   [ -z "$output" ]
   rm -rf "$tmpdir"
@@ -126,7 +207,10 @@ for key in data:
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+    rg -n --no-heading --sort path --hidden \
+      -e 'finding-[0-9a-f]{12}' \
+      -e 'federation-recon' \
+      . 2>/dev/null || true
   "
   [ -z "$output" ]
   rm -rf "$tmpdir"
@@ -216,6 +300,7 @@ else:
 @test "committed consumption records never reference federation-recon (self-exclusion)" {
   for f in consumption/*.json; do
     [ -f "$f" ] || continue
+    [[ "$(basename "$f")" == "cycle-ledger.json" ]] && continue
     python3 -c "
 import json
 with open('$f') as fh:
@@ -251,6 +336,7 @@ print('OK: no excerpt fields in schema')
 @test "committed consumption records all have cycle field (if any)" {
   for f in consumption/*.json; do
     [ -f "$f" ] || continue
+    [[ "$(basename "$f")" == "cycle-ledger.json" ]] && continue
     python3 -c "
 import json
 with open('$f') as fh:
