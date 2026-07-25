@@ -94,7 +94,16 @@ teardown() {
 # Mimic the constitution_file_hash from recon-run.sh
 constitution_file_hash() {
   local sha="$1" path="$2"
-  git show "${sha}:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
+  local content
+  content=$(git show "${sha}:${path}" 2>/dev/null) || true
+  if [ -z "$content" ]; then
+    content=$(git show "HEAD:${path}" 2>/dev/null) || true
+  fi
+  if [ -z "$content" ]; then
+    printf ''
+    return
+  fi
+  printf '%s' "$content" | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
 }
 
 # Run the constitution observation (simplified from recon-run.sh's observe_constitution)

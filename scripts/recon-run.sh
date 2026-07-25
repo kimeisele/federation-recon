@@ -600,12 +600,16 @@ constitution_file_hash() {
   # Try the pinned SHA first for determinism (FR-CON-012).
   # Fall back to HEAD if the pinned commit is not available locally
   # (e.g. during branch development or shallow clones).
-  local result
-  result=$(git show "${sha}:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null)
-  if [ -z "$result" ]; then
-    result=$(git show "HEAD:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null)
+  local content
+  content=$(git show "${sha}:${path}" 2>/dev/null) || true
+  if [ -z "$content" ]; then
+    content=$(git show "HEAD:${path}" 2>/dev/null) || true
   fi
-  printf '%s' "$result"
+  if [ -z "$content" ]; then
+    printf ''
+    return
+  fi
+  printf '%s' "$content" | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
 }
 
 observe_constitution() {

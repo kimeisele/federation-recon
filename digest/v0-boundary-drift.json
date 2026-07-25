@@ -23,7 +23,7 @@
 }],
   "summary": {
   "pins": 7,
-  "claims": 30,
+  "claims": 32,
   "evidence": 35,
   "drift_records": 2,
   "findings": 5,
@@ -32,12 +32,12 @@
   "partial_failures": 0
 },
   "budget": {
-  "total_bytes": 31064,
+  "total_bytes": 31890,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [pins:1828] [claims:19000] [evidence:26927] [drift:26927] [findings:28098] [coverage:30500] [self-observation:31064]"
+  "checkpoints": " [pins:1828] [claims:19826] [evidence:27753] [drift:27753] [findings:28924] [coverage:31326] [self-observation:31890]"
 },
   "self_observation": {
   "run_completed": true,

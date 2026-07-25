@@ -10,7 +10,7 @@
       "run_timestamp": "2026-07-24T15:23:48Z",
       "summary": {
         "pins": 7,
-        "claims": 30,
+        "claims": 32,
         "evidence": 35,
         "drift_records": 2,
         "findings": 5,
