@@ -68,7 +68,7 @@ FEDERATION_ROLES_SOURCE="agent-world:docs/FEDERATION_ROLES.md"
 # Output directories
 mkdir -p "$REPO_ROOT/pins/$PIN_NAMESPACE" "$REPO_ROOT/claims" "$REPO_ROOT/evidence"
 mkdir -p "$REPO_ROOT/drift" "$REPO_ROOT/findings" "$REPO_ROOT/coverage"
-mkdir -p "$REPO_ROOT/digest"
+mkdir -p "$REPO_ROOT/digest" "$REPO_ROOT/self"
 
 cd "$REPO_ROOT"
 
@@ -82,6 +82,14 @@ declare -A EVIDENCE_FILES    # evidence_id → evidence file path
 declare -A DRIFT_FILES       # drift_id → drift file path
 declare -A FINDING_FILES     # finding_id → finding file path
 declare -A COVERAGE_FILES    # coverage_id → coverage file path
+declare -A CONST_DRIFT_FILES  # drift_id → drift file path (constitutional)
+declare -A CONST_FINDING_FILES # finding_id → finding file path (constitutional)
+
+# Constitutional files to observe (FR-CON-011 extension, issue #45)
+declare -a CONSTITUTION_FILES=(
+  "CLAUDE.md"
+  "docs/founding-package-v0.2.md"
+)
 
 RUN_TIMESTAMP=""
 RUN_RESULT="success"
@@ -582,7 +590,175 @@ print(json.dumps([role, boundary], separators=(',', ':')))
   log "  Cross-node agreement: ${xna_drift_count} contradiction(s) found across ${checked_count} nodes"
 }
 
-# ---- Phase 3: Deterministic Observations (§12.3 op 4) ------------------
+# ---- Phase 2h: Constitution Observation (issue #45) --------------------
+
+# Hash a constitutional file at the given git commit SHA.
+# Uses git show to get the committed content, NOT the working tree.
+# The hash is computed ONLY from the file content; no artifact is included.
+constitution_file_hash() {
+  local sha="$1" path="$2"
+  git show "${sha}:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
+}
+
+observe_constitution() {
+  log "=== Phase 2h: Constitution Observation (issue #45) ==="
+  log "FR-CON-011 extension: Recon observes its own governing documents"
+
+  local repo="kimeisele/federation-recon"
+  local self_sha="${REPO_SHA[$repo]:-}"
+  [ -z "$self_sha" ] && { warn "  No pin for self — skipping constitution observation"; return; }
+
+  local pin_id="${PIN_FILES[federation-recon]}"
+  [ -z "$pin_id" ] && { warn "  No pin file for federation-recon — skipping constitution observation"; return; }
+
+  # Read the committed constitution baseline (if it exists)
+  local baseline_file="self/constitution-baseline.json"
+  local baseline_json=""
+  if [ -f "$baseline_file" ]; then
+    baseline_json=$(cat "$baseline_file")
+  fi
+
+  # Compute current hashes from git (at the pinned commit SHA)
+  # HASH ONLY the two constitutional files, never any derived artifact.
+  declare -A current_hashes=()
+  for cf in "${CONSTITUTION_FILES[@]}"; do
+    local h
+    h=$(constitution_file_hash "$self_sha" "$cf")
+    current_hashes["$cf"]="$h"
+    if [ -z "$h" ]; then
+      warn "  Cannot hash ${cf} at ${self_sha} — skipping"
+      continue
+    fi
+  done
+
+  # Store current hashes for later baseline save
+  CURRENT_CONST_HASHES=""
+  for cf in "${CONSTITUTION_FILES[@]}"; do
+    if [ -n "${current_hashes[$cf]:-}" ]; then
+      CURRENT_CONST_HASHES+="${cf}=${current_hashes[$cf]}"$'\n'
+    fi
+  done
+
+  # Create claim observations for each file (always)
+  for cf in "${CONSTITUTION_FILES[@]}"; do
+    local h="${current_hashes[$cf]:-}"
+    [ -z "$h" ] && continue
+    local claim_text="${repo}/${cf} constitutional file content hash: sha256=${h}"
+    local claim
+    claim=$(gen_claim_observation "$repo" "$cf" "$claim_text" "$pin_id" "$RUN_TIMESTAMP")
+    CLAIM_FILES["const-${cf}"]="$claim"
+    budget_track "$claim"
+    log "  Constitution claim: ${cf} sha256=${h}"
+  done
+
+  # Compare against baseline: if hashes differ, produce drift
+  if [ -z "$baseline_json" ]; then
+    log "  No committed constitution baseline — first observation, no drift possible"
+    return
+  fi
+
+  declare -A baseline_hashes=()
+  while IFS= read -r line; do
+    local k="${line%%=*}" v="${line#*=}"
+    baseline_hashes["$k"]="$v"
+  done < <(python3 -c "
+import json, sys
+d = json.load(open('$baseline_file'))
+for fp, h in d.get('constitutional_files', {}).items():
+    print(f'{fp}={h}')
+" 2>/dev/null || true)
+
+  local const_drift_count=0
+  for cf in "${CONSTITUTION_FILES[@]}"; do
+    local current="${current_hashes[$cf]:-}"
+    local baseline="${baseline_hashes[$cf]:-}"
+    [ -z "$current" ] && continue
+
+    if [ -z "$baseline" ]; then
+      log "  ${cf}: no baseline hash — first observation, no drift"
+      continue
+    fi
+
+    if [ "$current" != "$baseline" ]; then
+      const_drift_count=$(( const_drift_count + 1 ))
+
+      # Create evidence for the current state
+      local evidence_value="sha256=${current}"
+      local ev
+      ev=$(gen_evidence "$pin_id" "manifest_field" "$evidence_value" "$cf" "content_sha256=${current}")
+      EVIDENCE_FILES["const-ev-${cf}"]="$ev"
+      budget_track "$ev"
+
+      # Create drift record
+      local claim_id ev_id claim_f
+      claim_f="${CLAIM_FILES["const-${cf}"]}"
+      claim_id=$(artifact_id "$claim_f")
+      ev_id=$(artifact_id "$ev")
+
+      local drift_reason="${cf} constitutional content hash changed: was ${baseline}, now ${current}"
+
+      local drift
+      drift=$(gen_drift_record "$claim_id" "$ev_id" "$drift_reason")
+      CONST_DRIFT_FILES["const-${cf}"]="$drift"
+      budget_track "$drift"
+
+      # Create finding
+      local finding_text="${repo}/${cf} constitutional file changed — pinned hash was ${baseline}"
+      local finding
+      finding=$(gen_finding "$finding_text" "$ev_id" \
+        "recon_constitutional_drift" "warning" "observed")
+      CONST_FINDING_FILES["const-${cf}"]="$finding"
+      budget_track "$finding"
+
+      log "  CONSTITUTIONAL DRIFT: ${cf} changed (was ${baseline}, now ${current})"
+    else
+      log "  ${cf}: hash matches baseline (no drift)"
+    fi
+  done
+
+  if [ "$const_drift_count" -gt 0 ]; then
+    log "  Constitutional drift: ${const_drift_count} file(s) changed"
+  else
+    log "  Constitution: all observed files match baseline hashes"
+  fi
+}
+
+save_constitution_baseline() {
+  log "=== Phase 2i: Save constitution baseline ==="
+
+  local self_sha="${REPO_SHA[kimeisele/federation-recon]:-}"
+  [ -z "$self_sha" ] && { warn "  No self SHA — skipping constitution baseline save"; return; }
+
+  # Compute current hashes
+  declare -A save_hashes=()
+  for cf in "${CONSTITUTION_FILES[@]}"; do
+    local h
+    h=$(constitution_file_hash "$self_sha" "$cf")
+    if [ -n "$h" ]; then
+      save_hashes["$cf"]="$h"
+    fi
+  done
+
+  # Build JSON with python3 for reliability
+  local baseline_json
+  baseline_json=$(python3 -c "
+import json
+hashes = {$(for cf in "${CONSTITUTION_FILES[@]}"; do [ -n "${save_hashes[$cf]:-}" ] && printf '"%s":"%s",' "$cf" "${save_hashes[$cf]}"; done | sed 's/,$//')}
+print(json.dumps({
+    'repository': 'kimeisele/federation-recon',
+    'constitutional_files': hashes,
+    'pinned_at': '$RUN_TIMESTAMP'
+}, indent=2))
+" 2>/dev/null)
+
+  if [ -n "$baseline_json" ]; then
+    local baseline_file="self/constitution-baseline.json"
+    write_json "$baseline_file" "$baseline_json"
+    log "  Constitution baseline saved: ${baseline_file}"
+  else
+    warn "  Failed to generate constitution baseline JSON"
+  fi
+}
 
 run_deterministic_observations() {
   log "=== Phase 3: Run deterministic observations ==="
@@ -1259,6 +1435,37 @@ ENDAI
     fi
   fi
 
+  # Constitutional drift items (issue #45): non_peer items for self-observation
+  for ckey in "${!CONST_DRIFT_FILES[@]}"; do
+    local cf="${CONST_DRIFT_FILES[$ckey]}"
+    [ ! -f "$cf" ] && continue
+
+    local diff_desc
+    diff_desc=$(python3 -c "
+import json
+d = json.load(open('$cf'))
+print(d.get('difference','')[:120])
+" 2>/dev/null || echo "constitutional drift")
+
+    local finding_ref=""
+    [ -n "${CONST_FINDING_FILES[$ckey]:-}" ] && finding_ref="${CONST_FINDING_FILES[$ckey]##*/}"
+    [ -z "$finding_ref" ] && finding_ref="none"
+
+    $first_ai || attention_items_json+=","
+    first_ai=false
+    attention_items_json+=$(cat <<ENDAI
+{
+  "target": "kimeisele/federation-recon",
+  "status": "observed",
+  "attention_rank": 0,
+  "headline": $(json_val "Constitutional drift: $diff_desc"),
+  "refs": [$(json_val "findings/$finding_ref"), $(json_val "drift/$(basename "$cf")")],
+  "non_peer": true
+}
+ENDAI
+)
+  done
+
   attention_items_json+="]"
 
   # Build summary — per-procedure counts (pins are namespaced; evidence/coverage/
@@ -1463,6 +1670,7 @@ main() {
   extract_world_constitution_claims
   extract_federation_roles_claims
   extract_cross_node_boundary_agreement
+  observe_constitution
   budget_checkpoint "claims"
 
   # Phase 3: Deterministic observations
@@ -1471,6 +1679,7 @@ main() {
 
   # Phase 4: Compare and detect drift
   detect_drift
+  save_constitution_baseline
   budget_checkpoint "drift"
 
   # Phase 5: Generate findings
@@ -1493,7 +1702,9 @@ main() {
   for key in "${!CLAIM_FILES[@]}"; do printf '%s\n' "${CLAIM_FILES[$key]}"; done > "$keep_file"
   for key in "${!EVIDENCE_FILES[@]}"; do printf '%s\n' "${EVIDENCE_FILES[$key]}"; done >> "$keep_file"
   for key in "${!DRIFT_FILES[@]}"; do printf '%s\n' "${DRIFT_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!CONST_DRIFT_FILES[@]}"; do printf '%s\n' "${CONST_DRIFT_FILES[$key]}"; done >> "$keep_file"
   for key in "${!FINDING_FILES[@]}"; do printf '%s\n' "${FINDING_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!CONST_FINDING_FILES[@]}"; do printf '%s\n' "${CONST_FINDING_FILES[$key]}"; done >> "$keep_file"
   for key in "${!COVERAGE_FILES[@]}"; do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
   python3 "$SCRIPT_DIR/clean-procedure-artifacts.py" \
     --root "$REPO_ROOT" \
