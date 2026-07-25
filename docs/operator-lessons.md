@@ -36,6 +36,29 @@ where this operator is least reliable and most confident.
 
 **Apply:** run it before asserting it. State unverified claims as unverified.
 
+## Do not verify a property by proxy
+
+The three worst mistakes of 2026-07-25 were all the same move: checking something
+*adjacent* to the claim instead of the claim itself.
+
+- Reasoned about what `stat -f` does on Linux instead of running it.
+- Reviewed *which* regex to keep instead of testing whether the survivor matched.
+- Counted how many messages had a populated `correlation_id` instead of reading
+  the one that did.
+
+The third was the most expensive. The reconnaissance was itself the check, and a
+`grep` for the field walked straight past an unsigned message from an unknown
+source sitting in a production mailbox — a live example of the attack the
+resulting specification was written to prevent. An independent reviewer found it
+by opening the data.
+
+A count is not a reading. A green check is not a working check. "Which one is
+correct" is not "does it work".
+
+**Apply:** when a claim is about data, open the data — especially the outliers,
+which are where the finding usually is. When a claim is about behaviour, execute
+it. When a check passes, ask what would make it fail and confirm that it does.
+
 ## Find the oracle before claiming a cross-platform defect
 
 The `reproduce-fixpoint` job runs on `ubuntu-latest`, regenerates every artifact
