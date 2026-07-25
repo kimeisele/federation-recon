@@ -1,8 +1,0 @@
-{
-  "claim_id": "claim-e8954f219588",
-  "source_repository": "kimeisele/federation-recon",
-  "source_path": "CLAUDE.md",
-  "claim_text": "kimeisele/federation-recon/CLAUDE.md constitutional file content hash: sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "observed_at": "2026-07-24T15:23:48Z",
-  "repository_pin": "pins/v0-boundary-drift/federation-recon.json"
-}

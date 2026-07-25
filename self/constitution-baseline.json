@@ -1,8 +1,8 @@
 {
   "repository": "kimeisele/federation-recon",
   "constitutional_files": {
-    "CLAUDE.md": "d8dd50d49843dc061b9a6b64a63bfd8b316a7f7fa17ec8a4708479556c0bc966",
-    "docs/founding-package-v0.2.md": "05b564d0461fd4cce8b4663cd0a7ba3a91d6a893c80dcbb839878e7bba392ca3"
+    "CLAUDE.md": "0ede1f603f746cbc8ffe76eed7ea06c300b0c268321b8742f2d86095a9e25a41",
+    "docs/founding-package-v0.2.md": "29f9c191573c5e6ff360e3eb5af5917fe7d3a15ff09b8d59acd17e17bb4c1198"
   },
   "pinned_at": "2026-07-24T15:23:48Z"
 }
