@@ -36,6 +36,13 @@ jobs:
           chmod +x scripts/recon-run.sh
           bash scripts/recon-run.sh
 
+      - name: Run F-02 Consumption Measurement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/consumption-run.sh
+          bash scripts/consumption-run.sh
+
       - name: Compose Federation Digest
         run: |
           chmod +x scripts/compose-digest.sh
@@ -53,7 +60,7 @@ jobs:
           git config user.email "recon-bot@kimeisele.github.io"
 
           # Stage all artifacts (both procedures + composer output)
-          git add pins/ claims/ evidence/ drift/ findings/ coverage/ digest/ STATE.md
+          git add pins/ claims/ evidence/ drift/ findings/ coverage/ consumption/ digest/ STATE.md
 
           # Only commit if there are changes
           if git diff --cached --quiet; then

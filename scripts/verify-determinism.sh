@@ -18,7 +18,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 snap() {
-  find pins claims evidence drift findings coverage digest STATE.md -type f 2>/dev/null \
+  find pins claims evidence drift findings coverage consumption digest STATE.md -type f 2>/dev/null \
     | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
 }
 
@@ -28,15 +28,17 @@ snap_pins() {
 }
 
 run_reproduce() {
-  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce      >/dev/null 2>&1 || return 1
-  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1 || return 1
-  bash scripts/compose-digest.sh                                  >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce       >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  bash scripts/compose-digest.sh                                   >/dev/null 2>&1 || return 1
 }
 
 run_reproduce_reverse() {
-  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1 || return 1
-  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce      >/dev/null 2>&1 || return 1
-  bash scripts/compose-digest.sh                                  >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce        >/dev/null 2>&1 || return 1
+  bash scripts/compose-digest.sh                                   >/dev/null 2>&1 || return 1
 }
 
 echo "=== Phase 1: Order-independence check (v0->v1 vs v1->v0 pins) ==="

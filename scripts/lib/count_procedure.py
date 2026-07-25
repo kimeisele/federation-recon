@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """Per-procedure artifact counts for a sub-digest summary.
 
-The artifact directories evidence/, coverage/, findings/ are shared by all
-procedures, so a naive file count commingles them (and, once pins/ became
+The artifact directories evidence/, coverage/, findings/, consumption/ are shared
+by all procedures, so a naive file count commingles them (and, once pins/ became
 per-procedure namespaced, a flat count of pins/ returns 0). This attributes
 each artifact to the procedure that produced it:
 
-  - pins      : counted from the procedure's own namespace  pins/<namespace>/
-  - evidence  : filtered by procedure_id
-  - coverage  : filtered by procedure_id
-  - findings  : attributed via the procedure_id of their referenced evidence
-                (findings carry no procedure_id of their own)
+  - pins         : counted from the procedure's own namespace  pins/<namespace>/
+  - evidence     : filtered by procedure_id
+  - coverage     : filtered by procedure_id
+  - findings     : attributed via the procedure_id of their referenced evidence
+                   (findings carry no procedure_id of their own)
+  - drift        : attributed via the procedure_id of their referenced evidence
+  - consumption  : attributed by pin namespace prefix on repository_pin
 
 Deterministic: counts do not depend on filesystem order.
 
 Usage: count_procedure.py <procedure_id> <pin_namespace>
-Prints: {"pins": N, "evidence": N, "coverage": N, "findings": N}
+Prints: {"pins": N, "evidence": N, "coverage": N, "findings": N, "drift": N, "consumption": N}
 """
 import json
 import sys
@@ -26,7 +28,11 @@ import os
 def _load(path):
     try:
         with open(path) as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        # Skip non-dict files (e.g. cycle-ledger.json is a JSON array)
+        if not isinstance(data, dict):
+            return {}
+        return data
     except Exception:
         return {}
 
@@ -69,12 +75,20 @@ def main():
         1 for p in glob.glob("drift/*.json") if drift_procedure(_load(p)) == proc
     )
 
+    # consumption records: attributed by pin namespace prefix on repository_pin
+    prefix = f"pins/{namespace}/"
+    consumption = sum(
+        1 for p in glob.glob("consumption/*.json")
+        if str(_load(p).get("repository_pin", "")).startswith(prefix)
+    )
+
     if "--sh" in sys.argv:
-        # space-separated: pins evidence coverage findings drift
-        print(f"{pins} {evidence} {coverage} {findings} {drift}")
+        # space-separated: pins evidence coverage findings drift consumption
+        print(f"{pins} {evidence} {coverage} {findings} {drift} {consumption}")
     else:
         print(json.dumps({"pins": pins, "evidence": evidence, "coverage": coverage,
-                          "findings": findings, "drift": drift}))
+                          "findings": findings, "drift": drift,
+                          "consumption": consumption}))
 
 
 if __name__ == "__main__":

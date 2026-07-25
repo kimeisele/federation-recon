@@ -1265,8 +1265,8 @@ ENDAI
   # findings/drift live in shared dirs, so attribute by procedure_id). claims are
   # produced only by v0, so a plain directory count is correct for them.
   local pc_pins pc_ev pc_cov pc_find pc_drift
-  read -r pc_pins pc_ev pc_cov pc_find pc_drift < <(
-    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0"
+  read -r pc_pins pc_ev pc_cov pc_find pc_drift _consumption < <(
+    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0 0"
   )
   local summary_json
   summary_json=$(cat <<ENDJSON

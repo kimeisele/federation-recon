@@ -40,11 +40,13 @@ def select_outputs(root: Path, procedure_id: str, pin_prefix: str) -> set[Path]:
     claim_ids: set[str] = set()
     evidence_ids: set[str] = set()
     coverage_ids: set[str] = set()
+    consumption_ids: set[str] = set()
 
     for directory, id_set, predicate in (
         ("claims", claim_ids, lambda d: str(d.get("repository_pin", "")).startswith(pin_prefix)),
         ("evidence", evidence_ids, lambda d: d.get("procedure_id") == procedure_id),
         ("coverage", coverage_ids, lambda d: d.get("procedure_id") == procedure_id),
+        ("consumption", consumption_ids, lambda d: str(d.get("repository_pin", "")).startswith(pin_prefix)),
     ):
         for path in sorted((root / directory).glob("*.json")):
             data = load_json(path)

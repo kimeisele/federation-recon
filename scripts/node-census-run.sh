@@ -667,8 +667,8 @@ ENDAI
   # Per-procedure counts: pins are namespaced; evidence/coverage/findings live in
   # shared dirs and are attributed by procedure_id (see scripts/lib/count_procedure.py).
   local pc_pins pc_ev pc_cov pc_find pc_drift
-  read -r pc_pins pc_ev pc_cov pc_find pc_drift < <(
-    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0"
+  read -r pc_pins pc_ev pc_cov pc_find pc_drift _consumption < <(
+    python3 "$SCRIPT_DIR/lib/count_procedure.py" "$PROCEDURE_ID" "$PIN_NAMESPACE" --sh 2>/dev/null || echo "0 0 0 0 0 0"
   )
   local summary_json
   summary_json=$(cat <<ENDJSON

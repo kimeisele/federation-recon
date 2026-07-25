@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/consumption-record.schema.json",
+  "title": "Consumption Record",
+  "description": "A deterministic, metadata-only observation that a Finding produced by federation-recon is referenced somewhere in the observed federation. No source excerpts (FR-CON-008). See founding package §18, F-02.",
+  "type": "object",
+  "required": ["consumption_id", "referencing_repository", "referencing_file_path", "line_number", "referenced_finding_id", "reference_type", "repository_pin", "observed_at", "cycle"],
+  "properties": {
+    "consumption_id": { "type": "string", "description": "Deterministic artifact ID: consumption-<hex>" },
+    "referencing_repository": { "type": "string", "description": "Owner/repo slug of the repository that references a Finding" },
+    "referencing_file_path": { "type": "string", "description": "Path within the referencing repository where the reference was found" },
+    "line_number": { "type": "integer", "description": "1-based line number of the match" },
+    "referenced_finding_id": { "type": ["string", "null"], "description": "The finding-id being referenced (e.g. finding-5cd51c7f5fed), or null for repo_reference records" },
+    "reference_type": { "type": "string", "enum": ["finding_id", "repo_reference"], "description": "How the Finding was referenced: finding_id is an exact Finding ID citation; repo_reference is the weaker signal of merely mentioning the federation-recon repository name" },
+    "repository_pin": { "type": "string", "description": "Path to the repository pin of the referencing repository" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "cycle": { "type": "integer", "description": "Which operational cycle this observation belongs to (1-based, derived from committed artifacts)" }
+  },
+  "additionalProperties": false
+}
