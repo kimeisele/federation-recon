@@ -34,8 +34,8 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install bats-core
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+      - name: Install bats-core and ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats ripgrep
 
       - name: Run offline test suite
         run: bats scripts/test/

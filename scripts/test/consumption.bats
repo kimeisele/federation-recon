@@ -14,6 +14,17 @@ setup() {
   # production does.
   source "$REPO_ROOT/scripts/lib/consumption-patterns.sh"
   export CONSUMPTION_PATTERN_FINDING_ID CONSUMPTION_PATTERN_REPO_SLUG
+
+  # The search invocations below end in `|| true`, because rg exits 1 when it
+  # finds nothing — which is a legitimate outcome. That also means a MISSING rg
+  # is indistinguishable from "no matches": the positive controls would fail
+  # with an empty result and look like a detection bug rather than a missing
+  # dependency. That is exactly how this suite first went red on CI. Fail loudly
+  # instead.
+  command -v rg >/dev/null 2>&1 || {
+    echo "ripgrep (rg) is required by the consumption procedure and its tests" >&2
+    return 1
+  }
 }
 
 # ---------------------------------------------------------------------------
