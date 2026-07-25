@@ -24,7 +24,7 @@ The committed `operator/state.json` (schema v1) is the **immutable bootstrap see
 
 **`--init-runtime --force`** re-initializes from seed: writes current state to a tempfile, fsyncs it, atomically replaces `state.json.bak`, directory-fsyncs, then atomically replaces the state file from seed. The lock is never deleted.
 
-**`--state-file PATH`** selects an alternative path; `--init-runtime` and `--force` honor it. All paths reject symlinks via `lstat`-style validation before any read, write, or cleanup. Custom paths must reside on a stable local durable filesystem — durability is the caller's responsibility. Paths on ephemeral filesystems (e.g. `/tmp`) are explicitly supported only for testing.
+**`--state-file PATH`** selects an alternative path; `--init-runtime` and `--force` honor it. All paths reject symlinks via `lstat`-style validation before any read, write, or cleanup. Custom paths must reside on a stable local durable filesystem — durability is the caller's responsibility, and no ancestor component may be a symlink (invariant D1.5). On macOS `/tmp` is a symlink to `private/tmp`, so paths under `/tmp` are **rejected**; use `/private/tmp` for testing. The implementation is correct here and an earlier draft of this section was not.
 
 **`--break-lock`** removes a lock directory after verifying the owning PID is dead. It does **not** acquire the lock, so it cannot deadlock. Use when boot identity is unavailable and the lock is stuck.
 
@@ -132,7 +132,15 @@ During `--init-runtime`, v1 seed → v2 runtime: set `schema_version: 2`, add `"
 | 1 | Local irrecoverable — operator must act |
 | 2 | Transient — retry may succeed |
 
-No error path emits BUILD/REVIEW/SWEEP/ADVANCE. Common errors:
+No error path emits BUILD/REVIEW/SWEEP/ADVANCE.
+
+**Streams.** `stdout` carries decisions only, so a machine consumer reading it
+sees nothing on an error path. A `STOP` diagnostic may additionally be written to
+`stderr` on a transient failure — it tells a human operator what happened and
+carries no risk of being read as a decision. Lock contention does exactly this;
+invariants D3.1, D3.5, D7.1 and the ADR7 conformance tests pin both halves.
+
+Common errors:
 
 | Error | Exit | State mutated? |
 |---|---|---|
@@ -142,6 +150,7 @@ No error path emits BUILD/REVIEW/SWEEP/ADVANCE. Common errors:
 | Write/disk failure before `os.replace` | 1 | No (original intact) |
 | Directory fsync failure after `os.replace` | 1 | **Uncertain:** old or new valid |
 | GitHub unavailable | 2 | No |
+| Local git status probe failed | 2 | No |
 
 ---
 

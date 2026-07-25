@@ -403,6 +403,10 @@ acquire_lock() {
     esac
 
     if kill -0 "$lock_pid" 2>/dev/null; then
+      # STOP diagnostic on stderr only; stdout stays empty so a machine
+      # consumer reading stdout sees no decision on a transient failure.
+      # ADR §7 is amended to permit this rather than the line being removed —
+      # it tells a human operator what happened and costs nothing.
       echo "ACTION: STOP lock held by live process $lock_pid" >&2
       echo "FATAL: lock held by live process $lock_pid" >&2
       exit 2
@@ -886,7 +890,9 @@ max_expert="$(state_field budget.max_expert_calls)"
 
 if [ "$phase" = "0_BOOTSTRAP" ]; then
   if ! git_status="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)"; then
-    stop_action "local repository status unavailable — cannot run heartbeat" "STOP: git status failed"
+    # Non-mutating: ADR §7 records transient failures as leaving state
+    # untouched, and a git status that failed tells us nothing worth recording.
+    visibility_stop "local repository status unavailable — cannot run heartbeat"
     exit 2
   fi
   if [ -n "$git_status" ]; then

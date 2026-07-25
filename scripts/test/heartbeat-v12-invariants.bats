@@ -73,6 +73,14 @@ _run_heartbeat() {
     /bin/bash "$WORKDIR/operator/heartbeat.sh" "$@" 2>&1
 }
 
+# Same as _run_heartbeat but discards stderr, so a test can assert on what a
+# machine consumer reading stdout would actually see.
+_run_heartbeat_stdout() {
+  PATH="$WORKDIR/mockbin:$PATH" \
+    HEARTBEAT_NOW="$HEARTBEAT_NOW" \
+    /bin/bash "$WORKDIR/operator/heartbeat.sh" "$@" 2>/dev/null
+}
+
 _shasum() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
@@ -717,4 +725,39 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"ACTION: ADVANCE"* ]]
   )
+}
+
+# ---------------------------------------------------------------------------
+# ADR §7 conformance (issue #39)
+# ---------------------------------------------------------------------------
+
+@test "ADR7: lock contention keeps stdout free of any ACTION line" {
+  _init_runtime
+  local lock_dir="$WORKDIR/operator/.runtime/heartbeat.lock"
+  mkdir -p "$lock_dir"
+  echo $$ > "$lock_dir/pid"
+  echo "test-boot" > "$lock_dir/boot_id"
+  echo "2026-07-24T12:00:00Z" > "$lock_dir/acquired_at"
+  chmod 0600 "$lock_dir"/pid "$lock_dir"/boot_id "$lock_dir"/acquired_at
+
+  # stdout only — the STOP diagnostic belongs on stderr, and a machine consumer
+  # reading stdout must see no decision on a transient failure path.
+  run _run_heartbeat_stdout
+
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
+}
+
+@test "ADR7: transient git-status failure leaves the runtime checkpoint untouched" {
+  _init_runtime
+  local before
+  before="$(_shasum "$(_runtime_path)")"
+
+  export MOCK_GIT_FAIL='true'
+  run _run_heartbeat
+
+  [ "$status" -eq 2 ]
+  # ADR §7 records transient failures as non-mutating. visibility_stop, not
+  # stop_action.
+  [ "$before" = "$(_shasum "$(_runtime_path)")" ]
 }
