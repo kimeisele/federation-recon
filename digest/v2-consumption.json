@@ -10,22 +10,22 @@
   "refs": ["consumption/"]
 }],
   "summary": {
-  "pins": 13,
+  "pins": 6,
   "finding_references": 0,
   "repo_references": 0,
   "total_consumption_records": 0,
-  "coverage_records": 13,
-  "observed_repositories": 13,
+  "coverage_records": 6,
+  "observed_repositories": 6,
   "partial_failures": 0,
   "cycle": 1
 },
   "budget": {
-  "total_bytes": 8225,
+  "total_bytes": 3959,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:3409] [consumption:3409] [coverage:7624] [self-observation:8225]"
+  "checkpoints": " [discovery:0] [pins:1564] [consumption:1564] [coverage:3500] [self-observation:3959]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }

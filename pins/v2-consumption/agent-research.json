@@ -1,8 +1,0 @@
-{
-  "repository": "kimeisele/agent-research",
-  "requested_ref": "main",
-  "resolved_commit_sha": "37e31df3bcbf2b24ec7ede4ccc1f81133249cd7e",
-  "observation_timestamp": "2026-07-25T05:59:55Z",
-  "acquisition_method": "gh-api",
-  "dirty_state_assertion": false
-}

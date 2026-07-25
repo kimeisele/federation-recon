@@ -4,7 +4,11 @@
 #   1. Every committed artifact validates against schemas/*.json (strict).
 #      Catches the class of defect where invalid JSON or a schema violation
 #      ships because strict validation was not run before the merge claim.
-#   2. The composed Federation Digest is idempotent: STATE.md and
+#   2. Every pin under pins/*/ must correspond to a repository listed in the
+#      manifest's adopted observed set (docs/repository-manifest.md). A pin for
+#      an unlisted repository is a drift from the authorized scope and must
+#      not ship silently — the manifest is the single source of truth.
+#   3. The composed Federation Digest is idempotent: STATE.md and
 #      digest/state-digest.json must be a pure function of the per-procedure
 #      sub-digests (digest/<id>.json). If re-running the composer changes them,
 #      the committed digest is stale or hand-edited — reject it.
@@ -16,7 +20,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/2] strict artifact validation =="
+echo "== [1/3] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -24,8 +28,23 @@ else
   fail=1
 fi
 
+# ---- Pin → manifest membership gate --------------------------------------
+# Source the shared library so the logic has a single definition that both
+# ci-checks.sh and the bats tests can exercise directly (operator-lessons.md:
+# "A test that duplicates what it guards is not a test").
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/manifest-gate.sh"
+
 echo
-echo "== [2/2] composed digest idempotency =="
+echo "== [2/3] pin → manifest membership =="
+if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
+  echo "  OK"
+else
+  fail=1
+fi
+
+echo
+echo "== [3/3] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
