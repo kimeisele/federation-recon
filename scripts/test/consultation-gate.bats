@@ -12,6 +12,14 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
   # shellcheck disable=SC1091
   source "$REPO_ROOT/scripts/lib/consultation-gate.sh"
+
+  # Neutralise the ambient CI environment. GitHub Actions exports
+  # GITHUB_EVENT_NAME=pull_request and this workflow exports
+  # CONSULTATION_PR_NUMBER to every step, so tests that mean "no event, no PR
+  # number" silently inherit real values and assert the wrong branch. That is
+  # how these two tests passed locally and failed on CI — the environment was
+  # an unstated input. Each test sets what it needs explicitly.
+  unset GITHUB_EVENT_NAME CONSULTATION_PR_NUMBER
 }
 
 # A realistic-looking synthetic diff with two hunk headers.
