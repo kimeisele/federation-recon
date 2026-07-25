@@ -81,6 +81,17 @@ _state_field() {
   python3 -c "import json; print(json.load(open('$1'))${2:+['$2']})"
 }
 
+# GNU stat is probed first: BSD stat rejects -c and falls through, but on Linux
+# `stat -f` is filesystem-stat mode and answers with exit 0, so a BSD-first
+# fallback silently measures the wrong thing. Mirrors _stat_num in heartbeat.sh.
+_stat_mode() {
+  python3 -c "import os,stat,sys; print('%o' % stat.S_IMODE(os.stat(sys.argv[1]).st_mode))" "$1"
+}
+
+_stat_owner() {
+  python3 -c "import os,sys; print(os.stat(sys.argv[1]).st_uid)" "$1"
+}
+
 # ────────────────────────────────────────────────────────────
 #  Fix #1: seed validation does NOT require 0700 on operator/
 # ────────────────────────────────────────────────────────────
@@ -235,14 +246,13 @@ EOF
 
 @test "fix7: runtime parent dir is 0700 after create_runtime_parent" {
   _init_runtime
-  mode="$(stat -f '%p' "$WORKDIR/operator/.runtime" 2>/dev/null || stat -c '%a' "$WORKDIR/operator/.runtime")"
-  while [ "${#mode}" -gt 3 ]; do mode="${mode#?}"; done
+  mode="$(_stat_mode "$WORKDIR/operator/.runtime")"
   [ "$mode" = "700" ]
 }
 
 @test "fix7: runtime parent owner is current user" {
   _init_runtime
-  owner="$(stat -f '%u' "$WORKDIR/operator/.runtime" 2>/dev/null || stat -c '%u' "$WORKDIR/operator/.runtime")"
+  owner="$(_stat_owner "$WORKDIR/operator/.runtime")"
   [ "$owner" = "$(id -u)" ]
 }
 
@@ -353,8 +363,7 @@ EOF
 
 @test "D2.3: runtime parent dir is 0700" {
   _init_runtime
-  mode="$(stat -f '%p' "$WORKDIR/operator/.runtime" 2>/dev/null || stat -c '%a' "$WORKDIR/operator/.runtime")"
-  while [ "${#mode}" -gt 3 ]; do mode="${mode#?}"; done
+  mode="$(_stat_mode "$WORKDIR/operator/.runtime")"
   [ "$mode" = "700" ]
 }
 

@@ -150,6 +150,22 @@ _raw_ancestor_symlink_check() {
   done
 }
 
+# _stat_num GNU_FMT BSD_FMT PATH
+# Reads one numeric stat field portably. GNU is probed FIRST: BSD stat rejects
+# -c outright (exit 1) and falls through cleanly, whereas on Linux `stat -f` is
+# filesystem-stat mode, which would answer a *different* question with exit 0
+# and silently defeat a BSD-first fallback. Non-numeric or empty output is a
+# hard failure — the ownership and mode checks are a security boundary and must
+# fail closed rather than be skipped.
+_stat_num() {
+  local gnu_fmt="$1" bsd_fmt="$2" path="$3" out
+  out="$(stat -c "$gnu_fmt" "$path" 2>/dev/null || stat -f "$bsd_fmt" "$path" 2>/dev/null || echo "")"
+  case "$out" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$out"
+}
+
 # _validate_target_perms PATH [require_file]
 # For an existing path: reject symlinks, validate owner=$(id -u), mode=0600.
 _validate_target_perms() {
@@ -167,17 +183,15 @@ _validate_target_perms() {
   fi
 
   local owner_uid
-  owner_uid="$(stat -f '%u' "$target" 2>/dev/null || stat -c '%u' "$target" 2>/dev/null || echo "")"
+  owner_uid="$(_stat_num '%u' '%u' "$target")" || die "cannot read owner of: $target"
   if [ "$owner_uid" != "$(id -u)" ]; then
     die "path not owned by current user: $target"
   fi
   local tmode
-  tmode="$(stat -f '%p' "$target" 2>/dev/null || stat -c '%a' "$target" 2>/dev/null || echo "")"
-  if [ -n "$tmode" ]; then
-    while [ "${#tmode}" -gt 3 ]; do tmode="${tmode#?}"; done
-    if [ "$tmode" != "600" ]; then
-      die "file mode must be 0600: $target (got $tmode)"
-    fi
+  tmode="$(_stat_num '%a' '%p' "$target")" || die "cannot read mode of: $target"
+  while [ "${#tmode}" -gt 3 ]; do tmode="${tmode#?}"; done
+  if [ "$tmode" != "600" ]; then
+    die "file mode must be 0600: $target (got $tmode)"
   fi
 }
 
@@ -189,17 +203,15 @@ _validate_dir_perms() {
     die "expected directory: $d"
   fi
   local owner_uid
-  owner_uid="$(stat -f '%u' "$d" 2>/dev/null || stat -c '%u' "$d" 2>/dev/null || echo "")"
+  owner_uid="$(_stat_num '%u' '%u' "$d")" || die "cannot read owner of: $d"
   if [ "$owner_uid" != "$(id -u)" ]; then
     die "directory not owned by current user: $d"
   fi
   local dmode
-  dmode="$(stat -f '%p' "$d" 2>/dev/null || stat -c '%a' "$d" 2>/dev/null || echo "")"
-  if [ -n "$dmode" ]; then
-    while [ "${#dmode}" -gt 3 ]; do dmode="${dmode#?}"; done
-    if [ "$dmode" != "700" ]; then
-      die "directory mode must be 0700: $d (got $dmode)"
-    fi
+  dmode="$(_stat_num '%a' '%p' "$d")" || die "cannot read mode of: $d"
+  while [ "${#dmode}" -gt 3 ]; do dmode="${dmode#?}"; done
+  if [ "$dmode" != "700" ]; then
+    die "directory mode must be 0700: $d (got $dmode)"
   fi
 }
 
