@@ -176,19 +176,20 @@ search_repo_for_consumption() {
     return 1
   fi
 
-  # Build a combined rg pattern for finding references. We use --fixed-strings
-  # mode in separate passes for determinism and clarity.
+  # Build a combined rg pattern for finding references. We use ripgrep regex
+  # mode for determinism and clarity.
   #
-  # Pattern A: finding-<12-hex-chars>
-  # Pattern B: paths with findings/, drift/, or evidence/
-  # Pattern C: federation-recon slug
+  # Pattern A: finding-<12-hex-chars> — specific and unambiguous Finding ID reference
+  # Pattern B: federation-recon — repository reference (weaker: mentioning the
+  #   repo is not the same as citing one of its Findings)
+  #
+  # Qualified substrings like findings/, drift/, evidence/ are intentionally
+  # excluded: they match coincidental vocabulary in unrelated repos and
+  # destroy the falsifier (see PR #46 review, Blocker 1).
 
   local matches
   matches=$(cd "$tmpdir" && rg -n --no-heading --sort path \
     -e 'finding-[0-9a-f]\{12\}' \
-    -e 'findings/' \
-    -e 'drift/' \
-    -e 'evidence/' \
     -e 'federation-recon' \
     . 2>/dev/null || true)
 
@@ -225,17 +226,8 @@ search_repo_for_consumption() {
     if printf '%s' "$match_text" | rg -q 'finding-[0-9a-f]\{12\}'; then
       ref_type="finding_id"
       finding_id=$(printf '%s' "$match_text" | rg -o 'finding-[0-9a-f]\{12\}' | head -1)
-    elif printf '%s' "$match_text" | rg -q 'findings/'; then
-      ref_type="finding_path"
-      finding_id=""
-    elif printf '%s' "$match_text" | rg -q 'drift/'; then
-      ref_type="drift_path"
-      finding_id=""
-    elif printf '%s' "$match_text" | rg -q 'evidence/'; then
-      ref_type="evidence_path"
-      finding_id=""
     elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
-      ref_type="url_slug"
+      ref_type="repo_reference"
       finding_id=""
     fi
 
@@ -385,64 +377,117 @@ perform_self_observation() {
 generate_digest() {
   log "=== Phase 6: Generate sub-digest (composition contract) ==="
 
-  # Count consumption records on disk
+  # Count consumption records on disk, split by type
   count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | wc -l | tr -d ' '; }
-  local consumption_count
-  consumption_count=$(count_dir consumption)
+  local total_consumption
+  total_consumption=$(count_dir consumption)
+
+  local finding_id_count=0 repo_ref_count=0
+  for rec_file in consumption/*.json; do
+    [ -f "$rec_file" ] || continue
+    local rtype
+    rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
+    case "$rtype" in
+      finding_id)    finding_id_count=$(( finding_id_count + 1 )) ;;
+      repo_reference) repo_ref_count=$(( repo_ref_count + 1 )) ;;
+    esac
+  done
 
   # Build attention_items
   local attention_items_json="["
   local first_ai=true
 
-  if [ "$consumption_count" -eq 0 ]; then
+  if [ "$finding_id_count" -eq 0 ] && [ "$repo_ref_count" -eq 0 ]; then
     # Zero is the falsifier's signal — state it plainly
     attention_items_json+=$(cat <<ENDAI
 {
   "target": "kimeisele/*",
   "status": "observed",
   "attention_rank": 0,
-  "headline": "ZERO consumption: No external repository references any federation-recon Finding. Cycle ${CYCLE} of 10 — F-02 falsifier is active if this persists across ten cycles.",
+  "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. ${repo_ref_count} repo-mentions (weaker evidence). Cycle ${CYCLE} of 10 — F-02 falsifier is active if this persists across ten cycles.",
   "refs": ["consumption/"]
 }
 ENDAI
 )
     first_ai=false
   else
-    # Build attention items per consumed finding
-    # Group by referencing repo for cleaner output
-    local seen_repos=""
-    declare -A REPO_CONSUMPTION_COUNT
+    # If there are finding_id references, report them per repo
+    if [ "$finding_id_count" -gt 0 ]; then
+      local seen_repos=""
+      declare -A REPO_FINDING_COUNT
 
-    for rec_file in "${CONSUMPTION_RECORDS[@]}"; do
-      [ -f "$rec_file" ] || continue
-      local ref_repo
-      ref_repo=$(python3 -c "import json; print(json.load(open('$rec_file')).get('referencing_repository',''))" 2>/dev/null || echo "")
-      if [ -n "$ref_repo" ]; then
-        REPO_CONSUMPTION_COUNT["$ref_repo"]=$(( ${REPO_CONSUMPTION_COUNT["$ref_repo"]:-0} + 1 ))
-      fi
-    done
+      for rec_file in consumption/*.json; do
+        [ -f "$rec_file" ] || continue
+        local rtype
+        rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
+        [ "$rtype" = "finding_id" ] || continue
+        local ref_repo
+        ref_repo=$(python3 -c "import json; print(json.load(open('$rec_file')).get('referencing_repository',''))" 2>/dev/null || echo "")
+        if [ -n "$ref_repo" ]; then
+          REPO_FINDING_COUNT["$ref_repo"]=$(( ${REPO_FINDING_COUNT["$ref_repo"]:-0} + 1 ))
+        fi
+      done
 
-    # Sort repos alphabetically for deterministic output
-    local sorted_ref_repos
-    sorted_ref_repos=$(for r in "${!REPO_CONSUMPTION_COUNT[@]}"; do echo "$r"; done | sort)
+      local sorted_ref_repos
+      sorted_ref_repos=$(for r in "${!REPO_FINDING_COUNT[@]}"; do echo "$r"; done | sort)
 
-    while IFS= read -r ref_repo; do
-      [ -z "$ref_repo" ] && continue
-      local count="${REPO_CONSUMPTION_COUNT[$ref_repo]}"
-      $first_ai || attention_items_json+=","
-      first_ai=false
+      while IFS= read -r ref_repo; do
+        [ -z "$ref_repo" ] && continue
+        local count="${REPO_FINDING_COUNT[$ref_repo]}"
+        $first_ai || attention_items_json+=","
+        first_ai=false
 
-      attention_items_json+=$(cat <<ENDAI
+        attention_items_json+=$(cat <<ENDAI
 {
   "target": $(json_val "$ref_repo"),
   "status": "observed",
   "attention_rank": 0,
-  "headline": "CONSUMPTION: ${count} reference(s) to federation-recon Findings found in ${ref_repo}",
+  "headline": "CONSUMPTION: ${count} Finding ID reference(s) found in ${ref_repo}",
   "refs": ["consumption/"]
 }
 ENDAI
 )
-    done <<< "$sorted_ref_repos"
+      done <<< "$sorted_ref_repos"
+    fi
+
+    # Report repo_references separately (weaker evidence)
+    if [ "$repo_ref_count" -gt 0 ]; then
+      local seen_repos2=""
+      declare -A REPO_REF_COUNT
+
+      for rec_file in consumption/*.json; do
+        [ -f "$rec_file" ] || continue
+        local rtype
+        rtype=$(python3 -c "import json; print(json.load(open('$rec_file')).get('reference_type',''))" 2>/dev/null || echo "")
+        [ "$rtype" = "repo_reference" ] || continue
+        local ref_repo
+        ref_repo=$(python3 -c "import json; print(json.load(open('$rec_file')).get('referencing_repository',''))" 2>/dev/null || echo "")
+        if [ -n "$ref_repo" ]; then
+          REPO_REF_COUNT["$ref_repo"]=$(( ${REPO_REF_COUNT["$ref_repo"]:-0} + 1 ))
+        fi
+      done
+
+      local sorted_ref_repos2
+      sorted_ref_repos2=$(for r in "${!REPO_REF_COUNT[@]}"; do echo "$r"; done | sort)
+
+      while IFS= read -r ref_repo; do
+        [ -z "$ref_repo" ] && continue
+        local count="${REPO_REF_COUNT[$ref_repo]}"
+        $first_ai || attention_items_json+=","
+        first_ai=false
+
+        attention_items_json+=$(cat <<ENDAI
+{
+  "target": $(json_val "$ref_repo"),
+  "status": "observed",
+  "attention_rank": 0,
+  "headline": "REPO MENTION: ${count} reference(s) to federation-recon repository name (weaker evidence than Finding ID citation) in ${ref_repo}",
+  "refs": ["consumption/"]
+}
+ENDAI
+)
+      done <<< "$sorted_ref_repos2"
+    fi
   fi
 
   attention_items_json+="]"
@@ -456,7 +501,9 @@ ENDAI
   summary_json=$(cat <<ENDJSON
 {
   "pins": ${pc_pins},
-  "consumption_records": ${consumption_count},
+  "finding_references": ${finding_id_count},
+  "repo_references": ${repo_ref_count},
+  "total_consumption_records": ${total_consumption},
   "coverage_records": ${pc_cov},
   "observed_repositories": ${#REPO_SLUGS[@]},
   "partial_failures": ${PARTIAL_FAILURES},

@@ -23,15 +23,23 @@
 
 For each observed repository at its pinned commit, search the tree for references to federation-recon Findings:
 
-1. `finding-<hex>` — a Finding ID prefix match (12 hex chars)
-2. Paths under `findings/`, `drift/`, or `evidence/`
-3. `federation-recon` URL or slug
+1. `finding-<hex>` — a Finding ID prefix match (12 hex chars). This is the primary signal: a specific, unambiguous citation of one of our Findings.
+2. `federation-recon` — a repository name mention. This is weaker evidence (mentioning the repo ≠ citing a Finding) and is classified separately as `repo_reference`. It is never summed into the Finding-consumption number.
+
+Unqualified substrings like `findings/`, `drift/`, or `evidence/` are intentionally excluded: they match coincidental vocabulary in unrelated repositories and destroy the falsifier (see PR #46 review, Blocker 1).
 
 Self-references (federation-recon referencing its own Findings) are excluded.
 
 ## Consumption Record
 
-Metadata only: referencing repository slug, file path, line number, referenced Finding ID, reference type, repository pin, and cycle. No source excerpts (FR-CON-008).
+Metadata only: referencing repository slug, file path, line number, referenced Finding ID (null for repo_reference), reference type (`finding_id` or `repo_reference`), repository pin, and cycle. No source excerpts (FR-CON-008).
+
+The two reference types MUST be reported distinctly in all outputs:
+- `finding_references` — count of `finding_id` records (actual Finding consumption)
+- `repo_references` — count of `repo_reference` records (weaker signal)
+- `total_consumption_records` — sum of both
+
+If the honest result is zero Finding references, zero MUST be committed plainly. A zero here is the falsifier's actual signal and is the single most important number this procedure produces.
 
 ## Cycle counting
 

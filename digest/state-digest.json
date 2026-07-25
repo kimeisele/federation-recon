@@ -41,7 +41,9 @@
       "run_timestamp": "2026-07-25T05:59:55Z",
       "summary": {
         "pins": 13,
-        "consumption_records": 63,
+        "finding_references": 0,
+        "repo_references": 0,
+        "total_consumption_records": 0,
         "coverage_records": 13,
         "observed_repositories": 13,
         "partial_failures": 0,
@@ -51,46 +53,10 @@
   ],
   "attention_items": [
     {
-      "target": "kimeisele/agent-city",
+      "target": "kimeisele/*",
       "status": "observed",
       "attention_rank": 0,
-      "headline": "CONSUMPTION: 1 reference(s) to federation-recon Findings found in kimeisele/agent-city",
-      "refs": [
-        "consumption/"
-      ],
-      "non_peer": false,
-      "procedure_id": "v2-consumption",
-      "procedure_version": "v2"
-    },
-    {
-      "target": "kimeisele/agent-village",
-      "status": "observed",
-      "attention_rank": 0,
-      "headline": "CONSUMPTION: 3 reference(s) to federation-recon Findings found in kimeisele/agent-village",
-      "refs": [
-        "consumption/"
-      ],
-      "non_peer": false,
-      "procedure_id": "v2-consumption",
-      "procedure_version": "v2"
-    },
-    {
-      "target": "kimeisele/steward",
-      "status": "observed",
-      "attention_rank": 0,
-      "headline": "CONSUMPTION: 51 reference(s) to federation-recon Findings found in kimeisele/steward",
-      "refs": [
-        "consumption/"
-      ],
-      "non_peer": false,
-      "procedure_id": "v2-consumption",
-      "procedure_version": "v2"
-    },
-    {
-      "target": "kimeisele/steward-protocol",
-      "status": "observed",
-      "attention_rank": 0,
-      "headline": "CONSUMPTION: 8 reference(s) to federation-recon Findings found in kimeisele/steward-protocol",
+      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 2 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
       "refs": [
         "consumption/"
       ],
@@ -165,7 +131,7 @@
     }
   ],
   "summary": {
-    "total_attention_items": 7,
+    "total_attention_items": 4,
     "total_observatory_items": 2,
     "total_procedures": 3
   }

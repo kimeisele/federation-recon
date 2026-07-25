@@ -3,45 +3,29 @@
   "procedure_version": "v2",
   "run_timestamp": "2026-07-25T05:59:55Z",
   "attention_items": [{
-  "target": "kimeisele/agent-city",
+  "target": "kimeisele/*",
   "status": "observed",
   "attention_rank": 0,
-  "headline": "CONSUMPTION: 1 reference(s) to federation-recon Findings found in kimeisele/agent-city",
-  "refs": ["consumption/"]
-},{
-  "target": "kimeisele/agent-village",
-  "status": "observed",
-  "attention_rank": 0,
-  "headline": "CONSUMPTION: 3 reference(s) to federation-recon Findings found in kimeisele/agent-village",
-  "refs": ["consumption/"]
-},{
-  "target": "kimeisele/steward",
-  "status": "observed",
-  "attention_rank": 0,
-  "headline": "CONSUMPTION: 51 reference(s) to federation-recon Findings found in kimeisele/steward",
-  "refs": ["consumption/"]
-},{
-  "target": "kimeisele/steward-protocol",
-  "status": "observed",
-  "attention_rank": 0,
-  "headline": "CONSUMPTION: 8 reference(s) to federation-recon Findings found in kimeisele/steward-protocol",
+  "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 2 of 10 — F-02 falsifier is active if this persists across ten cycles.",
   "refs": ["consumption/"]
 }],
   "summary": {
   "pins": 13,
-  "consumption_records": 63,
+  "finding_references": 0,
+  "repo_references": 0,
+  "total_consumption_records": 0,
   "coverage_records": 13,
   "observed_repositories": 13,
   "partial_failures": 0,
   "cycle": 2
 },
   "budget": {
-  "total_bytes": 32249,
+  "total_bytes": 8225,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:3409] [consumption:27432] [coverage:31647] [self-observation:32249]"
+  "checkpoints": " [discovery:0] [pins:3409] [consumption:3409] [coverage:7624] [self-observation:8225]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }

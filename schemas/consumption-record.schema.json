@@ -11,7 +11,7 @@
     "referencing_file_path": { "type": "string", "description": "Path within the referencing repository where the reference was found" },
     "line_number": { "type": "integer", "description": "1-based line number of the match" },
     "referenced_finding_id": { "type": "string", "description": "The finding-id being referenced (e.g. finding-5cd51c7f5fed)" },
-    "reference_type": { "type": "string", "enum": ["finding_id", "finding_path", "drift_path", "evidence_path", "url_slug"], "description": "How the Finding was referenced" },
+    "reference_type": { "type": "string", "enum": ["finding_id", "repo_reference"], "description": "How the Finding was referenced: finding_id is an exact Finding ID citation; repo_reference is the weaker signal of merely mentioning the federation-recon repository name" },
     "repository_pin": { "type": "string", "description": "Path to the repository pin of the referencing repository" },
     "observed_at": { "type": "string", "format": "date-time" },
     "cycle": { "type": "integer", "description": "Which operational cycle this observation belongs to (1-based, derived from committed artifacts)" }

@@ -43,10 +43,11 @@ with open('schemas/consumption-record.schema.json') as f:
     s = json.load(f)
 enum = s['properties']['reference_type']['enum']
 assert 'finding_id' in enum
-assert 'finding_path' in enum
-assert 'drift_path' in enum
-assert 'evidence_path' in enum
-assert 'url_slug' in enum
+assert 'repo_reference' in enum
+assert len(enum) == 2, f'Expected exactly 2 values, got {len(enum)}: {enum}'
+# Must NOT contain the removed types
+for bad in ['finding_path', 'drift_path', 'evidence_path', 'url_slug']:
+    assert bad not in enum, f'Removed type {bad} still in enum'
 "
 }
 
@@ -86,6 +87,52 @@ for key in data:
 }
 
 # ---------------------------------------------------------------------------
+# Unqualified substrings must NOT produce consumption records (Blocker 1)
+# ---------------------------------------------------------------------------
+
+@test "falsifier: file containing 'evidence/' produces NO consumption record" {
+  # The string 'evidence/' is a coincidental vocabulary match, not evidence
+  # that a Finding was cited. This test proves the falsifier is not fooled.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  echo "This file mentions evidence/ in passing — not a Finding reference." > "$tmpdir/test.md"
+
+  run bash -c "
+    cd '$tmpdir'
+    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+  "
+  # rg should produce zero matches for 'evidence/' since it is not in our patterns
+  [ -z "$output" ]
+  rm -rf "$tmpdir"
+}
+
+@test "falsifier: file containing 'drift/' produces NO consumption record" {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  echo "The drift/ directory contains drift records." > "$tmpdir/test.md"
+
+  run bash -c "
+    cd '$tmpdir'
+    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+  "
+  [ -z "$output" ]
+  rm -rf "$tmpdir"
+}
+
+@test "falsifier: file containing 'findings/' produces NO consumption record" {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  echo "See the findings/ section for details." > "$tmpdir/test.md"
+
+  run bash -c "
+    cd '$tmpdir'
+    rg -n --no-heading --sort path -e 'finding-[0-9a-f]\{12\}' -e 'federation-recon' . 2>/dev/null || true
+  "
+  [ -z "$output" ]
+  rm -rf "$tmpdir"
+}
+
+# ---------------------------------------------------------------------------
 # Sub-digest shape (if committed)
 # ---------------------------------------------------------------------------
 
@@ -107,7 +154,7 @@ assert 'self_observation' in d
 "
 }
 
-@test "v2-consumption sub-digest summary has consumption_records and cycle (if present)" {
+@test "v2-consumption sub-digest summary has finding_references, repo_references, and cycle (if present)" {
   if [ ! -f "digest/v2-consumption.json" ]; then
     skip "No committed v2-consumption sub-digest — skipping"
   fi
@@ -116,10 +163,17 @@ import json
 with open('digest/v2-consumption.json') as f:
     d = json.load(f)
 summary = d.get('summary', {})
-assert 'consumption_records' in summary
+assert 'finding_references' in summary
+assert 'repo_references' in summary
+assert 'total_consumption_records' in summary
 assert 'cycle' in summary
-assert isinstance(summary['consumption_records'], int)
+assert isinstance(summary['finding_references'], int)
+assert isinstance(summary['repo_references'], int)
+assert isinstance(summary['total_consumption_records'], int)
 assert isinstance(summary['cycle'], int)
+# The total must equal the sum of the two counts
+assert summary['total_consumption_records'] == summary['finding_references'] + summary['repo_references'], \
+    f\"total ({summary['total_consumption_records']}) != finding ({summary['finding_references']}) + repo ({summary['repo_references']})\"
 "
 }
 
@@ -134,7 +188,7 @@ assert isinstance(summary['cycle'], int)
 # Zero-consumption: must render plainly, not as empty section
 # ---------------------------------------------------------------------------
 
-@test "v2-consumption sub-digest renders zero-count as explicit (if present)" {
+@test "v2-consumption sub-digest renders zero finding_references as explicit (if present)" {
   if [ ! -f "digest/v2-consumption.json" ]; then
     skip "No committed v2-consumption sub-digest — skipping"
   fi
@@ -142,16 +196,16 @@ assert isinstance(summary['cycle'], int)
 import json
 with open('digest/v2-consumption.json') as f:
     d = json.load(f)
-count = d.get('summary', {}).get('consumption_records', -1)
+count = d.get('summary', {}).get('finding_references', -1)
 if count == 0:
     # Zero must have attention items stating the fact
     items = d.get('attention_items', [])
-    assert len(items) > 0, 'Zero consumption must produce attention items'
+    assert len(items) > 0, 'Zero finding_references must produce attention items'
     headline = items[0].get('headline', '')
-    assert 'ZERO' in headline, f'Zero consumption headline must say ZERO: {headline}'
-    print('OK: zero consumption explicitly rendered')
+    assert 'ZERO' in headline, f'Zero finding_references headline must say ZERO: {headline}'
+    print('OK: zero finding_references explicitly rendered')
 else:
-    print(f'SKIP: consumption count = {count}, not testing zero case')
+    print(f'SKIP: finding_references count = {count}, not testing zero case')
 "
 }
 
