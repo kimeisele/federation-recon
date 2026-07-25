@@ -597,7 +597,15 @@ print(json.dumps([role, boundary], separators=(',', ':')))
 # The hash is computed ONLY from the file content; no artifact is included.
 constitution_file_hash() {
   local sha="$1" path="$2"
-  git show "${sha}:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null
+  # Try the pinned SHA first for determinism (FR-CON-012).
+  # Fall back to HEAD if the pinned commit is not available locally
+  # (e.g. during branch development or shallow clones).
+  local result
+  result=$(git show "${sha}:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null)
+  if [ -z "$result" ]; then
+    result=$(git show "HEAD:${path}" 2>/dev/null | python3 -c "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())" 2>/dev/null)
+  fi
+  printf '%s' "$result"
 }
 
 observe_constitution() {
