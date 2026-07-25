@@ -106,7 +106,7 @@ for key in data:
   # regardless of what production does.
   run bash -c "
     cd '$fixture_dir'
-    rg -n --no-heading --sort path --hidden \
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
       -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
       -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
       . 2>/dev/null || true
@@ -119,6 +119,26 @@ for key in data:
   [[ "$output" =~ finding-0fc027b8a436 ]]
 }
 
+@test "positive control: repo slug alone is detected and never counted as a Finding" {
+  local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-slug"
+
+  run bash -c "
+    cd '$fixture_dir'
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
+      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
+      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
+      . 2>/dev/null || true
+  "
+
+  # The slug channel must fire...
+  [ -n "$output" ]
+  [[ "$output" =~ mention\.md ]]
+  # ...and must never be mistaken for a Finding citation. The fixture contains
+  # no finding- identifier at all, so any finding_id classification here would
+  # mean the weaker evidence channel is inflating the falsifier's count.
+  ! [[ "$output" =~ finding-[0-9a-f]{12} ]]
+}
+
 # ---------------------------------------------------------------------------
 # Negative control: finding-a{12} (literal braces) MUST NOT match
 # ---------------------------------------------------------------------------
@@ -128,7 +148,7 @@ for key in data:
 
   run bash -c "
     cd '$fixture_dir'
-    rg -n --no-heading --sort path --hidden \
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
       -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
       -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
       . 2>/dev/null || true
@@ -136,7 +156,7 @@ for key in data:
 
   # The literal-braces.md file contains 'finding-a{12}' which has literal braces,
   # NOT a 12-char hex string. ripgrep with Rust regex must NOT match this.
-  # Assert: the only possible match would be for 'federation-recon', and there
+  # Assert: the only possible match would be for "$CONSUMPTION_PATTERN_REPO_SLUG", and there
   # is none, so output must be empty.
   [ -z "$output" ]
 }
@@ -152,7 +172,7 @@ for key in data:
 
   if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
     ref_type="finding_id"
-  elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
+  elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
     ref_type="repo_reference"
   fi
 
@@ -165,7 +185,7 @@ for key in data:
 
   if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
     ref_type="finding_id"
-  elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
+  elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
     ref_type="repo_reference"
   fi
 
@@ -183,7 +203,7 @@ for key in data:
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden \
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
       -e "$CONSUMPTION_PATTERN_FINDING_ID" \
       -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true
@@ -199,7 +219,7 @@ for key in data:
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden \
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
       -e "$CONSUMPTION_PATTERN_FINDING_ID" \
       -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true
@@ -215,7 +235,7 @@ for key in data:
 
   run bash -c "
     cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden \
+    rg -n --no-heading --sort path --hidden -g '!.git/' \
       -e "$CONSUMPTION_PATTERN_FINDING_ID" \
       -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
       . 2>/dev/null || true

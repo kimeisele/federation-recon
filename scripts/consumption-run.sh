@@ -198,7 +198,7 @@ search_repo_for_consumption() {
   # destroy the falsifier (see PR #46 review, Blocker 1).
 
   local matches
-  matches=$(cd "$tmpdir" && rg -n --no-heading --sort path --hidden \
+  matches=$(cd "$tmpdir" && rg -n --no-heading --sort path --hidden -g '!.git/' \
     -e "$CONSUMPTION_PATTERN_FINDING_ID" \
     -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
     . 2>/dev/null || true)
@@ -236,7 +236,7 @@ search_repo_for_consumption() {
     if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
       ref_type="finding_id"
       finding_id=$(printf '%s' "$match_text" | rg -o "$CONSUMPTION_PATTERN_FINDING_ID" | head -1)
-    elif printf '%s' "$match_text" | rg -q 'federation-recon'; then
+    elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
       ref_type="repo_reference"
       finding_id=""
     fi
