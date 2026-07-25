@@ -18,7 +18,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 snap() {
-  find pins claims evidence drift findings coverage consumption digest STATE.md -type f 2>/dev/null \
+  find pins claims evidence drift findings coverage consumption digest self STATE.md -type f 2>/dev/null \
     | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
 }
 
