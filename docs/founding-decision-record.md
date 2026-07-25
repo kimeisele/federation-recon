@@ -56,3 +56,31 @@ Slice v0 is authorized but **not yet implemented**. Implementation is a separate
 ## Adopted by / date
 
 Adopted by the operator (`kimeisele`), on the recommendation of the acting tech lead architecture review (GO after the single visibility reconciliation). **Date: 2026-07-23.**
+
+---
+
+## Adoption baseline (pinned 2026-07-25)
+
+Every constitutional consultation must include the **cumulative** diff from these
+commits, not only the incremental one. Without a pinned baseline no reviewer ever
+sees the trajectory: each amendment is judged against whatever the previous
+amendments already established, so a constitution can walk arbitrarily far from
+its founding intent with every individual step approved.
+
+| Document | Baseline commit | Meaning |
+|---|---|---|
+| `docs/founding-package-v0.2.md` | `d316e9a` | as first committed, 2026-07-23 |
+| `CLAUDE.md` | `d5bd7b4` | as first committed on `main` (#30), 2026-07-24 |
+
+Cumulative diff for a review:
+
+```
+git diff d316e9a -- docs/founding-package-v0.2.md
+git diff d5bd7b4 -- CLAUDE.md
+```
+
+Re-ratification: every 6 months, or every 5 amendments in `docs/amendments.md`,
+whichever comes first, the whole current constitution goes to an independent
+reviewer as a complete document with the question "has this drifted from its
+founding intent," and the owner gets a plain-language summary. Owner silence past
+the deadline is recorded as a self-Finding — never treated as consent.

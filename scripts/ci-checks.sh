@@ -12,6 +12,11 @@
 #      digest/state-digest.json must be a pure function of the per-procedure
 #      sub-digests (digest/<id>.json). If re-running the composer changes them,
 #      the committed digest is stale or hand-edited — reject it.
+#   4. Consultation artifact gate: any PR whose diff touches CLAUDE.md,
+#      docs/founding-package-v0.2.md, or docs/*-adr.md must carry a committed,
+#      verbatim consultation transcript from an independent cross-provider
+#      reviewer at governance/consultations/<pr>.md. Enforces CLAUDE.md →
+#      Delegated judgment.
 #
 # Full end-to-end --reproduce determinism (which requires network + gh to fetch
 # pinned repository contents) is intentionally NOT run here so the PR gate stays
@@ -20,7 +25,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/3] strict artifact validation =="
+echo "== [1/4] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -36,7 +41,7 @@ fi
 source "$(dirname "$0")/lib/manifest-gate.sh"
 
 echo
-echo "== [2/3] pin → manifest membership =="
+echo "== [2/4] pin → manifest membership =="
 if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
   echo "  OK"
 else
@@ -44,7 +49,7 @@ else
 fi
 
 echo
-echo "== [3/3] composed digest idempotency =="
+echo "== [3/4] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
@@ -61,6 +66,23 @@ else
   fail=1
 fi
 rm -rf "$tmp"
+
+# ---- Consultation artifact gate --------------------------------------------
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/consultation-gate.sh"
+
+echo
+echo "== [4/4] consultation artifact gate =="
+# PR number: env var (CI) takes priority, else try to extract from branch name.
+pr="${CONSULTATION_PR_NUMBER:-}"
+if [ -z "$pr" ]; then
+  pr=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -oE '[0-9]+' | tail -1 || true)
+fi
+if check_consultation_gate "$pr"; then
+  echo "  OK"
+else
+  fail=1
+fi
 
 echo
 if [ "$fail" = 0 ]; then
