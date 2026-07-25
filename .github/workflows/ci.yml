@@ -67,13 +67,14 @@ jobs:
         run: |
           RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
           RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce
+          RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce
           bash scripts/compose-digest.sh
 
       - name: Assert committed artifacts equal the reproduce fixpoint
         run: |
-          if ! git diff --quiet -- pins claims evidence drift findings coverage digest STATE.md; then
+          if ! git diff --quiet -- pins claims evidence drift findings coverage consumption digest STATE.md; then
             echo "::error::Committed artifacts are stale — a fresh --reproduce differs. Regenerate the fixpoint and commit it."
-            git --no-pager diff --stat -- pins claims evidence drift findings coverage digest STATE.md
+            git --no-pager diff --stat -- pins claims evidence drift findings coverage consumption digest STATE.md
             exit 1
           fi
           echo "OK: committed artifacts are a reproduce fixpoint"
