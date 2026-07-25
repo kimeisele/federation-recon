@@ -1,8 +1,0 @@
-{
-  "repository": "kimeisele/agent-music",
-  "requested_ref": "main",
-  "resolved_commit_sha": "5e4bed462c740608566737c2319b105914455839",
-  "observation_timestamp": "2026-07-24T15:24:49Z",
-  "acquisition_method": "gh-api",
-  "dirty_state_assertion": false
-}

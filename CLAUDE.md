@@ -174,3 +174,6 @@ the append-only log that makes that drift countable.
 - `operator/heartbeat.sh` — deterministic dispatcher.
 - Issue #29 — operator bootstrap (compact state, not whole history).
 - `docs/founding-package-v0.2.md` — constitution + invariants.
+- `docs/operator-lessons.md` — durable operating knowledge. Read it before
+  reviewing or asserting anything about tool behaviour; it exists because the
+  same class of mistake was made three times in one session.
