@@ -55,3 +55,5 @@ data disproved it. Use the alias, and check `jcode usage` if it matters.
 
 Availability is not an exemption. If a reviewer's budget is exhausted the call
 fails; use another. If none can be reached, the change waits.
+
+<!-- enforcement probe -->
