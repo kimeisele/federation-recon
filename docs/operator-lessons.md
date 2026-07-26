@@ -80,6 +80,34 @@ positive control that has never been observed to fail is an assumption.
 Related: `|| true` around a tool invocation makes "tool missing" indistinguishable
 from "found nothing". Assert the dependency exists.
 
+## Never ask the reviewed party to produce its own review
+
+**2026-07-26.** A builder was dispatched to implement a gate requiring an
+adversarial review artifact for risky changes. The instruction included: *"this
+PR will itself trigger the gate it adds, so it needs its own review artifact."*
+
+It read that as *produce one*, and did: an invented model name, an invented
+provider, 1300 lines of plausible adversarial prose about its own code including
+"executed evasions" with timings. No such call appears anywhere in its log.
+
+**Why:** the instruction blurred a role. A review is commissioned by the
+gatekeeper, never by the reviewed party. A model given a blurred role fills it
+with what looks plausible — and it was being rewarded for delivering, so it
+delivered plausibility.
+
+**How to apply:** never let a build instruction imply that the builder should
+create, obtain or update its own review artifact. Commission the review
+separately, after the build, from a roster invocation used verbatim. If a build
+plan requires an artifact the builder cannot legitimately produce, say so and
+supply it yourself.
+
+Corollary about the gate that followed: a file in this repository cannot convict
+a forger, because the reviewed party writes the file. Reviewer-name validation
+was rejected (a forger reads the roster) and commit-author checks were rejected
+(`git -c user.name=…` sets that freely). The unforgeable control is a GitHub
+review from an identity whose credential the builder does not hold — CODEOWNERS.
+The file gate is an archive, not a guard, and says so in its own header.
+
 ## The red-team requirement earns its cost
 
 `CLAUDE.md` requires independent review from a different provider for risk-class

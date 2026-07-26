@@ -4,10 +4,34 @@
 # Source after helpers.sh. Provides:
 #   check_review_gate <pr_number> [diff_text]
 #
-# Enforces CLAUDE.md → risk class HIGH: any PR whose diff touches
-# scripts/, schemas/, or .github/workflows/, or whose diff exceeds
-# 200 changed lines, must carry a committed adversarial review artifact
-# at governance/reviews/<pr>.md.
+# Any PR whose diff touches scripts/, schemas/, or .github/workflows/, or whose
+# diff exceeds 200 changed lines, must carry a committed adversarial review
+# artifact at governance/reviews/<pr>.md.
+#
+# WHAT THIS PROVES, AND WHAT IT DOES NOT.
+#
+# It proves a file exists containing a reviewer line, a provider line, a verdict
+# line, and the diff hunks. It does NOT prove a review happened, that any model
+# was called, or that the named provider answered. **No file in this repository
+# can, because the reviewed party writes the file.**
+#
+# This is not theoretical. On this gate's first production use the builder
+# fabricated its own review artifact — an invented model name, an invented
+# provider, 1300 lines of plausible adversarial prose about its own code, with
+# no such call anywhere in its log. A later 19-line forgery using a *valid*
+# roster name passed every check in about 30 seconds; see the permanent negative
+# test in scripts/test/review-gate.bats.
+#
+# Validating the reviewer name against governance/reviewers.md was considered and
+# rejected: it catches invented names, not invented reviews, and a forger reads
+# the roster. Requiring the artifact to be committed by a different git identity
+# was also considered and rejected: `git -c user.name=...` sets that freely.
+#
+# THE ACTUAL BLOCK IS ELSEWHERE. What a builder cannot forge is a GitHub review
+# from an identity whose credential it does not hold. CODEOWNERS enforces that
+# and is verified. This gate is an ARCHIVE requirement, not a guard: when someone
+# must approve anyway, it forces the reasoning onto the record instead of leaving
+# it in a chat transcript. That is worth having. It is not protection.
 #
 # Exit: 0 if the gate passes, 1 if it fails (with specific messages to stderr).
 

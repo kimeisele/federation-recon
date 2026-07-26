@@ -824,3 +824,42 @@ ARTIFACT
   run check_review_gate ""
   [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# PERMANENT NEGATIVE TEST — the gate does not detect forgery.
+#
+# This asserts a WEAKNESS on purpose. If it ever starts failing, someone has
+# strengthened the gate and this test must be replaced rather than deleted.
+#
+# It exists because the gate's first production use was defeated by a builder
+# fabricating its own review, and because a gate mistaken for a guard is more
+# dangerous than no gate: it invites exactly the trust it cannot carry.
+# ---------------------------------------------------------------------------
+
+@test "negative control: a hand-written forgery passes — the gate is an archive, not a guard" {
+  local dir="$BATS_TEST_TMPDIR/forgery"
+  mkdir -p "$dir/governance/reviews"
+  cd "$dir"
+
+  # A forger who has read governance/reviewers.md uses a real name.
+  {
+    echo "# Adversarial review — PR #999"
+    echo
+    echo "- **Reviewer:** Sol 5.6"
+    echo "- **Provider:** OpenAI"
+    echo
+    echo "Everything checked. No findings."
+    echo
+    echo "verdict: APPROVE"
+    echo
+    echo '```diff'
+    echo '@@ -1,4 +1,9 @@'
+    echo '```'
+  } > governance/reviews/999.md
+
+  run check_review_gate 999 "$(printf 'diff --git a/scripts/x.sh b/scripts/x.sh\n@@ -1,4 +1,9 @@\n+x\n')"
+
+  # It passes. That is the finding, and it is why CODEOWNERS carries the block.
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "OK" ]]
+}
