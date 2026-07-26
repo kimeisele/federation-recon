@@ -153,3 +153,22 @@ setup() {
   cd /
   rm -rf "$d" "$wt"
 }
+
+# ---------------------------------------------------------------------------
+# tree_status_records — fixture-string tests (no git)
+# ---------------------------------------------------------------------------
+
+@test "tree_status_records: snapshot with only worktree records prints nothing" {
+  snap="$(printf 'worktree: /a\nworktree: /b')"
+  run tree_status_records "$snap"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "tree_status_records: snapshot with both kinds prints only status: records in order" {
+  snap="$(printf 'status: ?? foo\nworktree: /a\nstatus: M bar\nworktree: /b')"
+  run tree_status_records "$snap"
+  [ "$status" -eq 0 ]
+  expected="$(printf 'status: ?? foo\nstatus: M bar')"
+  [ "$output" = "$expected" ]
+}

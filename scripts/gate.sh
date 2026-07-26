@@ -44,7 +44,7 @@ source "$(dirname "$0")/lib/tree-state.sh"
 # Baseline snapshot before any step runs. Only uncommitted changes (status:
 # records) indicate pre-existing dirt; registered worktrees are normal state.
 snap_start="$(tree_snapshot)"
-dirty="$(printf '%s\n' "$snap_start" | grep '^status:' || true)"
+dirty="$(tree_status_records "$snap_start")"
 if [ -n "$dirty" ]; then
   printf 'note: the working tree was already dirty when this gate started\n'
   printf '%s\n' "$dirty" | sed 's/^/  /'

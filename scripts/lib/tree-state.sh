@@ -51,3 +51,11 @@ tree_diff() {
   [ -n "$added" ] && printf '%s\n' "$added"
   return 1
 }
+
+# tree_status_records <snapshot> — prints only the status: records from a
+# snapshot (as produced by tree_snapshot). Prints nothing when there are none.
+# Always returns 0; emptiness is the answer, not an error.
+tree_status_records() {
+  local snap="$1"
+  printf '%s\n' "$snap" | grep '^status:' || true
+}
