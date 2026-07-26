@@ -16,6 +16,7 @@ heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
 manifest-gate.bats
+state-gate.bats
 suite-inventory.bats
 test-runner.bats
 validate-artifacts.bats
