@@ -14,6 +14,28 @@ no session context.
 | Sol 5.6 | OpenAI | `JCODE_PROVIDER=openai JCODE_MODEL=gpt-5.6-sol jcode run` |
 | Kimi K3 | Moonshot | `JCODE_PROVIDER=moonshotai JCODE_MODEL=kimi-k3 jcode run` |
 
+## When to call whom
+
+| Reviewer | Cost | Use for |
+|---|---|---|
+| **Sol 5.6** | subscription — effectively free | **default.** Every routine cross-provider review, every HIGH-risk round, every re-review. |
+| **Kimi K3** | per token, real money | **judgments only.** Decisions where the operator distrusts its own reasoning, security review, adversarial code analysis. |
+| Fable 5 | max-plan only, not available here | do not plan around it |
+
+**Kimi is for judgments, not for rounds.** One targeted Kimi consultation caught
+two errors in the operator's own reasoning — a false claim about a removed
+control, and treating an accepted API parameter as an enforcing one — after four
+review rounds had missed both. The same four rounds, run against Kimi, would have
+cost several euro and produced less.
+
+Its distinguishing property is not raw capability. It is that it reviews
+adversarially without the caution that makes other models skip the ugly cases:
+it will attack the mechanism, execute the evasion, and time it.
+
+Budget discipline is not optional politeness. A review process nobody can afford
+gets skipped, and a skipped review is the failure mode this whole file exists to
+prevent — so the cheap reviewer must carry the volume.
+
 The operator currently runs on Anthropic Opus. Fable 5 is therefore **not** an
 independent provider for operator-authored constitutional changes — same
 provider. It remains valid for architecture and direction red-teaming, and for
