@@ -5,5 +5,8 @@
 # Operator v1.2 runtime state directory (never committed)
 operator/.runtime/
 
+# Slice 1a execution run directories (never committed)
+operator/.runs/
+
 # F-02 Consumption Measurement temp clone directories (never committed)
 .consumption-tmp-*
