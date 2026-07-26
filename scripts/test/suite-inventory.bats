@@ -201,13 +201,27 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
 # Collation is a property of the locale, not of the filesystem: under de_DE
 # these two names are neither less nor greater, so the pair was never compared.
 @test "suite-inventory: locale-incomparable names that are one file — returns 1" {
+  # This test cannot skip. Its whole subject is a guard that a silent skip would
+  # leave unproven: with the locale absent, LC_ALL falls back to C, where any two
+  # distinct names *are* ordered, the old name-ordering code compares the pair
+  # anyway, and the mutation survives behind a green suite. So an unmet
+  # precondition is a failure of this test, and CI is expected to provide it.
+  if ! locale -a 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | grep -qx 'de_de.utf8'; then
+    echo "precondition unmet: de_DE.UTF-8 is not installed, so this guard cannot be exercised" >&2
+    return 1
+  fi
+  if LC_ALL=de_DE.UTF-8 bash -c '[[ "ß" < "ss" ]] || [[ "ß" > "ss" ]]'; then
+    echo "precondition unmet: the two names are ordered under this locale" >&2
+    return 1
+  fi
+
   mk 'ss.bats'
   # Two worlds, both valid fixtures for the same defect: on a case-sensitive
   # filesystem the two names are distinct and a hardlink makes them one inode;
-  # on this Mac the filesystem folds ß onto ss, so the second name already
-  # resolves to the first file and `ln` reports "File exists".
+  # on a case-folding filesystem ß already resolves to ss and `ln` reports
+  # "File exists".
   if ! ln "$WORKDIR/tests/ss.bats" "$WORKDIR/tests/ß.bats" 2>/dev/null; then
-    [ -e "$WORKDIR/tests/ß.bats" ] || skip "cannot construct the fixture here"
+    [ -e "$WORKDIR/tests/ß.bats" ] || return 1
   fi
   man 'ss.bats' 'ß.bats'
   LC_ALL=de_DE.UTF-8 run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
