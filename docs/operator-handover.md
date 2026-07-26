@@ -44,9 +44,15 @@ also refuses to treat a check it could not run as a check that passed, and print
 what it does **not** establish.
 
 What it runs: strict artifact validation, the offline CI gate, the full test
-suite, the suite again with the CI environment variables set (an earlier defect
-passed locally and failed on CI because the environment was an unstated input),
-and with `--full` the reproduce fixpoint.
+suite, and with `--full` the reproduce fixpoint.
+
+It used to run the suite a second time with the CI environment variables set,
+because an earlier defect passed locally and failed on CI when the environment
+turned out to be an unstated test input. That step was removed: the defect is
+fixed at its source, the two runs' output was byte-identical in every measured
+gate, and GitHub Actions already runs the suite in a genuinely different
+environment on every pull request — which four hand-picked variables can only
+imitate. It cost more than half the gate's wall clock.
 
 plus, for anything touching the evidence path, a **reproduce fixpoint**: run the
 full pipeline twice and confirm the artifact set is byte-identical, and that the

@@ -31,52 +31,16 @@ step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m — %s\n' "$1"; fail=1; }
 good() { printf '  \033[32mOK\033[0m — %s\n' "$1"; }
 
-# run_suite <logfile> — run the test suite, one process per .bats file.
-#
-# The suite is ~92% of this gate's wall clock and the gate runs it twice, which
-# put a merge-time check at roughly fifteen minutes. A gate that expensive gets
-# skipped, and a skipped gate is the failure this repository has catalogued most
-# often. Each test file isolates its own state in `mktemp -d` and reads the
-# repository without writing to it, so per-file parallelism is safe — measured
-# across repeated full runs, not assumed.
-#
-# The exit status is the entire point of this function. The first version of it
-# named the failing file, counted the failures correctly, and still returned 0,
-# because its last command was a cleanup. Everything a human reads was right;
-# the one thing the caller reads was wrong.
-run_suite() {
-  local log="$1" jobdir rc=0 p f n=0
-  local pids=""
-
-  jobdir="$(mktemp -d "${TMPDIR:-/tmp}/gate-suite.XXXXXX")"
-  for f in scripts/test/*.bats; do
-    [ -f "$f" ] || continue
-    n=$(( n + 1 ))
-    bats "$f" >"$jobdir/$(basename "$f").log" 2>&1 &
-    pids="$pids $!"
-  done
-
-  # No test files is not a pass. "Found nothing" and "ran nothing" must never
-  # reach the caller as the same outcome.
-  if [ "$n" = 0 ]; then
-    echo "no .bats files found under scripts/test/" >"$log"
-    rm -rf "$jobdir"
-    return 1
-  fi
-
-  for p in $pids; do
-    wait "$p" || rc=1
-  done
-
-  cat "$jobdir"/*.log >"$log" 2>/dev/null
-  rm -rf "$jobdir"
-  return "$rc"
-}
+# The suite runner lives in scripts/lib/ so that scripts/test/test-runner.bats
+# exercises the same definition this gate uses. A test that carries its own copy
+# of what it guards is not a test.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/test-runner.sh"
 
 # suite_failed <logfile> <label> — report why the suite failed.
 #
 # Counting `not ok` lines is not a diagnosis: a suite that never ran has zero
-# of them, and reporting "0 failing" describes a green run. Distinguish the two.
+# of them, and reporting "0 failing" describes a green run.
 suite_failed() {
   local log="$1" label="$2" nf
   nf="$(grep -c '^not ok' "$log")"
@@ -91,14 +55,14 @@ suite_failed() {
 # ---- dependencies -------------------------------------------------------
 # Asserted, not assumed. A missing binary must announce itself rather than
 # turn into an empty result somewhere downstream.
-step "0/5 dependencies"
+step "0/4 dependencies"
 for t in git python3 bats shasum; do
   if command -v "$t" >/dev/null 2>&1; then good "$t"; else bad "$t is required and not installed"; fi
 done
 [ "$fail" = 1 ] && { printf '\n\033[31mGATE: FAIL\033[0m — dependencies missing, nothing else was run\n'; exit 1; }
 
 # ---- 1. strict artifact validation --------------------------------------
-step "1/5 strict artifact validation"
+step "1/4 strict artifact validation"
 if bash scripts/validate-artifacts.sh --strict >"$LOGDIR/validate.log" 2>&1; then
   good "$(grep -o 'Total validated: [0-9]*' "$LOGDIR/validate.log" | head -1)"
 else
@@ -106,7 +70,7 @@ else
 fi
 
 # ---- 2. offline CI gate --------------------------------------------------
-step "2/5 offline CI gate"
+step "2/4 offline CI gate"
 if bash scripts/ci-checks.sh >"$LOGDIR/ci.log" 2>&1; then
   good "ci-checks passed"
 else
@@ -114,33 +78,30 @@ else
 fi
 
 # ---- 3. test suite -------------------------------------------------------
-step "3/5 test suite"
+step "3/4 test suite"
 if run_suite "$LOGDIR/bats.log"; then
   good "$(grep -c '^ok' "$LOGDIR/bats.log") tests"
 else
   suite_failed "$LOGDIR/bats.log" "test suite"
 fi
 
-# ---- 4. suite under CI environment --------------------------------------
-# Two tests once passed locally and failed on CI because GitHub Actions exports
-# GITHUB_EVENT_NAME and the workflow exports CONSULTATION_PR_NUMBER. The
-# environment was an unstated test input. Run the suite as CI would.
-step "4/5 test suite under a CI-like environment"
-# A subshell, not an assignment prefix: bash keeps variable assignments made in
-# front of a *function* call in effect after the call returns, which would leak
-# the CI environment into step 5.
-if (
-     export GITHUB_EVENT_NAME=pull_request CONSULTATION_PR_NUMBER=99 CI=true GITHUB_ACTIONS=true
-     run_suite "$LOGDIR/bats-ci.log"
-   ); then
-  good "$(grep -c '^ok' "$LOGDIR/bats-ci.log") tests with CI variables set"
-else
-  suite_failed "$LOGDIR/bats-ci.log" \
-    "test suite with CI variables set (if step 3 passed, the suite depends on the ambient environment)"
-fi
+# ---- removed: a second suite run under a CI-like environment -------------
+# This gate used to run the whole suite a second time with GITHUB_EVENT_NAME,
+# CONSULTATION_PR_NUMBER, CI and GITHUB_ACTIONS exported, because two tests once
+# passed locally and failed on CI when they inherited those variables. It cost
+# more than half the gate's wall clock and it was inert:
+#
+#   - the defect was fixed at its source — scripts/test/consultation-gate.bats
+#     unsets both variables in setup(), and every test now states its inputs;
+#   - the two runs' aggregate logs were byte-identical in every measured gate;
+#   - the real oracle already exists and is free. GitHub Actions runs the whole
+#     suite in a genuinely different environment on every pull request, which
+#     four hand-picked variables can only imitate.
+#
+# Deleting a check needs a reason, not a schedule. This is the reason.
 
 # ---- 5. reproduce fixpoint ----------------------------------------------
-step "5/5 reproduce fixpoint (FR-CON-012)"
+step "4/4 reproduce fixpoint (FR-CON-012)"
 if ! $FULL; then
   printf '  \033[33mSKIPPED\033[0m — needs network; re-run with --full\n'
   skipped="the reproduce fixpoint"
