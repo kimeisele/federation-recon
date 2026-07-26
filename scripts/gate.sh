@@ -37,6 +37,18 @@ good() { printf '  \033[32mOK\033[0m — %s\n' "$1"; }
 # shellcheck disable=SC1091
 source "$(dirname "$0")/lib/test-runner.sh"
 
+# Tree-state library for attribution: which step changed the working tree.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/tree-state.sh"
+
+# Baseline snapshot before any step runs. If the tree is already dirty, report
+# it here so no later step can be blamed for pre-existing dirt.
+snap_start="$(tree_snapshot)"
+if [ -n "$snap_start" ]; then
+  printf 'note: the working tree was already dirty when this gate started\n'
+  printf '%s\n' "$snap_start" | sed 's/^/  /'
+fi
+
 # suite_failed <logfile> <label> — report why the suite failed.
 #
 # Counting `not ok` lines is not a diagnosis: a suite that never ran has zero
@@ -79,10 +91,15 @@ fi
 
 # ---- 3. test suite -------------------------------------------------------
 step "3/4 test suite"
+snap_pre_suite="$(tree_snapshot)"
 if run_suite "$LOGDIR/bats.log"; then
   good "$(grep -c '^ok' "$LOGDIR/bats.log") tests"
 else
   suite_failed "$LOGDIR/bats.log" "test suite"
+fi
+if ! new_records="$(tree_diff "$snap_pre_suite" "$(tree_snapshot)")"; then
+  bad "the test suite modified the working tree"
+  printf '%s\n' "$new_records" | sed 's/^/    /'
 fi
 
 # ---- removed: a second suite run under a CI-like environment -------------
@@ -115,13 +132,15 @@ else
            RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1
            RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce >/dev/null 2>&1
            bash scripts/compose-digest.sh                                  >/dev/null 2>&1; }
+  snap_pre_reproduce="$(tree_snapshot)"
   before="$(snap)"; run; a="$(snap)"; run; b="$(snap)"
   if [ "$a" != "$b" ]; then
     bad "not deterministic: two consecutive runs differ"
   elif [ "$before" != "$a" ]; then
     bad "committed artifacts are not the fixpoint — regenerate and commit"
-  elif [ -n "$(git status --porcelain)" ]; then
-    bad "working tree dirty after reproduce"
+  elif ! new_records="$(tree_diff "$snap_pre_reproduce" "$(tree_snapshot)")"; then
+    bad "the reproduce run left the tree dirty"
+    printf '%s\n' "$new_records" | sed 's/^/    /'
   else
     good "committed == run1 == run2, tree clean"
   fi

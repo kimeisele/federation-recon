@@ -22,4 +22,5 @@ manifest-gate.bats
 state-gate.bats
 suite-inventory.bats
 test-runner.bats
+tree-state.bats
 validate-artifacts.bats
