@@ -1477,6 +1477,36 @@ ENDAI
     fi
   fi
 
+  # Constitutional UNOBSERVABLE items: the constitution could not be read at all.
+  # These have no drift record by construction — there is nothing to compare —
+  # so the drift loop below would never surface them. Emitting the finding
+  # artifact without surfacing it here would leave STATE.md looking clean while
+  # constitutional drift detection was blind, which is the failure this whole
+  # procedure exists to prevent. Ranked first: not knowing is worse than drift.
+  local ukey
+  for ukey in $(for k in "${!CONST_FINDING_FILES[@]}"; do case "$k" in const-unobs-*) echo "$k";; esac; done | sort); do
+    local uf="${CONST_FINDING_FILES[$ukey]}"
+    [ ! -f "$uf" ] && continue
+    local ustmt
+    ustmt=$(python3 -c "
+import json
+print(json.load(open('$uf')).get('statement','')[:160])
+" 2>/dev/null || echo "constitution unobservable")
+
+    $first_ai || attention_items_json+=","
+    first_ai=false
+    attention_items_json+=$(cat <<ENDUAI
+{
+  "target": "kimeisele/federation-recon",
+  "status": "observed",
+  "attention_rank": 0,
+  "headline": $(json_val "$ustmt"),
+  "refs": ["${uf##*/}"]
+}
+ENDUAI
+)
+  done
+
   # Constitutional drift items (issue #45): non_peer items for self-observation
   for ckey in "${!CONST_DRIFT_FILES[@]}"; do
     local cf="${CONST_DRIFT_FILES[$ckey]}"
