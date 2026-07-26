@@ -45,20 +45,34 @@ set -o errexit -o nounset -o pipefail
 _review_is_high_risk_check() {
   local diff_text="$1"
 
-  # Criterion A: diff touches scripts/, schemas/, or .github/workflows/
+  # Criterion A: the diff touches scripts/, schemas/, or .github/workflows/
+  #
+  # BOTH sides are inspected. Matching only `+++` missed the two cheapest
+  # attacks, both executed against the earlier version: deleting a protected
+  # script (the `+++` side is `/dev/null`) and renaming one out of a protected
+  # directory (no `+++ b/scripts/...` line exists at all). Either let a change
+  # that removes a security check pass as "not risk-class HIGH".
+  #
+  # `diff --git` lines are matched too, since renames carry both paths there.
   local trigger_paths
-  trigger_paths=$(echo "$diff_text" | grep -E '^\+\+\+ (a/|b/)?(scripts/|schemas/|\.github/workflows/)' || true)
+  trigger_paths=$(echo "$diff_text" | grep -E '^(\+\+\+|---) (a/|b/)?(scripts/|schemas/|\.github/workflows/)|^diff --git .*(a|b)/(scripts/|schemas/|\.github/workflows/)' || true)
   if [ -n "$trigger_paths" ]; then
     echo "HIGH"
     return 0
   fi
 
-  # Criterion B: diff exceeds 200 changed lines.
-  # Count lines that represent actual changes: lines starting with + or -,
-  # excluding the +++/--- diff header lines (those start with three identical
-  # chars) and hunk headers (@@).
+  # Criterion B: the diff exceeds 200 changed lines.
+  #
+  # Count added and removed content lines, excluding only the `+++`/`---` file
+  # headers themselves. The previous pattern excluded every line whose second
+  # character was also + or -, so a 201-line addition of text that happens to
+  # begin with `+` or `-` — ordinary Markdown bullet lists, for one — counted as
+  # zero. Executed: a 201-line documentation diff classified as not HIGH.
   local changed_lines
-  changed_lines=$(echo "$diff_text" | grep -cE '^[-+]([^-+]|$)' || true)
+  changed_lines=$(echo "$diff_text" | grep -cE '^[-+]' || true)
+  local header_lines
+  header_lines=$(echo "$diff_text" | grep -cE '^(\+\+\+|---) ' || true)
+  changed_lines=$(( changed_lines - header_lines ))
   if [ "$changed_lines" -gt 200 ]; then
     echo "HIGH"
     return 0
@@ -255,7 +269,29 @@ check_review_gate() {
     return 1
   fi
 
-  echo "  OK — review artifact ${artifact}: reviewer present, provider present, verdict=${verdict}, diff hunks verified"
+  # The error text above promises "the complete triggering diff", but everything
+  # checked so far is hunk HEADERS. An artifact carrying four @@ lines and no
+  # diff body satisfied it — executed against the earlier version. Require a
+  # plausible share of the content lines too, so the artifact holds the change
+  # rather than its table of contents.
+  local content_lines artifact_content
+  content_lines=$(echo "$triggering_diff" | grep -cE '^[-+][^-+]' || true)
+  if [ "$content_lines" -gt 0 ]; then
+    local found=0 line
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      grep -qF -- "$line" "$artifact" && found=$(( found + 1 ))
+    done <<< "$(echo "$triggering_diff" | grep -E '^[-+][^-+]' | head -40)"
+    local sample=$(( content_lines < 40 ? content_lines : 40 ))
+    if [ "$sample" -gt 0 ] && [ $(( found * 2 )) -lt "$sample" ]; then
+      echo "FAIL — review gate: artifact ${artifact} carries hunk headers but not" >&2
+      echo "       the diff body (${found}/${sample} sampled content lines present)." >&2
+      echo "       Hunk headers are a table of contents, not the change." >&2
+      return 1
+    fi
+  fi
+
+  echo "  OK — review artifact ${artifact}: reviewer present, provider present, verdict=${verdict}, diff hunks and body verified"
 
   # 4. On REJECT, require a second artifact carrying 'verdict: APPROVE'
   #    against the same triggering diff.

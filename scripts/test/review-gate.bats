@@ -104,7 +104,7 @@ index abc1234..def5678 100644
   run check_review_gate 1 "$SCRIPT_DIFF"
   [ "$status" -eq 0 ]
   [[ "$output" == *"verdict=APPROVE"* ]]
-  [[ "$output" == *"diff hunks verified"* ]]
+  [[ "$output" == *"diff hunks and body verified"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -854,12 +854,47 @@ ARTIFACT
     echo
     echo '```diff'
     echo '@@ -1,4 +1,9 @@'
+    echo '+x'
     echo '```'
   } > governance/reviews/999.md
 
   run check_review_gate 999 "$(printf 'diff --git a/scripts/x.sh b/scripts/x.sh\n@@ -1,4 +1,9 @@\n+x\n')"
 
-  # It passes. That is the finding, and it is why CODEOWNERS carries the block.
+  # It passes. Requiring the diff body raised the forger's cost from pasting
+  # hunk headers to pasting the whole diff — seconds either way. That is the
+  # finding, and it is why CODEOWNERS carries the block.
   [ "$status" -eq 0 ]
   [[ "$output" =~ "OK" ]]
+}
+
+# ---------------------------------------------------------------------------
+# Regression tests for four evasions executed against the first version.
+# Each one let a change that removes or replaces protected code pass as
+# "not risk-class HIGH". They are pinned here so they cannot return quietly.
+# ---------------------------------------------------------------------------
+
+@test "evasion 1: deleting a protected script is HIGH (+++ side is /dev/null)" {
+  run _review_is_high_risk_check "$(printf 'diff --git a/scripts/x.sh b/scripts/x.sh\ndeleted file mode 100755\n--- a/scripts/x.sh\n+++ /dev/null\n@@ -1,5 +0,0 @@\n-x\n')"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ HIGH ]]
+}
+
+@test "evasion 2: renaming a script out of scripts/ is HIGH (no +++ b/scripts line)" {
+  run _review_is_high_risk_check "$(printf 'diff --git a/scripts/x.sh b/docs/x.sh\nsimilarity index 100%%\nrename from scripts/x.sh\nrename to docs/x.sh\n')"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ HIGH ]]
+}
+
+@test "evasion 3: 201 added lines beginning with + are counted" {
+  local d
+  d="$(printf 'diff --git a/docs/x.md b/docs/x.md\n--- a/docs/x.md\n+++ b/docs/x.md\n@@ -1,0 +1,201 @@\n'; for i in $(seq 1 201); do printf '++bullet %s\n' "$i"; done)"
+  run _review_is_high_risk_check "$d"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ HIGH ]]
+}
+
+@test "control: an ordinary small diff is still not HIGH" {
+  run _review_is_high_risk_check "$(printf 'diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,2 @@\n+one line\n')"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
 }
