@@ -12,18 +12,20 @@
 # sourcing shell. A library must not change its caller's failure semantics. See #75.
 
 # tree_snapshot — prints a stable, sorted description of the working tree's
-# deviation from HEAD: `git status --porcelain` plus the list of registered
-# worktrees (`git worktree list --porcelain`), sorted, one record per line.
+# deviation from HEAD. Each record is labeled by kind:
+#   status: <git status --porcelain line>
+#   worktree: <path from git worktree list --porcelain>
+# The main worktree is excluded; HEAD and branch lines are discarded
+# (only the worktree path matters for leak detection).
 tree_snapshot() {
   local main
   main="$(git rev-parse --show-toplevel 2>/dev/null)"
   {
-    git status --porcelain 2>/dev/null
+    git status --porcelain 2>/dev/null | grep -v '^$' | sed 's/^/status: /'
     git worktree list --porcelain 2>/dev/null | awk -v main="$main" '
-      /^worktree / { in_main = (substr($0, 10) == main) }
-      !in_main
+      /^worktree / { in_main = (substr($0, 10) == main); if (!in_main) printf "worktree: %s\n", substr($0, 10) }
     '
-  } | grep -v '^$' | sort
+  } | sort
 }
 
 # tree_diff <before> <after> — prints the records present in <after> but not

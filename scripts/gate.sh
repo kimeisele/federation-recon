@@ -41,12 +41,13 @@ source "$(dirname "$0")/lib/test-runner.sh"
 # shellcheck disable=SC1091
 source "$(dirname "$0")/lib/tree-state.sh"
 
-# Baseline snapshot before any step runs. If the tree is already dirty, report
-# it here so no later step can be blamed for pre-existing dirt.
+# Baseline snapshot before any step runs. Only uncommitted changes (status:
+# records) indicate pre-existing dirt; registered worktrees are normal state.
 snap_start="$(tree_snapshot)"
-if [ -n "$snap_start" ]; then
+dirty="$(printf '%s\n' "$snap_start" | grep '^status:' || true)"
+if [ -n "$dirty" ]; then
   printf 'note: the working tree was already dirty when this gate started\n'
-  printf '%s\n' "$snap_start" | sed 's/^/  /'
+  printf '%s\n' "$dirty" | sed 's/^/  /'
 fi
 
 # suite_failed <logfile> <label> — report why the suite failed.

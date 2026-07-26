@@ -104,3 +104,52 @@ setup() {
   cd /
   rm -rf "$d" "$wt"
 }
+
+@test "tree_snapshot: worktree with clean tree yields zero status: records" {
+  d="$(mktemp -d "${TMPDIR:-/tmp}/bats-treesnap.XXXXXX")"
+  cd "$d"
+  git init -q
+  git config user.email "test@test"
+  git config user.name "Test"
+  git commit --allow-empty -m "init" -q
+
+  wt="$(mktemp -d "${TMPDIR:-/tmp}/bats-wt.XXXXXX")"
+  git worktree add "$wt" >/dev/null 2>&1
+
+  run tree_snapshot
+  [ "$status" -eq 0 ]
+  # Snapshot is non-empty (has worktree records).
+  [ -n "$output" ]
+  # Every line is labeled — HEAD/branch lines would appear bare.
+  ! printf '%s\n' "$output" | grep -qv '^\(status:\|worktree:\)'
+  # Zero status: records on a clean tree.
+  status_count="$(printf '%s\n' "$output" | grep -c '^status:' || true)"
+  [ "$status_count" -eq 0 ]
+
+  cd /
+  rm -rf "$d" "$wt"
+}
+
+@test "tree_snapshot: worktree plus untracked file yields exactly one status: record" {
+  d="$(mktemp -d "${TMPDIR:-/tmp}/bats-treesnap.XXXXXX")"
+  cd "$d"
+  git init -q
+  git config user.email "test@test"
+  git config user.name "Test"
+  git commit --allow-empty -m "init" -q
+
+  wt="$(mktemp -d "${TMPDIR:-/tmp}/bats-wt.XXXXXX")"
+  git worktree add "$wt" >/dev/null 2>&1
+
+  touch stray-file
+  run tree_snapshot
+  [ "$status" -eq 0 ]
+  # Exactly one status: record.
+  status_count="$(printf '%s\n' "$output" | grep -c '^status:' || true)"
+  [ "$status_count" -eq 1 ]
+  # That record names the untracked file.
+  printf '%s\n' "$output" | grep '^status:' | grep -q 'stray-file'
+
+  cd /
+  rm -rf "$d" "$wt"
+}
