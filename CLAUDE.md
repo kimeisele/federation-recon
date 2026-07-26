@@ -63,6 +63,29 @@ checkpoint from the committed seed. Run `bash operator/heartbeat.sh --dry-run`
 for a non-mutating decision. The committed `operator/state.json` is immutable;
 mutation targets the runtime path only. Never trust memory.
 
+## How to work here
+
+Care does not catch the defects this repository produces. Three things do.
+
+**Run it.** When a claim depends on how a tool behaves — a regex dialect, a flag,
+a platform feature, which model answered — execute it. Never reason from memory,
+and never treat "the API accepted the setting" as "the control is enforcing".
+
+**Mutate it.** A check you have never seen fail is an assumption. Break what it
+guards, confirm the suite goes red, restore.
+
+**Have someone else look.** Risk class HIGH requires a reviewer from a different
+provider (`governance/adversarial-review.md`). An author cannot audit their own
+blind spot.
+
+Use committed invocations verbatim; do not rebuild an equivalent by hand. A
+model's self-report is not evidence.
+
+Before merging: `bash scripts/gate.sh` (add `--full` for the reproduce fixpoint).
+
+Evidence for all of this, and the failures that produced it:
+`docs/operator-lessons.md`.
+
 ## Stewardship & Trust Boundary
 
 The owner does not provide routine review, so the operator acts as a fiduciary:
