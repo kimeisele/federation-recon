@@ -95,16 +95,104 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
   [ "$status" -eq 1 ]
 }
 
+# A broken symlink that is NOT in the manifest reaches the check through the
+# enumeration loop rather than the presence loop. Test 5 covers the listed case
+# and left the enumeration guard free to be removed without any test noticing.
+@test "suite-inventory: an unlisted broken symlink — returns 1" {
+  mk a.bats
+  man 'a.bats'
+  ln -s nowhere.bats "$WORKDIR/tests/zz.bats"
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a regular file"* ]]
+}
+
+# Counting entries is not counting files: deleting budget.bats and listing
+# heartbeat.bats twice restored the count, passed the required CI job, and ran
+# thirteen fewer tests.
+@test "suite-inventory: a duplicated manifest entry — returns 1" {
+  mk a.bats
+  man 'a.bats' 'a.bats'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"listed more than once"* ]]
+}
+
+# An entry the suite glob cannot reach would satisfy the inventory while the
+# test never runs — the outcome this check exists to prevent.
+@test "suite-inventory: an entry with a path separator — returns 1" {
+  mk a.bats
+  mkdir -p "$WORKDIR/tests/nested"
+  : >"$WORKDIR/tests/nested/b.bats"
+  man 'a.bats' 'nested/b.bats'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"path separator"* ]]
+}
+
+@test "suite-inventory: an entry escaping the test directory — returns 1" {
+  mk a.bats
+  man 'a.bats' '../ci-checks.sh'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+@test "suite-inventory: a hidden entry the suite glob never matches — returns 1" {
+  mk a.bats
+  : >"$WORKDIR/tests/.b.bats"
+  man 'a.bats' '.b.bats'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hidden"* ]]
+}
+
+@test "suite-inventory: an entry that is not a .bats file — returns 1" {
+  mk a.bats
+  man 'a.bats' 'README.md'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+# Two names, one file: the count is right and a test is missing. `-ef` compares
+# device and inode, so it sees through a hardlink and through the case-folding
+# of a case-insensitive filesystem.
+@test "suite-inventory: two manifest names hardlinked to one file — returns 1" {
+  mk a.bats
+  ln "$WORKDIR/tests/a.bats" "$WORKDIR/tests/b.bats"
+  man 'a.bats' 'b.bats'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"same file"* ]]
+}
+
+# Only meaningful where the filesystem folds case, which is the default on
+# macOS and not the case on the Linux CI runner. Skipped rather than asserted
+# where it cannot hold.
+@test "suite-inventory: case-folded aliases on a case-insensitive filesystem — returns 1" {
+  mk a.bats
+  if [ ! -e "$WORKDIR/tests/A.bats" ]; then
+    skip "filesystem is case-sensitive"
+  fi
+  man 'a.bats' 'A.bats'
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+# These three asserted only a nonzero status, which their fixtures produced for
+# unrelated reasons; removing the guard under test left them green. Each now
+# asserts the diagnosis it is named for.
 @test "suite-inventory: missing manifest — returns 1, does not pass by default" {
   mk a.bats
   run check_suite_inventory "$WORKDIR/nope" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
+  [[ "$output" == *"manifest not found"* ]]
 }
 
 @test "suite-inventory: missing test directory — returns 1" {
   man 'a.bats'
   run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/nodir"
   [ "$status" -eq 1 ]
+  [[ "$output" == *"test directory not found"* ]]
 }
 
 @test "suite-inventory: manifest with only comments — returns 1" {
@@ -112,6 +200,7 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
   man '# nothing here' ''
   run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
+  [[ "$output" == *"no usable test files"* ]]
 }
 
 # A manifest that travelled through Windows must not fail for the wrong reason.
