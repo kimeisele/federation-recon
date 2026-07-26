@@ -12,7 +12,8 @@
 # Exit: 0 if all pins are in the adopted set, 1 if any pin is unlisted
 #       or the manifest cannot be parsed.
 
-set -o errexit -o nounset -o pipefail
+# Deliberately no `set` here: this file is sourced, and `set` acts on the
+# sourcing shell. A library must not change its caller's failure semantics. See #75.
 
 # check_pin_manifest_membership <manifest_file> <pins_glob>
 # Returns 0 when every pin slug is listed in the manifest's adopted set.

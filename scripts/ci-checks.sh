@@ -72,8 +72,14 @@ echo "== [3/5] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
-bash scripts/compose-digest.sh >/dev/null 2>&1
-if diff -q "$tmp/STATE.md" STATE.md >/dev/null 2>&1 \
+composer_status=0
+bash scripts/compose-digest.sh >/dev/null 2>&1 || composer_status=$?
+if [ "$composer_status" -ne 0 ]; then
+  echo "  FAIL — compose-digest.sh exited ${composer_status}; the digest was not regenerated"
+  cp "$tmp/STATE.md" STATE.md
+  cp "$tmp/state-digest.json" digest/state-digest.json
+  fail=1
+elif diff -q "$tmp/STATE.md" STATE.md >/dev/null 2>&1 \
    && diff -q "$tmp/state-digest.json" digest/state-digest.json >/dev/null 2>&1; then
   echo "  OK — STATE.md and machine digest reproduce exactly from sub-digests"
 else

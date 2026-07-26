@@ -10,7 +10,8 @@
 #
 # Exit: 0 if the gate passes, 1 if it fails (with specific messages to stderr).
 
-set -o errexit -o nounset -o pipefail
+# Deliberately no `set` here: this file is sourced, and `set` acts on the
+# sourcing shell. A library must not change its caller's failure semantics. See #75.
 
 # _consultation_const_files
 # Prints the list of constitutional files that exist on disk (one per line).
