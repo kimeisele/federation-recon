@@ -1,13 +1,13 @@
 {
   "digest_type": "composed_federation",
   "composer_version": "v2",
-  "composed_at": "2026-07-25T05:59:55Z",
+  "composed_at": "2026-07-26T16:58:19Z",
   "procedure_count": 3,
   "procedures": [
     {
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0",
-      "run_timestamp": "2026-07-24T15:23:48Z",
+      "run_timestamp": "2026-07-26T16:57:58Z",
       "summary": {
         "pins": 7,
         "claims": 30,
@@ -22,15 +22,15 @@
     {
       "procedure_id": "v1-census",
       "procedure_version": "v1",
-      "run_timestamp": "2026-07-24T15:24:49Z",
+      "run_timestamp": "2026-07-26T16:57:36Z",
       "summary": {
-        "pins": 7,
-        "evidence": 30,
-        "findings": 7,
-        "coverage_records": 7,
-        "observed_nodes": 7,
-        "stale_nodes": 1,
-        "ok_nodes": 6,
+        "pins": 14,
+        "evidence": 60,
+        "findings": 16,
+        "coverage_records": 14,
+        "observed_nodes": 14,
+        "stale_nodes": 2,
+        "ok_nodes": 12,
         "error_nodes": 0,
         "staleness_threshold_days": 60
       }
@@ -38,16 +38,16 @@
     {
       "procedure_id": "v2-consumption",
       "procedure_version": "v2",
-      "run_timestamp": "2026-07-25T05:59:55Z",
+      "run_timestamp": "2026-07-26T16:58:19Z",
       "summary": {
-        "pins": 6,
+        "pins": 13,
         "finding_references": 0,
         "repo_references": 0,
         "total_consumption_records": 0,
-        "coverage_records": 6,
-        "observed_repositories": 6,
+        "coverage_records": 13,
+        "observed_repositories": 13,
         "partial_failures": 0,
-        "cycle": 1
+        "cycle": 2
       }
     }
   ],
@@ -56,7 +56,7 @@
       "target": "kimeisele/*",
       "status": "observed",
       "attention_rank": 0,
-      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 1 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
+      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 2 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
       "refs": [
         "consumption/"
       ],
@@ -106,6 +106,18 @@
   ],
   "constitutional_observatory": [
     {
+      "target": "kimeisele/agent-village",
+      "status": "observed",
+      "attention_rank": 90,
+      "headline": "Constitutional non-peer kimeisele/agent-village \u2014 no descriptor expected (\u00a75)",
+      "refs": [
+        "findings/finding-aa331f6e7cb3.json"
+      ],
+      "non_peer": true,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    },
+    {
       "target": "kimeisele/federation-recon",
       "status": "observed",
       "attention_rank": 90,
@@ -120,7 +132,7 @@
   ],
   "summary": {
     "total_attention_items": 4,
-    "total_observatory_items": 1,
+    "total_observatory_items": 2,
     "total_procedures": 3
   }
 }

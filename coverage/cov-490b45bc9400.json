@@ -1,0 +1,10 @@
+{
+  "coverage_id": "cov-490b45bc9400",
+  "repository_pin": "pins/v2-consumption/agent-village.json",
+  "procedure_id": "v2-consumption",
+  "procedure_version": "v2",
+  "capabilities_used": ["git", "gh", "rg", "python3", "jq"],
+  "capabilities_missing": [],
+  "result": "success",
+  "inspected_at": "2026-07-26T16:58:35Z"
+}
