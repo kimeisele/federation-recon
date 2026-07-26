@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Constitution Baseline",
+  "description": "The pinned reference point for constitutional drift detection. Deliberately re-pinned via RECON_PIN_CONSTITUTION=1, never written by an observation run. Its absence or corruption must be an observable state, not a silent skip — a watchdog whose reference point can vanish without comment is blind in the way that looks healthy.",
+  "type": "object",
+  "required": ["repository", "constitutional_files", "pinned_at"],
+  "additionalProperties": false,
+  "properties": {
+    "repository": { "type": "string", "description": "Owning repository slug" },
+    "constitutional_files": {
+      "type": "object",
+      "description": "Path to SHA-256 of the exact file bytes at the pinned commit",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "pinned_at": { "type": "string", "description": "ISO-8601 UTC timestamp of the deliberate re-pin" }
+  }
+}

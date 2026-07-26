@@ -78,9 +78,9 @@ jobs:
 
       - name: Assert committed artifacts equal the reproduce fixpoint
         run: |
-          if ! git diff --quiet -- pins claims evidence drift findings coverage consumption digest STATE.md; then
+          if ! git diff --quiet -- pins claims evidence drift findings coverage consumption self digest STATE.md; then
             echo "::error::Committed artifacts are stale — a fresh --reproduce differs. Regenerate the fixpoint and commit it."
-            git --no-pager diff --stat -- pins claims evidence drift findings coverage consumption digest STATE.md
+            git --no-pager diff --stat -- pins claims evidence drift findings coverage consumption self digest STATE.md
             exit 1
           fi
           echo "OK: committed artifacts are a reproduce fixpoint"

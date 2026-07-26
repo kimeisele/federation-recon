@@ -133,6 +133,41 @@ validate_dir "findings" "$SCHEMA_DIR/finding.schema.json" "Findings"
 validate_dir "coverage" "$SCHEMA_DIR/coverage-record.schema.json" "Coverage Records"
 validate_dir "consumption" "$SCHEMA_DIR/consumption-record.schema.json" "Consumption Records" "cycle-ledger.json"
 
+# The constitution baseline is the reference point for constitutional drift
+# detection. Its absence or corruption must be a LOUD failure, not a silent
+# skip: a watchdog whose reference point can vanish without comment is blind in
+# exactly the way that looks healthy. validate_dir returns early on a missing
+# directory, so the file is asserted explicitly first.
+if [ ! -f "self/constitution-baseline.json" ]; then
+  echo "  [FAIL] Constitution Baseline: self/constitution-baseline.json is missing —"
+  echo "         constitutional drift detection has no reference point."
+  echo "         Re-pin deliberately with RECON_PIN_CONSTITUTION=1."
+  ERRORS=$(( ERRORS + 1 ))
+else
+  validate_dir "self" "$SCHEMA_DIR/constitution-baseline.schema.json" "Constitution Baseline"
+
+  # The schema declares a 64-hex pattern for each hash, but validate_json_schema
+  # checks only required/enum/minItems — never types or patterns. A schema
+  # constraint nobody enforces is decoration, and a corrupted hash would sail
+  # through looking validated. Checked explicitly.
+  if ! python3 - <<'PYEOF'
+import json, re, sys
+b = json.load(open("self/constitution-baseline.json"))
+files = b.get("constitutional_files")
+if not isinstance(files, dict) or not files:
+    print("  [FAIL] Constitution Baseline: constitutional_files must be a non-empty object", file=sys.stderr)
+    raise SystemExit(1)
+bad = [f"{p}={h!r}" for p, h in files.items()
+       if not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{64}", h)]
+if bad:
+    print("  [FAIL] Constitution Baseline: malformed SHA-256 value(s): " + ", ".join(bad), file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+  then
+    ERRORS=$(( ERRORS + 1 ))
+  fi
+fi
+
 # Referential integrity (#11): every repository_pin must resolve to a real pin
 # file, so the Claim/Evidence -> Pin -> raw repo navigation chain is not broken.
 # The schema only requires repository_pin to be a string; this checks it points
