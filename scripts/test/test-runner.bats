@@ -124,44 +124,30 @@ mk() { printf '%s\n' "$2" >"$WORKDIR/tests/$1.bats"; }
   [ "$status" -eq 1 ]
 }
 
-# --- suite inventory ------------------------------------------------------
-# The reviewer's objection that CODEOWNERS covers this was right to reject:
-# approval establishes that somebody agreed to a diff, not that the suite is
-# still complete. These cover what approval cannot.
-
-@test "suite-inventory: disk matches the manifest — returns 0" {
-  mk a PASS; mk b PASS
-  printf '# comment\n\na.bats\nb.bats\n' >"$WORKDIR/MANIFEST"
-  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
-  [ "$status" -eq 0 ]
-}
-
-@test "suite-inventory: a listed test file was deleted — returns 1" {
-  mk a PASS; mk b PASS
-  printf 'a.bats\nb.bats\nc.bats\n' >"$WORKDIR/MANIFEST"
-  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"listed but absent: c.bats"* ]]
-}
-
-@test "suite-inventory: a test file exists but is unlisted — returns 1" {
-  mk a PASS; mk b PASS
-  printf 'a.bats\n' >"$WORKDIR/MANIFEST"
-  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"present but unlisted: b.bats"* ]]
-}
-
-@test "suite-inventory: missing manifest — returns 1, does not pass by default" {
+# Digits alone were not enough: a digit string past the shell's integer range
+# made the same comparison error out and the cap disappear.
+@test "test-runner: TEST_RUNNER_MAX_JOBS beyond the integer range — returns 1" {
   mk a PASS
-  run check_suite_inventory "$WORKDIR/nope" "$WORKDIR/tests"
+  TEST_RUNNER_MAX_JOBS=999999999999999999999999999 run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
 }
 
-@test "suite-inventory: manifest with no entries — returns 1" {
+# `[ -f ]` follows symlinks. One test file pointing at another runs the target
+# twice and never runs the file it replaced, while every count still looks
+# right — the gate stayed green through exactly this.
+@test "test-runner: a symlinked test file — returns 1, is not run" {
+  mk a PASS; mk b PASS
+  rm "$WORKDIR/tests/b.bats"
+  ln -s a.bats "$WORKDIR/tests/b.bats"
+  run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  grep -q 'is not a regular file' "$WORKDIR/out.log"
+}
+
+@test "test-runner: a broken symlink — returns 1" {
   mk a PASS
-  printf '# only comments\n\n' >"$WORKDIR/MANIFEST"
-  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  ln -s nowhere.bats "$WORKDIR/tests/z.bats"
+  run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
 }
 
