@@ -7,7 +7,8 @@ on:
   workflow_dispatch:  # manual trigger
 
 permissions:
-  contents: write       # needed to commit STATE.md + digest artifacts
+  contents: write         # needed to push the observation branch
+  pull-requests: write    # the observation arrives as a pull request, not a push
   # No other permissions needed — census only reads public data via gh API
 
 jobs:
@@ -21,6 +22,14 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ github.token }}
+
+      # The runner requires git, gh, rg and python3, and refuses to start
+      # without them. ubuntu-latest ships every one of those except ripgrep, so
+      # this job failed on the first line of real work on every scheduled run
+      # since it was created. ci.yml and nightly-determinism.yml install it;
+      # this workflow — the only one that produces a new observation — did not.
+      - name: Install ripgrep (required tool per §11.1)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       - name: Run Federation Node Census
         env:
@@ -51,29 +60,52 @@ jobs:
       - name: Strict schema validation
         run: bash scripts/validate-artifacts.sh --strict
 
-      - name: Commit and push results
-        if: success() || failure()  # commit even on partial results
+      # The observation arrives as a pull request, not as a push.
+      #
+      # This step used to push straight to the default branch. The branch
+      # ruleset `federation-recon-baseline` requires a pull request and has no
+      # bypass actors, so that push could only ever have been rejected — which
+      # nobody found out, because the job never survived long enough to reach
+      # this step. Fixing only the missing tool would have moved the failure
+      # from the second step to the last one.
+      #
+      # A pull request is also the honest shape: an observation is a claim about
+      # the world, and it should pass the same required checks as any other
+      # change before it becomes the repository's account of reality.
+      - name: Open a pull request with the observation
+        if: success() || failure()  # a partial observation is still evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "federation-recon[bot]"
           git config user.email "recon-bot@kimeisele.github.io"
 
-          # Stage all artifacts (both procedures + composer output)
           git add pins/ claims/ evidence/ drift/ findings/ coverage/ consumption/ digest/ STATE.md
 
-          # Only commit if there are changes
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "No changes to commit — the observed world matches the committed account."
             exit 0
           fi
 
-          git commit -m "federation recon composed digest $(date -u +%Y-%m-%d)"
+          DATE="$(date -u +%Y-%m-%d)"
+          BRANCH="census/${DATE}-${GITHUB_RUN_ID}"
 
-          # Determine the branch to push to and push
-          BRANCH="${GITHUB_REF_NAME:-main}"
-          echo "Pushing to branch: $BRANCH"
-          git push origin "HEAD:$BRANCH"
+          git checkout -b "$BRANCH"
+          git commit -m "federation recon composed digest ${DATE}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base "${GITHUB_REF_NAME:-main}" \
+            --head "$BRANCH" \
+            --title "observation: federation recon composed digest ${DATE}" \
+            --body "Automated observation from \`node-census.yml\`, run ${GITHUB_RUN_ID}.
+
+          Produced by \`node-census-run.sh\`, \`recon-run.sh\`, \`consumption-run.sh\`
+          and \`compose-digest.sh\` in that order, then validated strictly.
+
+          This is a machine observation and carries no judgment. The required
+          checks decide whether it is internally consistent; a human decides
+          whether it becomes the repository's account of the world."
 
       - name: Budget breach self-finding
         if: failure()
