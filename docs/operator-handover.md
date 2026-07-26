@@ -52,7 +52,8 @@ turned out to be an unstated test input. That step was removed: the defect is
 fixed at its source, the two runs' output was byte-identical in every measured
 gate, and GitHub Actions already runs the suite in a genuinely different
 environment on every pull request — which four hand-picked variables can only
-imitate. It cost more than half the gate's wall clock.
+imitate. It was one of two identical suite runs, roughly two fifths of the
+gate's measured wall clock.
 
 plus, for anything touching the evidence path, a **reproduce fixpoint**: run the
 full pipeline twice and confirm the artifact set is byte-identical, and that the

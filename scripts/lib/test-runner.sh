@@ -29,9 +29,65 @@
 # bomb on a small machine.
 : "${TEST_RUNNER_MAX_JOBS:=8}"
 
+# check_suite_inventory <manifest_file> [testdir]
+#
+# The runner reports what it ran. It cannot report what was supposed to run:
+# delete one test file and the remaining ones still pass, quietly and with a
+# green verdict. The first answer to that was "deleting a file under scripts/
+# needs a code owner's approval", which is true and is not a control — approval
+# establishes that somebody agreed, not that the suite is still complete. This
+# compares the files on disk against a committed list, so an accidental
+# deletion, a bad rebase or a lost merge fails CI rather than shrinking the
+# suite in silence.
+check_suite_inventory() {
+  local manifest_file="$1" testdir="${2:-scripts/test}"
+  local expected actual missing unlisted
+
+  if [ ! -f "$manifest_file" ]; then
+    echo "FAIL — suite manifest not found: $manifest_file" >&2
+    return 1
+  fi
+
+  expected="$(grep -v '^[[:space:]]*#' "$manifest_file" | grep -v '^[[:space:]]*$' | sort)"
+  actual="$(ls "$testdir"/*.bats 2>/dev/null | xargs -n1 basename 2>/dev/null | sort)"
+
+  if [ -z "$expected" ]; then
+    echo "FAIL — suite manifest lists no test files: $manifest_file" >&2
+    return 1
+  fi
+
+  missing="$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))"
+  unlisted="$(comm -13 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))"
+
+  if [ -n "$missing" ] || [ -n "$unlisted" ]; then
+    echo "FAIL — the test suite does not match $manifest_file:" >&2
+    [ -n "$missing" ]  && printf '  listed but absent: %s\n' "$(echo "$missing" | tr '\n' ' ')" >&2
+    [ -n "$unlisted" ] && printf '  present but unlisted: %s\n' "$(echo "$unlisted" | tr '\n' ' ')" >&2
+    echo "  Adding or removing a test file is a deliberate act; record it there." >&2
+    return 1
+  fi
+
+  echo "OK — all $(printf '%s\n' "$expected" | wc -l | tr -d ' ') listed test files are present"
+  return 0
+}
+
 run_suite() {
   local log="$1" testdir="${2:-scripts/test}"
   local jobdir rc=0 p f n=0 i
+
+  # The cap is arithmetic in a loop condition, so a non-numeric value makes the
+  # test error out and the loop never block — the cap silently disappears — and
+  # a value below 1 makes it block forever. Both were reachable from the
+  # environment.
+  case "$TEST_RUNNER_MAX_JOBS" in
+    ''|*[!0-9]*)
+      echo "TEST_RUNNER_MAX_JOBS must be a positive integer, got: $TEST_RUNNER_MAX_JOBS" >"$log"
+      return 1 ;;
+  esac
+  if [ "$TEST_RUNNER_MAX_JOBS" -lt 1 ]; then
+    echo "TEST_RUNNER_MAX_JOBS must be at least 1, got: $TEST_RUNNER_MAX_JOBS" >"$log"
+    return 1
+  fi
 
   jobdir="$(mktemp -d "${TMPDIR:-/tmp}/gate-suite.XXXXXX")" || return 1
   : >"$log" || { rm -rf "$jobdir"; return 1; }
@@ -74,6 +130,13 @@ run_suite() {
       rc=1
     elif ! cat "$jobdir/$i.log" >>"$log"; then
       echo "not ok - could not aggregate the log of worker $i" >>"$log"
+      rc=1
+    elif ! grep -qE '^(ok|not ok) ' "$jobdir/$i.log"; then
+      # A worker must show that it ran something. Rejecting `not ok` only
+      # rejects declared failure; a `bats` that exits 0 and says nothing —
+      # substituted, stale, or broken — otherwise produced "OK — 0 tests" and a
+      # passing gate. Absence of evidence must not read as evidence of success.
+      echo "not ok - worker $i produced no test results" >>"$log"
       rc=1
     fi
     i=$(( i + 1 ))

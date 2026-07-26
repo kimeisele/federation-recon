@@ -1,0 +1,17 @@
+# Test files that must be present. The runner reports what it ran; only this
+# file records what was supposed to run. Adding or removing a test is a
+# deliberate act — record it here in the same commit.
+boundary-agreement.bats
+budget.bats
+clean-procedure-artifacts.bats
+compose-digest.bats
+consultation-gate.bats
+consumption.bats
+count-procedure.bats
+cross-node-artifacts.bats
+heartbeat-v12-invariants.bats
+heartbeat.bats
+helpers.bats
+manifest-gate.bats
+test-runner.bats
+validate-artifacts.bats

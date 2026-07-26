@@ -22,9 +22,11 @@ setup() {
 #!/usr/bin/env bash
 # Stub bats. Behaviour is the first line of the file under test.
 case "$(head -1 "$1")" in
-  FAIL) echo "not ok 1 - $1"; exit 1 ;;
-  LIE)  echo "not ok 1 - $1"; exit 0 ;;   # output and status disagree
-  *)    echo "ok 1 - $1";     exit 0 ;;
+  FAIL)  echo "not ok 1 - $1"; exit 1 ;;
+  LIE)   echo "not ok 1 - $1"; exit 0 ;;   # output and status disagree
+  SILENT) exit 0 ;;                        # exits clean, ran nothing, said nothing
+  EMPTY) echo "1..0"; exit 0 ;;            # a plan, but no test ever ran
+  *)     echo "ok 1 - $1";    exit 0 ;;
 esac
 STUB
   chmod +x "$WORKDIR/mockbin/bats"
@@ -88,6 +90,79 @@ mk() { printf '%s\n' "$2" >"$WORKDIR/tests/$1.bats"; }
   grep -q 'a.bats' "$WORKDIR/out.log"
   grep -q 'b.bats' "$WORKDIR/out.log"
   grep -q 'c.bats' "$WORKDIR/out.log"
+}
+
+# Rejecting `not ok` only rejects declared failure. A worker that exits clean
+# while running nothing at all is the same threat with the evidence removed
+# instead of contradicted, and it produced "OK — 0 tests" and a passing gate.
+@test "test-runner: worker exits 0 with no output — returns 1" {
+  mk a PASS; mk b SILENT; mk c PASS
+  run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  grep -q 'produced no test results' "$WORKDIR/out.log"
+}
+
+@test "test-runner: worker emits an empty TAP plan — returns 1" {
+  mk a EMPTY
+  run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+# The cap is arithmetic inside a loop condition. A non-numeric value made the
+# test error and the loop never block, so the cap vanished; a value below 1
+# made it block forever.
+@test "test-runner: non-numeric TEST_RUNNER_MAX_JOBS — returns 1, does not run unbounded" {
+  mk a PASS; mk b PASS
+  TEST_RUNNER_MAX_JOBS=garbage run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  grep -q 'must be a positive integer' "$WORKDIR/out.log"
+}
+
+@test "test-runner: TEST_RUNNER_MAX_JOBS=0 — returns 1 instead of hanging" {
+  mk a PASS
+  TEST_RUNNER_MAX_JOBS=0 run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+# --- suite inventory ------------------------------------------------------
+# The reviewer's objection that CODEOWNERS covers this was right to reject:
+# approval establishes that somebody agreed to a diff, not that the suite is
+# still complete. These cover what approval cannot.
+
+@test "suite-inventory: disk matches the manifest — returns 0" {
+  mk a PASS; mk b PASS
+  printf '# comment\n\na.bats\nb.bats\n' >"$WORKDIR/MANIFEST"
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 0 ]
+}
+
+@test "suite-inventory: a listed test file was deleted — returns 1" {
+  mk a PASS; mk b PASS
+  printf 'a.bats\nb.bats\nc.bats\n' >"$WORKDIR/MANIFEST"
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"listed but absent: c.bats"* ]]
+}
+
+@test "suite-inventory: a test file exists but is unlisted — returns 1" {
+  mk a PASS; mk b PASS
+  printf 'a.bats\n' >"$WORKDIR/MANIFEST"
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"present but unlisted: b.bats"* ]]
+}
+
+@test "suite-inventory: missing manifest — returns 1, does not pass by default" {
+  mk a PASS
+  run check_suite_inventory "$WORKDIR/nope" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+}
+
+@test "suite-inventory: manifest with no entries — returns 1" {
+  mk a PASS
+  printf '# only comments\n\n' >"$WORKDIR/MANIFEST"
+  run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
 }
 
 # Unbounded concurrency would track the number of test files. The cap is the
