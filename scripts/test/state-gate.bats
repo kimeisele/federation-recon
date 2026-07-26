@@ -46,6 +46,7 @@ setup() {
   run check_scheduled_run_state "$FIXTURE_DIR/empty-history.json" "node-census.yml"
   [ "$status" -eq 2 ]
   [[ "$output" == *"UNKNOWN"* ]]
+  [[ "$output" == *"no scheduled runs on record"* ]]
   [[ "$output" != *"GREEN"* ]]
 }
 
@@ -56,6 +57,7 @@ setup() {
 @test "state-gate: missing file returns 2" {
   run check_scheduled_run_state "/nonexistent/path/to/history.json" "node-census.yml"
   [ "$status" -eq 2 ]
+  [[ "$output" == *"cannot read"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -69,6 +71,7 @@ setup() {
   run check_scheduled_run_state "$tmp" "node-census.yml"
   rm -f "$tmp"
   [ "$status" -eq 2 ]
+  [[ "$output" == *"not valid JSON"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -102,4 +105,5 @@ setup() {
   run env STATE_GATE_FIXTURE="$FIXTURE_DIR/empty-history.json" \
     bash "$REPO_ROOT/scripts/state-gate.sh" --enforce
   [ "$status" -eq 2 ]
+  [[ "$output" == *"no scheduled runs on record"* ]]
 }
