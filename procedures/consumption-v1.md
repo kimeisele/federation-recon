@@ -62,12 +62,13 @@ An append-only per-cycle ledger at `consumption/cycle-ledger.json` records each 
     "finding_references": 0,
     "repo_references": 0,
     "observed_repositories": 13,
-    "timestamp": "2026-07-25T06:00:00Z"
+    "timestamp": "2026-07-25T06:00:00Z",
+    "trigger": "schedule"
   }
 ]
 ```
 
-The ledger is an append-only log. When a new cycle completes, a new entry is appended. No entry is ever modified or removed.
+The ledger is an append-only log. When a new cycle completes, a new entry is appended. No entry is ever modified or removed. Each entry records `cycle`, `finding_references`, `repo_references`, `observed_repositories`, `timestamp` (the actual measurement time, never frozen by `--reproduce`), and `trigger` (the event that initiated the run: `schedule` for the daily cron, `workflow_dispatch` for manual triggers, or `manual` when the trigger source is not available such as local runs).
 
 ## Operations
 
@@ -82,6 +83,8 @@ The ledger is an append-only log. When a new cycle completes, a new entry is app
 | 7 | Enforce budget | Budget check |
 
 ## Execution
+
+The sub-digest `run_timestamp` is frozen in `--reproduce` mode so the artifact set reproduces byte-identically (FR-CON-012). In live mode it is the wall-clock time at run start. The cycle-ledger `timestamp` field is the authoritative record of when a measurement was actually performed: it is always the wall-clock time and is never frozen by `--reproduce`. A digest regenerated after a sensor fix will carry the original frozen `run_timestamp`, but a fresh cycle-ledger entry (or the existing entry's `timestamp` if the cycle is unchanged) records the actual measurement time.
 
 ```shell
 # Full live run

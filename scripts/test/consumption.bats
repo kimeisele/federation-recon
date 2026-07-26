@@ -111,17 +111,12 @@ for key in data:
 @test "positive control: real Finding ID is detected by production search pattern" {
   local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-positive"
 
-  # Sources the SAME pattern definition production uses. Copying the pattern
-  # into the test would defeat the purpose: the bug this test exists to catch
-  # was a broken production pattern, and a test carrying its own copy passes
-  # regardless of what production does.
-  run bash -c "
-    cd '$fixture_dir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
-      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
-      . 2>/dev/null || true
-  "
+  # Calls the SAME function production uses — the rg invocation, flags, -e list,
+  # --hidden, and -g are all defined in a single place. Copying them into the
+  # test would defeat the purpose: the bug this test exists to catch was a broken
+  # production pattern, and a test carrying its own copy passes regardless of
+  # what production does.
+  run search_dir_for_consumption "$fixture_dir"
 
   # The fixture contains finding-0fc027b8a436 → rg MUST produce output
   [ -n "$output" ]
@@ -133,13 +128,7 @@ for key in data:
 @test "positive control: repo slug alone is detected and never counted as a Finding" {
   local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-slug"
 
-  run bash -c "
-    cd '$fixture_dir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
-      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
-      . 2>/dev/null || true
-  "
+  run search_dir_for_consumption "$fixture_dir"
 
   # The slug channel must fire...
   [ -n "$output" ]
@@ -157,13 +146,7 @@ for key in data:
 @test "negative control: literal 'finding-a{12}' is NOT detected by production search pattern" {
   local fixture_dir="$REPO_ROOT/scripts/test/fixtures/consumption-negative"
 
-  run bash -c "
-    cd '$fixture_dir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e \"$CONSUMPTION_PATTERN_FINDING_ID\" \
-      -e \"$CONSUMPTION_PATTERN_REPO_SLUG\" \
-      . 2>/dev/null || true
-  "
+  run search_dir_for_consumption "$fixture_dir"
 
   # The literal-braces.md file contains 'finding-a{12}' which has literal braces,
   # NOT a 12-char hex string. ripgrep with Rust regex must NOT match this.
@@ -177,29 +160,18 @@ for key in data:
 # ---------------------------------------------------------------------------
 
 @test "reference-type classification: Finding ID match classifies as finding_id" {
-  # Simulate the classification logic from search_repo_for_consumption (lines 226-232)
+  # Calls the SAME classification function production uses — the priority order
+  # (finding_id before repo_reference) is defined once.
   local match_text="see finding-0fc027b8a436 for details"
-  local ref_type=""
-
-  if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
-    ref_type="finding_id"
-  elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
-    ref_type="repo_reference"
-  fi
-
+  local ref_type
+  ref_type=$(classify_consumption_match "$match_text")
   [ "$ref_type" = "finding_id" ]
 }
 
 @test "reference-type classification: repo mention classifies as repo_reference" {
   local match_text="uses federation-recon as a dependency"
-  local ref_type=""
-
-  if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
-    ref_type="finding_id"
-  elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
-    ref_type="repo_reference"
-  fi
-
+  local ref_type
+  ref_type=$(classify_consumption_match "$match_text")
   [ "$ref_type" = "repo_reference" ]
 }
 
@@ -212,13 +184,7 @@ for key in data:
   tmpdir=$(mktemp -d)
   echo "This file mentions evidence/ in passing — not a Finding reference." > "$tmpdir/test.md"
 
-  run bash -c "
-    cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
-      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
-      . 2>/dev/null || true
-  "
+  run search_dir_for_consumption "$tmpdir"
   [ -z "$output" ]
   rm -rf "$tmpdir"
 }
@@ -228,13 +194,7 @@ for key in data:
   tmpdir=$(mktemp -d)
   echo "The drift/ directory contains drift records." > "$tmpdir/test.md"
 
-  run bash -c "
-    cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
-      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
-      . 2>/dev/null || true
-  "
+  run search_dir_for_consumption "$tmpdir"
   [ -z "$output" ]
   rm -rf "$tmpdir"
 }
@@ -244,14 +204,29 @@ for key in data:
   tmpdir=$(mktemp -d)
   echo "See the findings/ section for details." > "$tmpdir/test.md"
 
-  run bash -c "
-    cd '$tmpdir'
-    rg -n --no-heading --sort path --hidden -g '!.git/' \
-      -e "$CONSUMPTION_PATTERN_FINDING_ID" \
-      -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
-      . 2>/dev/null || true
-  "
+  run search_dir_for_consumption "$tmpdir"
   [ -z "$output" ]
+  rm -rf "$tmpdir"
+}
+
+# ---------------------------------------------------------------------------
+# Mutation-regression: --hidden flag (Issue #48, item 1)
+# If production drops --hidden, hidden files are not searched and this test
+# goes red. The test calls search_dir_for_consumption — the same function
+# production uses — so the flags cannot drift apart.
+# ---------------------------------------------------------------------------
+
+@test "mutation-regression: hidden files are searched by the production function" {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  # Create a hidden file with a Finding ID — this MUST be found
+  mkdir -p "$tmpdir/.hidden"
+  echo "Referencing finding-abc123def456 in a hidden config." > "$tmpdir/.hidden/config.yml"
+
+  run search_dir_for_consumption "$tmpdir"
+  [ -n "$output" ]
+  [[ "$output" =~ finding-abc123def456 ]]
+  [[ "$output" =~ \.hidden/config\.yml ]]
   rm -rf "$tmpdir"
 }
 
@@ -386,4 +361,64 @@ assert isinstance(cycle, int), f'cycle must be int in $f'
 assert cycle >= 1, f'cycle must be >= 1 in $f'
 "
   done
+}
+
+# ---------------------------------------------------------------------------
+# measurement provenance (Issue #48, item 2)
+# The cycle-ledger records the actual measurement time (never frozen by
+# --reproduce), while the sub-digest run_timestamp may be frozen.
+# ---------------------------------------------------------------------------
+
+@test "cycle-ledger entries have ISO-8601 timestamps (if present)" {
+  if [ ! -f "consumption/cycle-ledger.json" ]; then
+    skip "No cycle-ledger — skipping"
+  fi
+  python3 -c "
+import json, re
+with open('consumption/cycle-ledger.json') as f:
+    data = json.load(f)
+for entry in data:
+    ts = entry.get('timestamp', '')
+    assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', ts), \
+        f'Invalid timestamp format: {ts}'
+print(f'OK: {len(data)} entry/entries with valid timestamps')
+"
+}
+
+# ---------------------------------------------------------------------------
+# Cycle ledger integrity (Issue #48, items 3-4)
+# ---------------------------------------------------------------------------
+
+@test "cycle-ledger is valid JSON array (if present)" {
+  if [ ! -f "consumption/cycle-ledger.json" ]; then
+    skip "No cycle-ledger — skipping"
+  fi
+  python3 -c "
+import json
+with open('consumption/cycle-ledger.json') as f:
+    data = json.load(f)
+assert isinstance(data, list), 'cycle-ledger must be a JSON array'
+print(f'OK: {len(data)} cycle entry/entries')
+"
+}
+
+@test "cycle-ledger entries have required fields including trigger (if present)" {
+  if [ ! -f "consumption/cycle-ledger.json" ]; then
+    skip "No cycle-ledger — skipping"
+  fi
+  python3 -c "
+import json
+with open('consumption/cycle-ledger.json') as f:
+    data = json.load(f)
+for entry in data:
+    assert 'cycle' in entry, 'Missing cycle'
+    assert 'finding_references' in entry, 'Missing finding_references'
+    assert 'repo_references' in entry, 'Missing repo_references'
+    assert 'observed_repositories' in entry, 'Missing observed_repositories'
+    assert 'timestamp' in entry, 'Missing timestamp'
+    assert 'trigger' in entry, 'Missing trigger'
+    assert entry['trigger'] in ('schedule', 'workflow_dispatch', 'manual'), \
+        f"Invalid trigger value: {entry['trigger']}"
+print(f'OK: {len(data)} entry/entries all valid')
+"
 }
