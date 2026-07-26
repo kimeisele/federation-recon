@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/work-order.schema.json",
+  "title": "Work Order",
+  "description": "An executable work order for the Slice 1a execution layer. The runner operator/run.sh consumes this, invokes a builder in a detached worktree, and independently verifies every claim the builder makes.",
+  "type": "object",
+  "required": ["work_order_id", "issue", "base_sha", "allowed_paths", "forbidden_paths", "acceptance_commands", "builder"],
+  "properties": {
+    "work_order_id": { "type": "string", "pattern": "^wo-[0-9]+-[0-9]+$" },
+    "issue": { "type": "integer" },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "allowed_paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "forbidden_paths": { "type": "array", "items": { "type": "string" } },
+    "acceptance_commands": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "builder": { "type": "string" }
+  },
+  "additionalProperties": false
+}
