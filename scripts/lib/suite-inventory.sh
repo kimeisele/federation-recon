@@ -40,16 +40,36 @@
 #      the comparison used `[`, which is a builtin and can be disabled. With
 #      `[` gone the check returned 0 and reported "all 0 listed test files".
 #
-# Hence: no external command participates in reaching a verdict, and every
-# comparison uses the `[[ ]]` keyword, which the shell cannot disable.
-# Enumeration is a glob and membership is a `case`. There is no helper whose
-# absence could be mistaken for agreement, because there is no helper.
+#   9. `[[ "$a" < "$b" ]]` assumed two distinct strings always have an order.
+#      Under de_DE.UTF-8 `ß.bats` and `ss.bats` are neither less nor greater, so
+#      the pair was never compared, and on a case-folding filesystem those two
+#      names are one file. Collation belongs to the locale, not the filesystem.
+#  10. An inherited GLOBIGNORE hid a file from the enumeration glob silently.
+#
+# Hence: no external command participates in reaching a verdict, every
+# comparison uses the `[[ ]]` keyword, which the shell cannot disable, pairs are
+# selected by position rather than by ordering names, and GLOBIGNORE is
+# neutralised. Enumeration is a glob and membership is a `case`.
+#
+# What that does not cover, because two rounds of claiming otherwise were wrong:
+# an environment that pre-empts the shell's own builtins. An exported function
+# named `read` or `return` defeats this function, and an exported `unset`
+# defeats the countermeasure. A check running inside a shell somebody else
+# configured cannot out-argue that shell; the boundary is CI, where the
+# environment is provisioned rather than inherited. `scripts/ci-checks.sh`
+# clears the accidental cases and says so.
 # ---------------------------------------------------------------------------
 
 check_suite_inventory() {
   local manifest_file="$1" testdir="${2:-scripts/test}"
   local line name base f a b expected="" seen="" rc=0 n_expected=0
   local missing="" unlisted="" irregular="" invalid="" duplicate="" aliased=""
+
+  # GLOBIGNORE removes matches from a glob silently, and it can be injected from
+  # the environment. The enumeration below is a glob, so an inherited value could
+  # hide a test file from the "present but unlisted" half of the check without
+  # any error anywhere. Neutralised for the duration of this function.
+  local GLOBIGNORE=
 
   if [[ ! -f "$manifest_file" ]]; then
     echo "FAIL — suite manifest not found: $manifest_file" >&2
@@ -126,11 +146,21 @@ EOF
   # Distinct names, one file. A hardlink, or `A.bats` and `a.bats` on a
   # case-insensitive filesystem: the count is right and a test is missing.
   # `-ef` compares device and inode, so it sees through both.
+  #
+  # Pairs are selected by position, not by comparing the names. `[[ "$a" < "$b" ]]`
+  # assumed two distinct strings always have an order; under de_DE.UTF-8,
+  # `ß.bats` and `ss.bats` are neither less nor greater, so the pair was skipped
+  # and the two names — one file on a case-folding filesystem — passed as
+  # distinct. Collation is a property of the locale, not of the filesystem.
+  local i=0 j
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
+    i=$(( i + 1 ))
+    j=0
     while IFS= read -r b; do
       [[ -n "$b" ]] || continue
-      [[ "$a" < "$b" ]] || continue     # each unordered pair considered once
+      j=$(( j + 1 ))
+      [[ "$j" -gt "$i" ]] || continue    # each unordered pair once, no ordering of names
       if [[ -e "$testdir/$a" && -e "$testdir/$b" && "$testdir/$a" -ef "$testdir/$b" ]]; then
         aliased="${aliased}  ${a} and ${b} are the same file
 "

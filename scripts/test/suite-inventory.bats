@@ -130,11 +130,15 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
   [[ "$output" == *"path separator"* ]]
 }
 
+# The target must EXIST, or the entry fails as "absent" and the guard under test
+# is never reached — which is why removing that guard left this test green.
 @test "suite-inventory: an entry escaping the test directory — returns 1" {
   mk a.bats
-  man 'a.bats' '../ci-checks.sh'
+  : >"$WORKDIR/escape.bats"
+  man 'a.bats' '../escape.bats'
   run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
+  [[ "$output" == *"path separator"* ]]
 }
 
 @test "suite-inventory: a hidden entry the suite glob never matches — returns 1" {
@@ -146,11 +150,15 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
   [[ "$output" == *"hidden"* ]]
 }
 
+# Same trap: with README.md absent this passed through the missing-file check
+# and proved nothing about the shape guard.
 @test "suite-inventory: an entry that is not a .bats file — returns 1" {
   mk a.bats
+  : >"$WORKDIR/tests/README.md"
   man 'a.bats' 'README.md'
   run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
+  [[ "$output" == *"not a .bats file"* ]]
 }
 
 # Two names, one file: the count is right and a test is missing. `-ef` compares
@@ -181,6 +189,43 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
 # These three asserted only a nonzero status, which their fixtures produced for
 # unrelated reasons; removing the guard under test left them green. Each now
 # asserts the diagnosis it is named for.
+# Reverting a single `[[ ]]` to `[` left all 22 tests green while restoring the
+# original false pass. The property has to be asserted where it actually bites.
+@test "suite-inventory: reaches a correct verdict with the [ builtin disabled" {
+  mk a.bats
+  man 'a.bats' 'b.bats'
+  run bash -c "enable -n [ 2>/dev/null; PATH=''; source '$REPO_ROOT/scripts/lib/suite-inventory.sh'; check_suite_inventory '$WORKDIR/MANIFEST' '$WORKDIR/tests'"
+  [ "$status" -eq 1 ]
+}
+
+# Collation is a property of the locale, not of the filesystem: under de_DE
+# these two names are neither less nor greater, so the pair was never compared.
+@test "suite-inventory: locale-incomparable names that are one file — returns 1" {
+  mk 'ss.bats'
+  # Two worlds, both valid fixtures for the same defect: on a case-sensitive
+  # filesystem the two names are distinct and a hardlink makes them one inode;
+  # on this Mac the filesystem folds ß onto ss, so the second name already
+  # resolves to the first file and `ln` reports "File exists".
+  if ! ln "$WORKDIR/tests/ss.bats" "$WORKDIR/tests/ß.bats" 2>/dev/null; then
+    [ -e "$WORKDIR/tests/ß.bats" ] || skip "cannot construct the fixture here"
+  fi
+  man 'ss.bats' 'ß.bats'
+  LC_ALL=de_DE.UTF-8 run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"same file"* ]]
+}
+
+@test "suite-inventory: an inherited GLOBIGNORE cannot hide a test file — returns 1" {
+  mk a.bats; mk b.bats
+  man 'a.bats'
+  # The pattern must be the exact absolute path: GLOBIGNORE is matched against
+  # the generated name and `*` does not cross a `/`. In CI that path is
+  # entirely predictable, which is what makes this reachable.
+  GLOBIGNORE="$WORKDIR/tests/b.bats" run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"b.bats"* ]]
+}
+
 @test "suite-inventory: missing manifest — returns 1, does not pass by default" {
   mk a.bats
   run check_suite_inventory "$WORKDIR/nope" "$WORKDIR/tests"

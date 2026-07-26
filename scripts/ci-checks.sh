@@ -27,6 +27,20 @@
 # pinned repository contents) is intentionally NOT run here so the PR gate stays
 # fast and offline. See scripts/verify-determinism.sh for that deeper check.
 set -uo pipefail
+
+# The environment can pre-empt shell builtins. An exported function named
+# `read` or `return` is already defined before this script's first line runs,
+# and a reviewer used exactly that to make this gate print its failure and then
+# report PASS. Removing them is free and closes the accidental case — a stray
+# export in somebody's shell profile.
+#
+# It is not a defence against a hostile environment. A shell whose `unset` is
+# itself a function owns everything downstream, and no check running inside that
+# shell survives it. That boundary belongs to CI, where the environment is
+# provisioned rather than inherited.
+unset -f read return printf echo cat grep source unset 2>/dev/null || true
+unset GLOBIGNORE BASH_ENV 2>/dev/null || true
+
 cd "$(dirname "$0")/.."
 fail=0
 
