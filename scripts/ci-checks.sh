@@ -18,14 +18,33 @@
 #      reviewer at governance/consultations/<pr>.md. Enforces CLAUDE.md →
 #      Delegated judgment.
 #
+#   5. Suite inventory: the .bats files present must match the committed list
+#      in scripts/test/MANIFEST. The runner reports what it ran; nothing else
+#      records what was supposed to run, so a deleted test file leaves the
+#      remaining ones green.
+#
 # Full end-to-end --reproduce determinism (which requires network + gh to fetch
 # pinned repository contents) is intentionally NOT run here so the PR gate stays
 # fast and offline. See scripts/verify-determinism.sh for that deeper check.
 set -uo pipefail
+
+# The environment can pre-empt shell builtins. An exported function named
+# `read` or `return` is already defined before this script's first line runs,
+# and a reviewer used exactly that to make this gate print its failure and then
+# report PASS. Removing them is free and closes the accidental case — a stray
+# export in somebody's shell profile.
+#
+# It is not a defence against a hostile environment. A shell whose `unset` is
+# itself a function owns everything downstream, and no check running inside that
+# shell survives it. That boundary belongs to CI, where the environment is
+# provisioned rather than inherited.
+unset -f read return printf echo cat grep source unset 2>/dev/null || true
+unset GLOBIGNORE BASH_ENV 2>/dev/null || true
+
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/4] strict artifact validation =="
+echo "== [1/5] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -41,7 +60,7 @@ fi
 source "$(dirname "$0")/lib/manifest-gate.sh"
 
 echo
-echo "== [2/4] pin → manifest membership =="
+echo "== [2/5] pin → manifest membership =="
 if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
   echo "  OK"
 else
@@ -49,7 +68,7 @@ else
 fi
 
 echo
-echo "== [3/4] composed digest idempotency =="
+echo "== [3/5] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
@@ -72,13 +91,25 @@ rm -rf "$tmp"
 source "$(dirname "$0")/lib/consultation-gate.sh"
 
 echo
-echo "== [4/4] consultation artifact gate =="
+echo "== [4/5] consultation artifact gate =="
 # PR number: env var (CI) takes priority, else try to extract from branch name.
 pr="${CONSULTATION_PR_NUMBER:-}"
 if [ -z "$pr" ]; then
   pr=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -oE '[0-9]+' | tail -1 || true)
 fi
 if check_consultation_gate "$pr"; then
+  echo "  OK"
+else
+  fail=1
+fi
+
+# ---- Suite inventory --------------------------------------------------------
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/suite-inventory.sh"
+
+echo
+echo "== [5/5] test suite inventory =="
+if check_suite_inventory "scripts/test/MANIFEST" "scripts/test"; then
   echo "  OK"
 else
   fail=1

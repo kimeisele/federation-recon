@@ -41,6 +41,16 @@ jobs:
       - name: Install bats-core and ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y -qq bats ripgrep
 
+      # scripts/test/suite-inventory.bats needs a locale in which two distinct
+      # names are not ordered — `ß` and `ss` under de_DE. Without it the test
+      # falls back to C, where every pair of distinct names *is* ordered, and
+      # the guard it exists to prove goes unexercised. That test fails rather
+      # than skips when the locale is missing, so this step is load-bearing.
+      - name: Generate de_DE.UTF-8 (collation fixture for suite-inventory)
+        run: |
+          sudo apt-get install -y -qq locales
+          sudo locale-gen de_DE.UTF-8
+
       - name: Run offline test suite
         run: bats scripts/test/
 
