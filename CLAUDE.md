@@ -220,3 +220,5 @@ the append-only log that makes that drift countable.
 - `docs/operator-lessons.md` — durable operating knowledge. Read it before
   reviewing or asserting anything about tool behaviour; it exists because the
   same class of mistake was made three times in one session.
+
+<!-- enforcement probe, wird verworfen -->
