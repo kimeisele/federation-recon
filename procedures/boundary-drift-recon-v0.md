@@ -68,3 +68,69 @@ RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | v0 | 2026-07-23 | Operator | Initial procedure per adopted Founding Package v0.2 |
+
+---
+
+## Constitution self-observation (issue #45)
+
+Recon hashes its own governing documents at the pinned commit and reports any
+change as drift. The watched set is exactly:
+
+- `CLAUDE.md`
+- `docs/founding-package-v0.2.md`
+
+**ADRs are deliberately not watched.** They record decisions already taken and
+are superseded by amendment rather than edited in place, so a content change to
+an ADR is either a typo fix or a defect in how ADRs are being used — neither is
+constitutional drift. If ADRs ever become mutable governing text, they belong in
+the watched set and this paragraph is wrong.
+
+### Re-pinning the baseline
+
+`self/constitution-baseline.json` is the reference point. It is **never** written
+by an observation run:
+
+```
+RECON_PIN_CONSTITUTION=1 bash scripts/recon-run.sh     # deliberate re-pin
+```
+
+Re-pinning is refused outright in `--reproduce` mode. Until someone re-pins,
+drift keeps being reported — that is the entire point, and the reason the
+baseline was previously rewritten on every run is recorded in the commit history
+as a defect, not a convenience.
+
+**Who may re-pin, and when.** Re-pinning declares "the constitution changed and
+that change was intended". It is therefore an act of ratification, not
+maintenance, and belongs with whoever adopted the change — never as a step in
+clearing a red build. A build that is red because the constitution drifted is
+telling the truth.
+
+### What this mechanism does and does not tell you
+
+A content hash reports **that** a governing document changed. It never reports
+what changed, or whether it mattered. It cannot distinguish a typo from an
+authority expansion. Its value is that a change cannot pass unnoticed; judging
+the change remains a human or reviewer act, and `docs/amendments.md` plus the
+consultation artifacts are where that judgment is recorded.
+
+Three failure states are distinguished, and all three are visible in `STATE.md`:
+
+| State | Meaning |
+|---|---|
+| no finding | hashes match the baseline |
+| drift finding | a watched document changed since the last deliberate pin |
+| **unobservable** finding | the document could not be read at all — pinned commit unavailable, or file absent at that commit |
+
+The third is ranked above the second. Not knowing whether the constitution
+changed is worse than knowing that it did, and a watchdog whose reference point
+can vanish silently is blind in exactly the way that looks healthy.
+
+### Known testing gap
+
+No test executes `observe_constitution` or `save_constitution_baseline` through
+production `recon-run.sh`; the suite covers `constitution_file_hash` directly and
+asserts the wiring by source inspection. The reason is that a full production run
+requires network access to resolve pins, which the offline gate forbids. Stated
+here rather than left implicit: the production path is verified manually, by
+forcing each failure state and reading `STATE.md`, and that verification is
+recorded in the pull request rather than automated.
