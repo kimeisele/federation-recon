@@ -198,10 +198,7 @@ search_repo_for_consumption() {
   # destroy the falsifier (see PR #46 review, Blocker 1).
 
   local matches
-  matches=$(cd "$tmpdir" && rg -n --no-heading --sort path --hidden -g '!.git/' \
-    -e "$CONSUMPTION_PATTERN_FINDING_ID" \
-    -e "$CONSUMPTION_PATTERN_REPO_SLUG" \
-    . 2>/dev/null || true)
+  matches=$(cd "$tmpdir" && search_dir_for_consumption . )
 
   if [ -z "$matches" ]; then
     log "    No Finding references found in ${repo}"
@@ -233,12 +230,9 @@ search_repo_for_consumption() {
     local ref_type="" finding_id=""
     local match_text="${rest#*:}"
 
-    if printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_FINDING_ID"; then
-      ref_type="finding_id"
+    ref_type=$(classify_consumption_match "$match_text")
+    if [ "$ref_type" = "finding_id" ]; then
       finding_id=$(printf '%s' "$match_text" | rg -o "$CONSUMPTION_PATTERN_FINDING_ID" | head -1)
-    elif printf '%s' "$match_text" | rg -q "$CONSUMPTION_PATTERN_REPO_SLUG"; then
-      ref_type="repo_reference"
-      finding_id=""
     fi
 
     [ -z "$ref_type" ] && continue
@@ -554,27 +548,24 @@ ENDJSON
 update_cycle_ledger() {
   local ledger_file="consumption/cycle-ledger.json"
 
-  # Read existing ledger (JSON array) or start a new one
-  local ledger_json="[]"
-  if [ -f "$ledger_file" ]; then
-    ledger_json=$(python3 -c "
-import json
-with open('$ledger_file') as f:
-    data = json.load(f)
-print(json.dumps(data))
-" 2>/dev/null || echo "[]")
+  # Ensure the file exists
+  if [ ! -f "$ledger_file" ]; then
+    echo '[]' > "$ledger_file"
   fi
 
-  # Check if this cycle already has an entry (idempotent)
+  # Check if this cycle already has an entry (idempotent).
+  # Ledger file is read on stdin — no shell interpolation into python -c.
+  export LEDGER_CHECK_CYCLE="$CYCLE"
   local already_present
   already_present=$(python3 -c "
-import json
-data = json.loads('''$ledger_json''')
+import json,sys,os
+data = json.load(sys.stdin)
+target = int(os.environ['LEDGER_CHECK_CYCLE'])
 for entry in data:
-    if entry.get('cycle') == $CYCLE:
+    if entry.get('cycle') == target:
         print('yes')
         break
-" 2>/dev/null || echo "")
+" < "$ledger_file" 2>/dev/null || echo "")
 
   if [ "$already_present" = "yes" ]; then
     log "  Cycle ${CYCLE} already recorded in cycle-ledger — skipping append"
@@ -594,31 +585,39 @@ for entry in data:
     esac
   done
 
-  # Append new cycle entry
-  local new_entry
-  new_entry=$(cat <<ENDENTRY
-{
-  "cycle": ${CYCLE},
-  "finding_references": ${finding_id_count},
-  "repo_references": ${repo_ref_count},
-  "observed_repositories": ${#REPO_SLUGS[@]},
-  "timestamp": $(json_val "$RUN_TIMESTAMP")
-}
-ENDENTRY
-  )
+  # Resolve trigger type — defaults to "manual" when not available (e.g. local
+  # runs, reproduce). The workflow passes GITHUB_EVENT_NAME as TRIGGER_TYPE.
+  local trigger_type="${TRIGGER_TYPE:-manual}"
+
+  # Pass all values via environment variables — no shell interpolation into
+  # python -c. The ledger file is read on stdin.
+  export LEDGER_CYCLE="$CYCLE"
+  export LEDGER_FINDING_REFS="$finding_id_count"
+  export LEDGER_REPO_REFS="$repo_ref_count"
+  export LEDGER_OBSERVED_REPOS="${#REPO_SLUGS[@]}"
+  export LEDGER_TIMESTAMP="$MEASURED_AT"
+  export LEDGER_TRIGGER="$trigger_type"
 
   local updated_ledger
   updated_ledger=$(python3 -c "
-import json
-data = json.loads('''$ledger_json''')
-data.append(json.loads('''$new_entry'''))
+import json,sys,os
+data = json.load(sys.stdin)
+data.append({
+    'cycle': int(os.environ['LEDGER_CYCLE']),
+    'finding_references': int(os.environ['LEDGER_FINDING_REFS']),
+    'repo_references': int(os.environ['LEDGER_REPO_REFS']),
+    'observed_repositories': int(os.environ['LEDGER_OBSERVED_REPOS']),
+    'timestamp': os.environ['LEDGER_TIMESTAMP'],
+    'trigger': os.environ['LEDGER_TRIGGER']
+})
 print(json.dumps(data, indent=2))
-")
+" < "$ledger_file")
 
   write_json "$ledger_file" "$updated_ledger"
   budget_track "$ledger_file"
-  log "  Cycle-ledger updated: cycle=${CYCLE}, finding_references=${finding_id_count}, repo_references=${repo_ref_count}"
+  log "  Cycle-ledger updated: cycle=${CYCLE}, finding_references=${finding_id_count}, repo_references=${repo_ref_count}, trigger=${trigger_type}"
 }
+
 
 # ---- Phase 7: Budget Enforcement ----------------------------------------
 
@@ -752,6 +751,7 @@ main() {
   check_opt_deps jq
 
   run_start
+  MEASURED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"  # wall-clock — never frozen
   RUN_TIMESTAMP="$(utc_timestamp)"
   if $reproduce; then
     frozen_ts="$(python3 -c "import json; print(json.load(open('digest/v2-consumption.json')).get('run_timestamp',''))" 2>/dev/null || true)"
