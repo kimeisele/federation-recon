@@ -1,0 +1,34 @@
+# Code owners for constitutional and enforcement paths.
+#
+# The owner is a machine account holding its own credential — NOT the account
+# the operator writes with. GitHub does not count a pull request author's own
+# approval, so an operator that is also the code owner would deadlock every
+# change it makes. That is why this file names federation-operator and not the
+# repository owner.
+#
+# What this buys: a change to any path below cannot merge until a second
+# identity approves it, at the moment the diff exists. The consultation gate
+# proves a transcript exists; this proves someone with a different credential
+# pressed a button. Neither proves a review happened — see CLAUDE.md.
+#
+# An earlier CODEOWNERS was removed in 92af56c on the premise that required
+# code-owner review is unavailable on the free tier. That premise was wrong for
+# a public repository; verified by API on 2026-07-26 (#61).
+
+# The constitution and its adoption record
+/CLAUDE.md                          @federation-operator
+/docs/founding-package-v0.2.md      @federation-operator
+/docs/founding-decision-record.md   @federation-operator
+/docs/amendments.md                 @federation-operator
+/docs/*-adr.md                      @federation-operator
+
+# The governance apparatus itself
+/governance/                        @federation-operator
+
+# The enforcement machinery — the referee must not be replaceable by the
+# players. scripts/ and schemas/ carry the gate, the validators and the
+# determinism checks; a PR "refactoring" them can dismantle every control in
+# this repository with green CI (round-4 review of #57).
+/scripts/                           @federation-operator
+/schemas/                           @federation-operator
+/.github/                           @federation-operator
