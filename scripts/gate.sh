@@ -22,9 +22,71 @@ FULL=false
 fail=0
 skipped=""
 
+# Per-run log directory. A fixed path under /tmp is shared state: two gate runs
+# at once — a worktree and the checkout it was cut from, say — overwrite each
+# other's logs, so the file a FAIL line points at can describe the other run.
+LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/gate.XXXXXX")"
+
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m — %s\n' "$1"; fail=1; }
 good() { printf '  \033[32mOK\033[0m — %s\n' "$1"; }
+
+# run_suite <logfile> — run the test suite, one process per .bats file.
+#
+# The suite is ~92% of this gate's wall clock and the gate runs it twice, which
+# put a merge-time check at roughly fifteen minutes. A gate that expensive gets
+# skipped, and a skipped gate is the failure this repository has catalogued most
+# often. Each test file isolates its own state in `mktemp -d` and reads the
+# repository without writing to it, so per-file parallelism is safe — measured
+# across repeated full runs, not assumed.
+#
+# The exit status is the entire point of this function. The first version of it
+# named the failing file, counted the failures correctly, and still returned 0,
+# because its last command was a cleanup. Everything a human reads was right;
+# the one thing the caller reads was wrong.
+run_suite() {
+  local log="$1" jobdir rc=0 p f n=0
+  local pids=""
+
+  jobdir="$(mktemp -d "${TMPDIR:-/tmp}/gate-suite.XXXXXX")"
+  for f in scripts/test/*.bats; do
+    [ -f "$f" ] || continue
+    n=$(( n + 1 ))
+    bats "$f" >"$jobdir/$(basename "$f").log" 2>&1 &
+    pids="$pids $!"
+  done
+
+  # No test files is not a pass. "Found nothing" and "ran nothing" must never
+  # reach the caller as the same outcome.
+  if [ "$n" = 0 ]; then
+    echo "no .bats files found under scripts/test/" >"$log"
+    rm -rf "$jobdir"
+    return 1
+  fi
+
+  for p in $pids; do
+    wait "$p" || rc=1
+  done
+
+  cat "$jobdir"/*.log >"$log" 2>/dev/null
+  rm -rf "$jobdir"
+  return "$rc"
+}
+
+# suite_failed <logfile> <label> — report why the suite failed.
+#
+# Counting `not ok` lines is not a diagnosis: a suite that never ran has zero
+# of them, and reporting "0 failing" describes a green run. Distinguish the two.
+suite_failed() {
+  local log="$1" label="$2" nf
+  nf="$(grep -c '^not ok' "$log")"
+  if [ "$nf" = 0 ]; then
+    bad "$label: the suite did not run — $(head -1 "$log")"
+  else
+    bad "$label: $nf failing"
+    grep '^not ok' "$log" | head -10 | sed 's/^/    /'
+  fi
+}
 
 # ---- dependencies -------------------------------------------------------
 # Asserted, not assumed. A missing binary must announce itself rather than
@@ -37,26 +99,26 @@ done
 
 # ---- 1. strict artifact validation --------------------------------------
 step "1/5 strict artifact validation"
-if bash scripts/validate-artifacts.sh --strict >/tmp/gate-validate.log 2>&1; then
-  good "$(grep -o 'Total validated: [0-9]*' /tmp/gate-validate.log | head -1)"
+if bash scripts/validate-artifacts.sh --strict >"$LOGDIR/validate.log" 2>&1; then
+  good "$(grep -o 'Total validated: [0-9]*' "$LOGDIR/validate.log" | head -1)"
 else
-  bad "artifacts do not validate — see /tmp/gate-validate.log"
+  bad "artifacts do not validate — see $LOGDIR/validate.log"
 fi
 
 # ---- 2. offline CI gate --------------------------------------------------
 step "2/5 offline CI gate"
-if bash scripts/ci-checks.sh >/tmp/gate-ci.log 2>&1; then
+if bash scripts/ci-checks.sh >"$LOGDIR/ci.log" 2>&1; then
   good "ci-checks passed"
 else
-  bad "ci-checks failed"; tail -20 /tmp/gate-ci.log | sed 's/^/    /'
+  bad "ci-checks failed"; tail -20 "$LOGDIR/ci.log" | sed 's/^/    /'
 fi
 
 # ---- 3. test suite -------------------------------------------------------
 step "3/5 test suite"
-if bats scripts/test/ >/tmp/gate-bats.log 2>&1; then
-  good "$(grep -c '^ok' /tmp/gate-bats.log) tests"
+if run_suite "$LOGDIR/bats.log"; then
+  good "$(grep -c '^ok' "$LOGDIR/bats.log") tests"
 else
-  bad "$(grep -c '^not ok' /tmp/gate-bats.log) failing"; grep '^not ok' /tmp/gate-bats.log | head -10 | sed 's/^/    /'
+  suite_failed "$LOGDIR/bats.log" "test suite"
 fi
 
 # ---- 4. suite under CI environment --------------------------------------
@@ -64,11 +126,17 @@ fi
 # GITHUB_EVENT_NAME and the workflow exports CONSULTATION_PR_NUMBER. The
 # environment was an unstated test input. Run the suite as CI would.
 step "4/5 test suite under a CI-like environment"
-if GITHUB_EVENT_NAME=pull_request CONSULTATION_PR_NUMBER=99 CI=true GITHUB_ACTIONS=true \
-   bats scripts/test/ >/tmp/gate-bats-ci.log 2>&1; then
-  good "$(grep -c '^ok' /tmp/gate-bats-ci.log) tests with CI variables set"
+# A subshell, not an assignment prefix: bash keeps variable assignments made in
+# front of a *function* call in effect after the call returns, which would leak
+# the CI environment into step 5.
+if (
+     export GITHUB_EVENT_NAME=pull_request CONSULTATION_PR_NUMBER=99 CI=true GITHUB_ACTIONS=true
+     run_suite "$LOGDIR/bats-ci.log"
+   ); then
+  good "$(grep -c '^ok' "$LOGDIR/bats-ci.log") tests with CI variables set"
 else
-  bad "suite depends on the ambient environment"; grep '^not ok' /tmp/gate-bats-ci.log | head -10 | sed 's/^/    /'
+  suite_failed "$LOGDIR/bats-ci.log" \
+    "test suite with CI variables set (if step 3 passed, the suite depends on the ambient environment)"
 fi
 
 # ---- 5. reproduce fixpoint ----------------------------------------------
@@ -106,6 +174,7 @@ elif [ "$fail" = 0 ]; then
 else
   printf '\033[31mGATE: FAIL\033[0m\n'
 fi
+printf 'logs: %s\n' "$LOGDIR"
 
 # What this gate does NOT establish. Stated because a gate that implies more
 # than it proves invites the trust it cannot carry — the failure this
