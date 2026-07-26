@@ -5,14 +5,29 @@
 # the product; the verifier is. Every test asserts an exit code AND the
 # distinctive field(s) in result.json.
 #
-# Hermetic: builds work orders in mktemp dirs, uses the real repository as
-# git source (base_sha = current HEAD).
+# Hermetic: each test controls its own RUN_ROOT in a mktemp dir, uses the real
+# repository as git source (base_sha = current HEAD).
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
   BASE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   FAKE_BUILDER="$REPO_ROOT/operator/builders/fake.sh"
   RUNNER="$REPO_ROOT/operator/run.sh"
+
+  # Each test gets its own run-directory root
+  RUN_ROOT="$(mktemp -d)"
+  export RUN_ROOT
+}
+
+teardown() {
+  # Always prune worktrees under this test's RUN_ROOT
+  if [ -n "${RUN_ROOT:-}" ] && [ -d "$RUN_ROOT" ]; then
+    for wt_dir in "$RUN_ROOT"/*/wt; do
+      [ -d "$wt_dir" ] && git worktree remove --force "$wt_dir" 2>/dev/null || true
+    done
+    git worktree prune 2>/dev/null || true
+    rm -rf "$RUN_ROOT"
+  fi
 }
 
 # Helper: build a work-order JSON file
@@ -34,6 +49,21 @@ with open('$wo_file', 'w') as f:
 "
 }
 
+# Helper: run the runner and assert exit code + verdict
+_run_and_assert() {
+  local wo_id="$1" expected_verdict="$2" extra_check_fn="$3"
+
+  RESULT="$RUN_ROOT/$wo_id/result.json"
+  [ -f "$RESULT" ]
+
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "$expected_verdict" ]
+
+  if [ -n "$extra_check_fn" ]; then
+    "$extra_check_fn"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # 1. FORBIDDEN PATH — builder touches a forbidden file and reports completed.
 #    The verifier must reject it and name the forbidden file.
@@ -45,7 +75,6 @@ with open('$wo_file', 'w') as f:
   WO="$WORKDIR/wo-forbidden.json"
   _wo "$WO" "wo-1-1" 1 '["CLAUDE.md"]' '["true"]'
 
-  # Set trap AFTER _wo returns, so _wo's return doesn't trigger cleanup
   trap "rm -rf $WORKDIR" RETURN
 
   FAKE_TOUCH_FILE=CLAUDE.md \
@@ -53,21 +82,15 @@ with open('$wo_file', 'w') as f:
   FAKE_EXIT=0 \
     run bash "$RUNNER" "$WO"
 
-  # Runner itself exits 0 (run completed, just rejected)
   [ "$status" -eq 0 ]
 
-  # Verdict must be rejected
-  RESULT="$REPO_ROOT/operator/.runs/wo-1-1/result.json"
-  [ -f "$RESULT" ]
+  _run_and_assert "wo-1-1" "rejected" _check_forbidden
+}
 
-  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
-  [ "$VERDICT" = "rejected" ]
-
-  # Must name CLAUDE.md in forbidden_hits
+_check_forbidden() {
   FORBIDDEN_HITS=$(python3 -c "import json; print(json.load(open('$RESULT'))['forbidden_hits'])")
   [[ "$FORBIDDEN_HITS" == *"CLAUDE.md"* ]]
 
-  # builder_claim_contradicted must be true
   BCC=$(python3 -c "import json; print(json.load(open('$RESULT'))['builder_claim_contradicted'])")
   [ "$BCC" = "True" ]
 }
@@ -92,23 +115,17 @@ with open('$wo_file', 'w') as f:
 
   [ "$status" -eq 0 ]
 
-  RESULT="$REPO_ROOT/operator/.runs/wo-1-2/result.json"
-  [ -f "$RESULT" ]
+  _run_and_assert "wo-1-2" "rejected" _check_lie
+}
 
-  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
-  [ "$VERDICT" = "rejected" ]
-
-  # builder_claim_contradicted must be true
+_check_lie() {
   BCC=$(python3 -c "import json; print(json.load(open('$RESULT'))['builder_claim_contradicted'])")
   [ "$BCC" = "True" ]
 
-  # The failing command must be recorded with non-zero exit status
   ACC_RESULTS=$(python3 -c "import json; print(json.load(open('$RESULT'))['acceptance_results'])")
   [[ "$ACC_RESULTS" == *"false"* ]]
-  # exit_status must be non-zero (not 0)
   [[ ! "$ACC_RESULTS" =~ "exit_status\": 0" ]]
 
-  # contradiction reason must be present
   REASON=$(python3 -c "import json; print(json.load(open('$RESULT'))['builder_claim_contradicted_reason'])")
   [[ "$REASON" == *"acceptance"* ]] || [[ "$REASON" == *"false"* ]]
 }
@@ -126,7 +143,7 @@ with open('$wo_file', 'w') as f:
 
   trap "rm -rf $WORKDIR" RETURN
 
-  EVENTS_FILE="$REPO_ROOT/operator/.runs/wo-1-3/events.jsonl"
+  EVENTS_FILE="$RUN_ROOT/wo-1-3/events.jsonl"
 
   # Start runner in background
   FAKE_TOUCH_FILE=operator/.fake-marker \
@@ -180,17 +197,57 @@ with open('$wo_file', 'w') as f:
 
   [ "$status" -eq 0 ]
 
-  RESULT="$REPO_ROOT/operator/.runs/wo-1-4/result.json"
-  [ -f "$RESULT" ]
+  _run_and_assert "wo-1-4" "accepted" _check_happy
+}
 
-  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
-  [ "$VERDICT" = "accepted" ]
-
-  # builder_claim_contradicted must NOT be present or must be false
+_check_happy() {
   BCC=$(python3 -c "
 import json
 d = json.load(open('$RESULT'))
 print(d.get('builder_claim_contradicted', 'absent'))
 ")
   [ "$BCC" = "absent" ] || [ "$BCC" = "False" ]
+}
+
+# ---------------------------------------------------------------------------
+# 5. IDEMPOTENCE — running the same work order twice must succeed both times
+#    with the same verdict. The second run must not fail due to stale
+#    registrations.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: IDEMPOTENCE — second run of same work order succeeds" {
+  WORKDIR="$(mktemp -d)"
+
+  WO="$WORKDIR/wo-idem.json"
+  _wo "$WO" "wo-1-5" 1 '[]' '["true"]'
+
+  trap "rm -rf $WORKDIR" RETURN
+
+  # ---- first run ----
+  FAKE_TOUCH_FILE=operator/.fake-marker \
+  FAKE_OUTCOME=completed \
+  FAKE_EXIT=0 \
+    bash "$RUNNER" "$WO"
+  STATUS1=$?
+
+  [ "$STATUS1" -eq 0 ]
+
+  RESULT1="$RUN_ROOT/wo-1-5/result.json"
+  VERDICT1=$(python3 -c "import json; print(json.load(open('$RESULT1'))['verdict'])")
+
+  # ---- second run (same work order, same RUN_ROOT) ----
+  FAKE_TOUCH_FILE=operator/.fake-marker \
+  FAKE_OUTCOME=completed \
+  FAKE_EXIT=0 \
+    bash "$RUNNER" "$WO"
+  STATUS2=$?
+
+  [ "$STATUS2" -eq 0 ]
+
+  RESULT2="$RUN_ROOT/wo-1-5/result.json"
+  VERDICT2=$(python3 -c "import json; print(json.load(open('$RESULT2'))['verdict'])")
+
+  # Both must be accepted
+  [ "$VERDICT1" = "accepted" ]
+  [ "$VERDICT2" = "accepted" ]
 }

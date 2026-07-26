@@ -13,10 +13,14 @@
 #
 # Boundaries: MUST NOT push, open a PR, merge, or write outside operator/.runs/
 # and its own worktree. Slice 1a stops at result.json.
+#
+# Environment:
+#   RUN_ROOT  override run-directory root (default: operator/.runs)
 set -o errexit -o nounset -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUN_ROOT="${RUN_ROOT:-$REPO_ROOT/operator/.runs}"
 
 # ---- argument parsing ------------------------------------------------------
 WO_FILE="${1:-}"
@@ -69,10 +73,18 @@ for item in json.load(open('$WO_FILE'))[sys.argv[1]]:
 " "$1"
 }
 
+# ---- cleanup trap ----------------------------------------------------------
+_cleanup_worktree() {
+  if [ -n "${_WT_CREATED:-}" ] && [ -n "${WORKTREE:-}" ]; then
+    git worktree remove --force "$WORKTREE" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+  fi
+}
+
 # ---- --resume mode ---------------------------------------------------------
 if $RESUME; then
   WO_ID=$(_wo_field "work_order_id")
-  RUN_DIR="$REPO_ROOT/operator/.runs/$WO_ID"
+  RUN_DIR="$RUN_ROOT/$WO_ID"
   EVENTS_FILE="$RUN_DIR/events.jsonl"
 
   if [ ! -f "$EVENTS_FILE" ]; then
@@ -177,7 +189,7 @@ ISSUE=$(_wo_field "issue")
 BASE_SHA=$(_wo_field "base_sha")
 BUILDER=$(_wo_field "builder")
 
-RUN_DIR="$REPO_ROOT/operator/.runs/$WO_ID"
+RUN_DIR="$RUN_ROOT/$WO_ID"
 EVENTS_FILE="$RUN_DIR/events.jsonl"
 RESULT_FILE="$RUN_DIR/result.json"
 
@@ -198,18 +210,25 @@ print(json.dumps({
 }, separators=(',', ':')))
 ")"
 
-# ---- step 3: git worktree add -----------------------------------------------
+# ---- step 3: git worktree add (idempotent) ----------------------------------
 WORKTREE="$RUN_DIR/wt"
 
-# Clean up any stale worktree from a previous crashed run
+# Prune stale registrations first, then remove any existing worktree at this path
+git worktree prune 2>/dev/null || true
+if git worktree list --porcelain 2>/dev/null | grep -q "worktree $(cd "$RUN_DIR" 2>/dev/null && pwd -P)/wt$"; then
+  git worktree remove --force "$WORKTREE" 2>/dev/null || true
+  git worktree prune 2>/dev/null || true
+fi
 if [ -d "$WORKTREE" ]; then
-  git worktree remove --force "$WORKTREE" 2>/dev/null || rm -rf "$WORKTREE"
+  rm -rf "$WORKTREE"
 fi
 
 git worktree add --detach "$WORKTREE" "$BASE_SHA" >/dev/null 2>&1 || {
   echo "FATAL: failed to create worktree at $WORKTREE for sha $BASE_SHA" >&2
   exit 1
 }
+_WT_CREATED=1
+trap _cleanup_worktree EXIT
 
 _event_append "$(python3 -c "
 import json
@@ -461,7 +480,18 @@ print(json.dumps({
 ")"
 
 # ---- step 10: remove worktree; write result.json ----------------------------
-git worktree remove --force "$WORKTREE" 2>/dev/null || rm -rf "$WORKTREE"
+git worktree remove --force "$WORKTREE" 2>/dev/null || true
+git worktree prune 2>/dev/null || true
+_WT_CREATED=""
+
+_event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'worktree_removed',
+    'path': '$WORKTREE'
+}, separators=(',', ':')))
+")"
 
 # Build result.json using python3 — the only safe way to compose JSON
 ESCAPED_REASON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$CONTRADICTION_REASON")
