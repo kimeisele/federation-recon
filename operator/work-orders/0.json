@@ -1,0 +1,9 @@
+{
+  "work_order_id": "wo-0-0",
+  "issue": 0,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "allowed_paths": ["operator/"],
+  "forbidden_paths": ["CLAUDE.md", ".github/", "governance/"],
+  "acceptance_commands": ["true"],
+  "builder": "operator/builders/fake.sh"
+}
