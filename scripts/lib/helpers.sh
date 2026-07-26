@@ -6,7 +6,8 @@
 # Provides: log, die, run_start, json_escape, json_val, write_json, make_id,
 #           utc_timestamp, sha256_of, check_deps, validate_json
 
-set -o errexit -o nounset -o pipefail
+# Deliberately no `set` here: this file is sourced, and `set` acts on the
+# sourcing shell. A library must not change its caller's failure semantics. See #75.
 
 # ---- Logging -----------------------------------------------------------
 

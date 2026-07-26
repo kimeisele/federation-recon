@@ -6,6 +6,7 @@
 
 boundary-agreement.bats
 budget.bats
+ci-checks-composer.bats
 clean-procedure-artifacts.bats
 compose-digest.bats
 consultation-gate.bats
