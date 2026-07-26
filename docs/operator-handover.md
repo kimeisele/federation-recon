@@ -31,13 +31,22 @@ and for anything the builder has failed at twice.
 
 ## 2. The gate
 
-Nothing merges until all of these pass, run by you, not reported by the builder:
+Nothing merges until the gate passes, run by you, not reported by the builder:
 
 ```
-bats scripts/test/                      # every test
-bash scripts/validate-artifacts.sh --strict   # exit 0
-bash scripts/ci-checks.sh               # digest idempotency
+bash scripts/gate.sh          # offline checks
+bash scripts/gate.sh --full   # adds the reproduce fixpoint (needs network)
 ```
+
+It is a command rather than a list because a list has to be remembered, and this
+repository has ten documented defects that survived exactly that step. The script
+also refuses to treat a check it could not run as a check that passed, and prints
+what it does **not** establish.
+
+What it runs: strict artifact validation, the offline CI gate, the full test
+suite, the suite again with the CI environment variables set (an earlier defect
+passed locally and failed on CI because the environment was an unstated input),
+and with `--full` the reproduce fixpoint.
 
 plus, for anything touching the evidence path, a **reproduce fixpoint**: run the
 full pipeline twice and confirm the artifact set is byte-identical, and that the
