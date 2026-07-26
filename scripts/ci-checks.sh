@@ -18,6 +18,11 @@
 #      reviewer at governance/consultations/<pr>.md. Enforces CLAUDE.md →
 #      Delegated judgment.
 #
+#   5. Suite inventory: the .bats files present must match the committed list
+#      in scripts/test/MANIFEST. The runner reports what it ran; nothing else
+#      records what was supposed to run, so a deleted test file leaves the
+#      remaining ones green.
+#
 # Full end-to-end --reproduce determinism (which requires network + gh to fetch
 # pinned repository contents) is intentionally NOT run here so the PR gate stays
 # fast and offline. See scripts/verify-determinism.sh for that deeper check.
@@ -25,7 +30,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/4] strict artifact validation =="
+echo "== [1/5] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -41,7 +46,7 @@ fi
 source "$(dirname "$0")/lib/manifest-gate.sh"
 
 echo
-echo "== [2/4] pin → manifest membership =="
+echo "== [2/5] pin → manifest membership =="
 if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
   echo "  OK"
 else
@@ -49,7 +54,7 @@ else
 fi
 
 echo
-echo "== [3/4] composed digest idempotency =="
+echo "== [3/5] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
@@ -72,13 +77,25 @@ rm -rf "$tmp"
 source "$(dirname "$0")/lib/consultation-gate.sh"
 
 echo
-echo "== [4/4] consultation artifact gate =="
+echo "== [4/5] consultation artifact gate =="
 # PR number: env var (CI) takes priority, else try to extract from branch name.
 pr="${CONSULTATION_PR_NUMBER:-}"
 if [ -z "$pr" ]; then
   pr=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -oE '[0-9]+' | tail -1 || true)
 fi
 if check_consultation_gate "$pr"; then
+  echo "  OK"
+else
+  fail=1
+fi
+
+# ---- Suite inventory --------------------------------------------------------
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/suite-inventory.sh"
+
+echo
+echo "== [5/5] test suite inventory =="
+if check_suite_inventory "scripts/test/MANIFEST" "scripts/test"; then
   echo "  OK"
 else
   fail=1
