@@ -200,30 +200,48 @@ man() { printf '%s\n' "$@" >"$WORKDIR/MANIFEST"; }
 
 # Collation is a property of the locale, not of the filesystem: under de_DE
 # these two names are neither less nor greater, so the pair was never compared.
-@test "suite-inventory: locale-incomparable names that are one file — returns 1" {
-  # This test cannot skip. Its whole subject is a guard that a silent skip would
-  # leave unproven: with the locale absent, LC_ALL falls back to C, where any two
-  # distinct names *are* ordered, the old name-ordering code compares the pair
-  # anyway, and the mutation survives behind a green suite. So an unmet
-  # precondition is a failure of this test, and CI is expected to provide it.
-  if ! locale -a 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | grep -qx 'de_de.utf8'; then
-    echo "precondition unmet: de_DE.UTF-8 is not installed, so this guard cannot be exercised" >&2
-    return 1
-  fi
-  if LC_ALL=de_DE.UTF-8 bash -c '[[ "ß" < "ss" ]] || [[ "ß" > "ss" ]]'; then
-    echo "precondition unmet: the two names are ordered under this locale" >&2
-    return 1
-  fi
+# Two distinct names that the active locale does not order. Which construction
+# produces one is a property of the C library, not of this repository: macOS
+# collates ß and ss as equal, glibc does not, and the two disagree about which
+# characters are ignorable. So the pair is searched for rather than hard-coded —
+# an earlier version hard-coded the macOS quirk and reported green on Linux
+# while proving nothing.
+_unordered_pair() {
+  local x y
+  for x in "ss:ß" "ab:a"$'\u00ad'"b" "ab:a"$'\u200b'"b" "ab:a"$'\u200d'"b"; do
+    y="${x#*:}"; x="${x%%:*}"
+    if ! LC_ALL=de_DE.UTF-8 bash -c 'a=$1; b=$2; [[ "$a" < "$b" ]] || [[ "$a" > "$b" ]]' _ "$x" "$y"; then
+      printf '%s\n%s\n' "$x" "$y"
+      return 0
+    fi
+  done
+  return 1
+}
 
-  mk 'ss.bats'
-  # Two worlds, both valid fixtures for the same defect: on a case-sensitive
-  # filesystem the two names are distinct and a hardlink makes them one inode;
-  # on a case-folding filesystem ß already resolves to ss and `ln` reports
-  # "File exists".
-  if ! ln "$WORKDIR/tests/ss.bats" "$WORKDIR/tests/ß.bats" 2>/dev/null; then
-    [ -e "$WORKDIR/tests/ß.bats" ] || return 1
+@test "suite-inventory: locale-incomparable names that are one file — returns 1" {
+  # A missing locale is a CI configuration error and must fail: it is exactly
+  # the state in which this test previously reported green while the guard went
+  # unexercised. A locale that exists but orders every candidate pair is a
+  # property of the platform's C library — the defect is unreachable there, and
+  # that is a skip with the reason named, not a silent pass.
+  if ! locale -a 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | grep -qx 'de_de.utf8'; then
+    echo "precondition unmet: de_DE.UTF-8 is not installed" >&2
+    return 1
   fi
-  man 'ss.bats' 'ß.bats'
+  local pair
+  pair="$(_unordered_pair)" || skip "this C library orders every candidate pair; the defect is unreachable here"
+  local n1 n2
+  n1="$(printf '%s' "$pair" | sed -n 1p).bats"
+  n2="$(printf '%s' "$pair" | sed -n 2p).bats"
+
+  : >"$WORKDIR/tests/$n1"
+  # On a case-sensitive filesystem the two names are distinct and a hardlink
+  # makes them one inode; on a case-folding one the second name already resolves
+  # to the first file and `ln` reports "File exists".
+  if ! ln "$WORKDIR/tests/$n1" "$WORKDIR/tests/$n2" 2>/dev/null; then
+    [ -e "$WORKDIR/tests/$n2" ] || skip "cannot construct the fixture on this filesystem"
+  fi
+  man "$n1" "$n2"
   LC_ALL=de_DE.UTF-8 run check_suite_inventory "$WORKDIR/MANIFEST" "$WORKDIR/tests"
   [ "$status" -eq 1 ]
   [[ "$output" == *"same file"* ]]
