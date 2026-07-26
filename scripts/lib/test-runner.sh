@@ -4,8 +4,10 @@
 # Source it, then call:
 #   run_suite <logfile> [testdir]      # default testdir: scripts/test
 #
-# Returns 0 only if every worker exited 0, every worker's log was aggregated
-# whole, and the aggregate contains no `not ok` line.
+# Returns 0 only if every worker exited 0, every worker's log was readable and
+# aggregated without error, every worker produced at least one result line, and
+# the aggregate contains no `not ok` line. That is the whole guarantee — see the
+# comment at the evidence check for what it deliberately does not cover.
 #
 # Deliberately no `set -o errexit` here. This file is sourced, and `set` acts
 # on the sourcing shell: scripts/gate.sh runs without errexit on purpose, and a
@@ -107,20 +109,21 @@ run_suite() {
       echo "not ok - could not aggregate the log of worker $i" >>"$log"
       rc=1
     elif ! grep -qE '^(ok|not ok) ' "$jobdir/$i.log"; then
-      # A worker must show that it ran something. Rejecting `not ok` only
-      # rejects declared failure; a worker that exits 0 and says nothing —
-      # crashed, killed, or writing to a full disk — otherwise produced
-      # "OK — 0 tests" and a passing gate.
+      # Exactly one property: a worker that exited 0 while producing no
+      # recognizable result line is rejected. Without it, such a worker reached
+      # the caller as "OK — 0 tests" and a passing gate.
       #
-      # What this does NOT do, stated because an earlier version of this comment
-      # claimed it: it does not defend against a deliberately substituted
-      # `bats`. A reviewer replaced `bats` with a script that ran no test file
-      # and printed one fabricated `ok` line, and the gate reported "OK — 14
-      # tests". Nothing that parses a program's output can establish that the
-      # program ran; that needs a trusted runner boundary, which a shell
-      # function called from the same PATH is not. Against accident this check
-      # works. Against substitution the control is CI, where the environment is
-      # provisioned rather than inherited.
+      # It is not a general integrity check, and two earlier versions of this
+      # comment said it was. A worker that crashes or is killed is caught by
+      # its exit status at `wait`, not here. A truncated result stream is not
+      # caught at all: one valid `ok` line and status 0 passes, however much
+      # was lost after it. And it does not survive a substituted `bats` — a
+      # reviewer replaced it with a script that ran no test file, printed one
+      # fabricated `ok` line, and got "OK — 14 tests". Nothing that parses a
+      # program's output can establish that the program ran; that needs a
+      # trusted runner boundary, and a shell function invoking `bats` over the
+      # same PATH is not one. Against substitution the control is CI, where the
+      # environment is provisioned rather than inherited.
       echo "not ok - worker $i produced no test results" >>"$log"
       rc=1
     fi
