@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim-c93824ed0859",
+  "source_repository": "kimeisele/federation-recon",
+  "source_path": "docs/founding-package-v0.2.md",
+  "claim_text": "kimeisele/federation-recon/docs/founding-package-v0.2.md constitutional file content hash: sha256=05b564d0461fd4cce8b4663cd0a7ba3a91d6a893c80dcbb839878e7bba392ca3",
+  "observed_at": "2026-07-24T15:23:48Z",
+  "repository_pin": "pins/v0-boundary-drift/federation-recon.json"
+}

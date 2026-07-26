@@ -621,7 +621,31 @@ observe_constitution() {
     h=$(constitution_file_hash "$self_sha" "$cf")
     current_hashes["$cf"]="$h"
     if [ -z "$h" ]; then
-      warn "  Cannot hash ${cf} at ${self_sha} — skipping"
+      # An unobservable constitution must be a VISIBLE state, not a log line.
+      # Warning to stderr and continuing would let a bad pin silently disable
+      # constitutional drift detection while STATE.md still looks clean —
+      # absence of signal is indistinguishable from absence of problem, which
+      # is the failure this whole procedure exists to prevent.
+      local reason
+      if ! git cat-file -e "${self_sha}^{commit}" 2>/dev/null; then
+        reason="pinned commit unavailable"
+      else
+        reason="file absent at pinned commit"
+      fi
+      warn "  Cannot hash ${cf} at ${self_sha} (${reason}) — recording self-Finding"
+
+      local unobs_ev unobs_ev_id unobs_finding
+      unobs_ev=$(gen_evidence "$pin_id" "file_existence" "unobservable" "$cf" \
+                              "reason=${reason}; pinned_sha=${self_sha}")
+      EVIDENCE_FILES["const-unobs-${cf}"]="$unobs_ev"
+      budget_track "$unobs_ev"
+      unobs_ev_id=$(artifact_id "$unobs_ev")
+
+      unobs_finding=$(gen_finding \
+        "Constitution unobservable: ${cf} could not be hashed at pinned commit ${self_sha} (${reason}) — constitutional drift detection is blind for this file" \
+        "$unobs_ev_id" "self-observation" "warn" "observed")
+      CONST_FINDING_FILES["const-unobs-${cf}"]="$unobs_finding"
+      budget_track "$unobs_finding"
       continue
     fi
   done
@@ -718,8 +742,31 @@ for fp, h in d.get('constitutional_files', {}).items():
   fi
 }
 
+# The constitution baseline is a DELIBERATELY PINNED artifact, never a
+# by-product of an observation run.
+#
+# It was previously written on every run, including --reproduce. That made it
+# both the input and the output of the same comparison, with two consequences:
+#
+#   1. Non-determinism. Run 1 saw drift against the old baseline and then
+#      overwrote it; run 2 compared against the new baseline and saw none. Two
+#      runs, two different artifact sets — FR-CON-012 broken.
+#   2. Worse, the drift SELF-HEALED. A constitutional change would be reported
+#      exactly once and silently become the new normal on the next run. The
+#      watchdog ate its own alarm.
+#
+# Re-pinning is now an explicit act: RECON_PIN_CONSTITUTION=1. Until someone
+# performs it, drift keeps being reported, which is the entire point.
 save_constitution_baseline() {
-  log "=== Phase 2i: Save constitution baseline ==="
+  if [ "${RECON_PIN_CONSTITUTION:-}" != "1" ]; then
+    log "=== Phase 2i: Constitution baseline unchanged (re-pin with RECON_PIN_CONSTITUTION=1) ==="
+    return
+  fi
+  if $REPRODUCE_MODE; then
+    warn "  Refusing to re-pin the constitution baseline in --reproduce mode"
+    return
+  fi
+  log "=== Phase 2i: Re-pinning constitution baseline (explicitly requested) ==="
 
   local self_sha="${REPO_SHA[kimeisele/federation-recon]:-}"
   [ -z "$self_sha" ] && { warn "  No self SHA — skipping constitution baseline save"; return; }
@@ -1620,10 +1667,13 @@ print_summary() {
 
 # ---- Main --------------------------------------------------------------
 
+REPRODUCE_MODE=false
+
 main() {
   local reproduce=false
   if [ "${1:-}" = "--reproduce" ]; then
     reproduce=true
+    REPRODUCE_MODE=true
     RECON_REPRO_DIR="${RECON_PINS_DIR:-pins}/v0-boundary-drift"
     log "Reproduction mode — using pins from ${RECON_REPRO_DIR}"
   fi

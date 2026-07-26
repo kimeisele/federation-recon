@@ -480,3 +480,94 @@ print('OK: structural guarantee — only two constitutional files are hashed')
 ")
   echo "$result"
 }
+
+# -----------------------------------------------------------------------------
+# Test: file absent at pinned commit returns empty (no silent fallback)
+# -----------------------------------------------------------------------------
+
+@test "constitution: file absent at pinned commit returns empty (no HEAD fallback)" {
+  # Create a real git fixture: a commit that does NOT have CLAUDE.md.
+  local early_sha
+  early_sha=$(git rev-parse HEAD)
+
+  # Verify CLAUDE.md exists at HEAD (it does: setup() creates it)
+  git cat-file -e "HEAD:CLAUDE.md"
+
+  # Delete CLAUDE.md and commit that state
+  git rm -q CLAUDE.md
+  git commit -m "remove CLAUDE.md" -q
+  local no_claude_sha
+  no_claude_sha=$(git rev-parse HEAD)
+
+  # Restore CLAUDE.md (at a new commit)
+  git revert --no-edit HEAD >/dev/null 2>&1
+
+  # constitution_file_hash at the SHA without CLAUDE.md must return empty
+  local result
+  result=$(constitution_file_hash "$no_claude_sha" "CLAUDE.md" 2>/dev/null) || true
+  [ -z "$result" ]
+
+  # But the same file IS present at the parent commit
+  local parent_result
+  parent_result=$(constitution_file_hash "$early_sha" "CLAUDE.md" 2>/dev/null)
+  [ -n "$parent_result" ]
+}
+
+# -----------------------------------------------------------------------------
+# Test: unavailable commit returns empty (no silent HEAD fallback)
+# -----------------------------------------------------------------------------
+
+@test "constitution: unavailable pinned commit returns empty (no HEAD fallback)" {
+  local bogus_sha="0000000000000000000000000000000000000000"
+  local result
+  result=$(constitution_file_hash "$bogus_sha" "CLAUDE.md" 2>/dev/null) || true
+  [ -z "$result" ]
+}
+
+# -----------------------------------------------------------------------------
+# Test: hash is compatible with sha256sum (exact file bytes)
+# -----------------------------------------------------------------------------
+
+@test "constitution: hash matches sha256sum of the file content" {
+  local self_sha
+  self_sha=$(git rev-parse HEAD)
+
+  local fn_hash sum_hash
+  fn_hash=$(constitution_file_hash "$self_sha" "CLAUDE.md")
+  sum_hash=$(git show "$self_sha:CLAUDE.md" | shasum -a 256 | awk '{print $1}')
+
+  [ "$fn_hash" = "$sum_hash" ]
+  [ -n "$fn_hash" ]
+}
+
+# ---------------------------------------------------------------------------
+# An unobservable constitution must be a visible state, not a log line.
+# A bad pin must not silently disable drift detection while STATE.md looks
+# clean — absence of signal must not be indistinguishable from absence of
+# problem. (PR #57 review.)
+# ---------------------------------------------------------------------------
+
+@test "constitution: unobservable file produces a self-Finding, not a silent skip" {
+  # The production loop emits a finding whenever constitution_file_hash yields
+  # nothing. Assert the emission path exists and is wired to gen_finding rather
+  # than to `continue` alone.
+  run grep -A24 'if \[ -z "\$h" \]; then' "$REPO_ROOT/scripts/recon-run.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ gen_finding ]]
+  [[ "$output" =~ "Constitution unobservable" ]]
+  # And it must distinguish the two causes rather than reporting one reason.
+  [[ "$output" =~ "pinned commit unavailable" ]]
+  [[ "$output" =~ "file absent at pinned commit" ]]
+}
+
+@test "constitution: the unobservable path is not reachable on the committed pin" {
+  # Guards against shipping a repository whose own constitution cannot be
+  # observed: both files must hash successfully at the committed pin.
+  source "$REPO_ROOT/scripts/lib/constitution.sh"
+  local sha
+  sha=$(python3 -c "import json;print(json.load(open('$REPO_ROOT/pins/v0-boundary-drift/federation-recon.json'))['resolved_commit_sha'])")
+  for f in CLAUDE.md docs/founding-package-v0.2.md; do
+    run constitution_file_hash "$sha" "$f"
+    [ -n "$output" ]
+  done
+}
