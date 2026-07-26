@@ -88,8 +88,9 @@ fi
 # ---- removed: a second suite run under a CI-like environment -------------
 # This gate used to run the whole suite a second time with GITHUB_EVENT_NAME,
 # CONSULTATION_PR_NUMBER, CI and GITHUB_ACTIONS exported, because two tests once
-# passed locally and failed on CI when they inherited those variables. It cost
-# more than half the gate's wall clock and it was inert:
+# passed locally and failed on CI when they inherited those variables. It was one
+# of two identical suite runs — roughly two fifths of the gate's wall clock — and
+# it was inert:
 #
 #   - the defect was fixed at its source — scripts/test/consultation-gate.bats
 #     unsets both variables in setup(), and every test now states its inputs;
