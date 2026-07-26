@@ -108,76 +108,26 @@ Risk classes:
 - **OWNER-ONLY / STOP**: money or spend changes, actions involving real people,
   credential or permission changes, cross-repository writes, and repository
   creation are never auto-executed.
-- **ENVELOPE**: changes to this risk envelope, to the Delegated judgment section,
-  or to the machine guardrails (branch rulesets, required CI gates, WIP and
-  budget caps) require, in addition to everything under Delegated judgment:
-  (a) approval from two independent models from different providers, against the
-  full raw diff and the cumulative diff from the pinned adoption baseline, with
-  both verbatim transcripts committed; (b) a minimum 72-hour open-PR period; and
-  (c) a one-line acknowledgment from the owner's account on the PR. The
-  acknowledgment is not code review and requires no technical judgment. If it is
-  not given, the change does not happen. This tier cannot be weakened by any
-  process defined in this file, including this one, without satisfying this tier.
+- **OWNER-ONLY / STOP** *(restored)*: changes to this risk envelope or to the
+  machine guardrails are never auto-executed. This is the wording that was in
+  force before 2026-07-25 and is in force again.
 
-### Delegated judgment (proposed 2026-07-25)
-
-The owner has delegated review, merge, and direction authority to the operator,
-including governance and constitutional decisions. The delegation covers this
-repository only and confers no authority over other repositories, spend,
-credentials, permissions, or actions involving real people.
-
-That delegation was given verbally in an operator session and is **not evidenced
-by any artifact in this repository**. It cannot be: the operator's GitHub token
-is the owner's account, so nothing the operator writes here distinguishes itself
-from something the owner wrote. The owner's acknowledgment on the adopting PR is
-therefore the first and only durable evidence of it, which is why the ENVELOPE
-tier requires one. Until that exists, this section is proposed, not adopted.
-
-Delegation is not an absence of check; it relocates it. Where owner judgment
-formerly sat, the operator must obtain **independent judgment from a frontier
-model of a different provider than the operator, which did not produce or assist
-the work and receives no session context**, before any of:
-
-- amending this file, `docs/founding-package-v0.2.md`, or an accepted ADR;
-- adopting or rejecting a proposed constitutional rule;
-- changing what the federation observes, or Recon's role within it.
-
-A consultation is valid only if the prompt is the committed neutral template in
-`governance/consultation-prompt.md` plus the complete raw diff, and the full
-prompt and full response are committed verbatim as
-`governance/consultations/<pr>.md` (PR-keyed, NOT issue-keyed — the artifact file name matches the pull request number) with a `verdict:` line of `APPROVE` or
-`REJECT`. CI rejects any PR touching the files above that lacks a valid
-consultation artifact at `governance/consultations/<pr>.md` (PR-keyed, not
-issue-keyed). A REJECT blocks adoption unless a model from a third
-provider approves the identical diff, both transcripts committed. A
-constitutional consultation is never skipped for budget or availability reasons;
-if it cannot be performed, the change waits. Every consultation attempted for a
-change is committed, including abandoned ones — an omitted consultation is a
-constitutional defect, because rotation between providers is otherwise
-indistinguishable from shopping for a favourable answer.
-
-Independence of weights is not independence of information: a consultation that
-receives the operator's framing instead of the raw diff is not a check.
-
-**What the artifact gate proves and does not prove.** The CI gate checks that a
-file exists at the expected path containing the raw diff hunk headers, a reviewer
-line, a provider line, and a `verdict:` line. It proves a file exists containing
-those strings. It does NOT prove that any review occurred, that any reviewer saw
-the diff, that any model was consulted, or that the verdict came from an
-independent provider. A fully passing forged artifact can be produced in under a
-second: the raw diff, four header lines, and `verdict: APPROVE`. The gate's value
-is that it raises the cost of skipping review from free to deliberate fabrication
-and makes the omission visible in the diff — every committer must either obtain a
-real consultation or forge one, and a forged artifact is a committed, timestamped,
-diffable record of deception. The gate delivers visibility, not verification.
-Claiming enforcement it does not deliver invites the trust it cannot support.
-
-Every constitutional consultation must include the cumulative diff from the
-adoption baseline pinned in `docs/founding-decision-record.md`, not only the
-incremental one. Each amendment is judged in isolation; the trajectory is not,
-and a sequence of individually reasonable amendments is how a constitution walks
-away from its founding intent with every step approved. `docs/amendments.md` is
-the append-only log that makes that drift countable.
+> **The ENVELOPE tier and the Delegated judgment section were removed from this
+> file on 2026-07-26 and had no force while they stood here.**
+>
+> They reached `main` inside PR #53, a pull request whose stated subject was a CI
+> gate, without satisfying their own conditions: one cross-provider approval
+> instead of two, no 72-hour period, no owner acknowledgment. The reviewer's own
+> committed artifact warned that merging on green CI alone would violate the tier
+> the diff created; the operator read the verdict line and merged.
+>
+> An independent reviewer ruled revert rather than retroactive ratification: *a
+> rule is defined by what happens when following it is costly, and the first hard
+> case cannot be the exception that consumes the rule.* Nothing done while that
+> text stood here is retroactively legitimated by it.
+>
+> Re-adoption is a separate, prospective decision on its own pull request. See
+> #55 and `docs/amendments.md`.
 
 ## Runtime State & Locking
 
@@ -193,11 +143,10 @@ the append-only log that makes that drift countable.
 ## Model Economy
 
 - **DeepSeek** = worker (cheap, API). Default for builds.
-- **Opus** = operator: spec, review, gate. Standing merge authority is a separate
-  ENVELOPE-tier question, unresolved here, and must be reconciled with Phase 4
-  ("v1 does not merge") before it is claimed.
+- **Opus** = operator: spec, review, gate. Standing merge authority is not
+  claimed here and must be reconciled with Phase 4 ("v1 does not merge").
 - **Independent judgment / red-team** = a frontier model of a different provider,
-  on escalation triggers and on every item under Delegated judgment. The current
+  on escalation triggers and before integrating risk-class HIGH work. The current
   concrete roster lives in `governance/reviewers.md`, deliberately outside this
   file: a vendor snapshot has no business in a constitution.
 - Frontier chat sparingly — long sessions are the most expensive mode.
