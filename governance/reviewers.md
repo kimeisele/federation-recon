@@ -19,15 +19,17 @@ independent provider for operator-authored constitutional changes — same
 provider. It remains valid for architecture and direction red-teaming, and for
 the second opinion where the first came from a third provider.
 
-**Verify the invocation, not the intent.** On 2026-07-25 every review recorded
-as Kimi K3 / Moonshot was in fact served by an Anthropic model: the invocation
-carried a misconfigured provider setting, and nothing checked. The reviews were
-substantive and found real defects, but they were Anthropic reviewing Anthropic,
-which is precisely what this file exists to prevent. Use the aliases below
-verbatim rather than reconstructing an equivalent invocation by hand.
+**Use the invocation verbatim. Do not reconstruct it.** On 2026-07-25 every
+review recorded as Kimi K3 / Moonshot used a hand-built invocation instead of the
+alias below. The reconstruction was wrong, `jcode` has cross-provider failover
+enabled, and which model answered was never established. The reviews were
+substantive, but an unverified provider cannot satisfy a requirement whose entire
+content is which provider answered.
 
-Asking the model to name itself is not the fix — a model's self-report is not
-evidence. The fix is to invoke it correctly.
+Asking the model to name itself is **not** the remedy. A self-report is not
+evidence — in the same session a DeepSeek call confidently identified itself as
+an Anthropic model, and a table was briefly built on that before provider usage
+data disproved it. Use the alias, and check `jcode usage` if it matters.
 
 Availability is not an exemption. If a reviewer's budget is exhausted the call
 fails; use another. If none can be reached, the change waits.
