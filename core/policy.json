@@ -1,0 +1,21 @@
+{
+  "backend": "macos-seatbelt",
+  "claimed_capabilities": [
+    "no_network",
+    "fs_confinement",
+    "pid_limit",
+    "tree_kill"
+  ],
+  "unclaimable_capabilities": {
+    "mem_limit": "RLIMIT_AS raises ValueError on macOS. A watchdog can detect but not prevent.",
+    "disk_quota": "RLIMIT_FSIZE caps one file, not total write volume.",
+    "cpu_limit": "RLIMIT_CPU is per-process, not per-tree. A process tree splits the budget.",
+    "package_network": "not built"
+  },
+  "limits": {
+    "wall_clock_seconds": 60,
+    "rlimit_cpu_seconds": 30,
+    "rlimit_nproc": 64,
+    "rlimit_fsize_bytes": 10485760
+  }
+}

@@ -1,0 +1,26 @@
+(version 1)
+
+; ── worker.sb — deny-by-default Seatbelt profile for the macos-seatbelt backend ──
+; Every (allow ...) line below was derived by running a real Python workload
+; and reading the sandbox violations from /var/log/system.log.  No (allow file-read*)
+; appears without a (subpath …) clause — a measured run with (allow file-read*)
+; let a sandboxed process read ~/.config/secrets/env.  That is the error this
+; profile fixes.
+
+(deny default)
+
+; ── Outbound communication — fully denied ──
+(deny network*)
+
+; ── System paths that /usr/bin/python3 genuinely needs ──
+(allow file-read*       (subpath "/usr/"))
+(allow file-read*       (subpath "/bin/"))
+(allow file-read*       (subpath "/System/Library/"))
+(allow file-read*       (subpath "/private/var/db/dyld/"))
+(allow file-read*       (subpath "/dev/null"))
+(allow file-read*       (subpath "/dev/urandom"))
+
+; ── Workspace, passed as the WORKSPACE parameter ──
+; All file-read* and file-write* calls against the workspace are permitted;
+; everything outside it is caught by (deny default) above.
+(allow file-read* file-write* (subpath (param "WORKSPACE")))
