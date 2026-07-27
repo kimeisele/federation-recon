@@ -32,7 +32,11 @@ setup() {
 # When called as 'jcode usage', prints a stub usage line.
 # When called as 'jcode run ...', extracts the -C dir, optionally touches
 # files listed in $JCODE_STUB_TOUCH (space-separated, relative to -C dir),
-# and exits with $JCODE_STUB_EXIT (default 0).
+# writes to $JCODE_SCRATCH_DIR if set (otherwise simulates the literal
+# \$JCODE_SCRATCH_DIR bug in C_DIR), records $JCODE_SCRATCH_DIR value to
+# $JCODE_STUB_SCRATCH_RECORD if set, and exits with $JCODE_STUB_EXIT (default 0).
+#
+# bash 3.2 compatible.
 
 echo "$@" >> "${JCODE_LOG:-/dev/null}"
 
@@ -68,12 +72,32 @@ if [ -n "${JCODE_STUB_TOUCH:-}" ] && [ -n "$C_DIR" ]; then
   done
 fi
 
+# Simulate real jcode scratch-dir behaviour
+if [ -n "${JCODE_SCRATCH_DIR:-}" ]; then
+  mkdir -p "$JCODE_SCRATCH_DIR" 2>/dev/null || true
+  echo "stub scratch" > "$JCODE_SCRATCH_DIR/stub_scratch.txt"
+else
+  # Bug: unset JCODE_SCRATCH_DIR causes literal \$JCODE_SCRATCH_DIR in CWD
+  if [ -n "$C_DIR" ]; then
+    mkdir -p "$C_DIR/\$JCODE_SCRATCH_DIR" 2>/dev/null || true
+    echo "stub scratch" > "$C_DIR/\$JCODE_SCRATCH_DIR/stub_scratch.txt"
+  fi
+fi
+
+# Record scratch dir value for test verification
+if [ -n "${JCODE_STUB_SCRATCH_RECORD:-}" ]; then
+  echo "${JCODE_SCRATCH_DIR:-UNSET}" > "$JCODE_STUB_SCRATCH_RECORD"
+fi
+
 exit "${JCODE_STUB_EXIT:-0}"
 JCODESTUB
   chmod +x "$WORKDIR/jcode"
 
   export PATH="$WORKDIR:$PATH"
   export JCODE_LOG="$WORKDIR/jcode-args.txt"
+
+  # Hermetic: unset JCODE_SCRATCH_DIR so the environment doesn't leak in
+  unset JCODE_SCRATCH_DIR 2>/dev/null || true
 }
 
 teardown() {
@@ -240,4 +264,86 @@ with open('$wo_file', 'w') as f:
   # Should contain both BEFORE and AFTER sections
   [[ "$(cat "$USAGE_FILE")" == *"BEFORE"* ]]
   [[ "$(cat "$USAGE_FILE")" == *"AFTER"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# 8. SCRATCH OUTSIDE THE WORKTREE — stub writes to \$JCODE_SCRATCH_DIR;
+#    after the builder runs the worktree must NOT contain a literal
+#    \$JCODE_SCRATCH_DIR directory and no untracked path other than what
+#    the stub deliberately changed.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: SCRATCH OUTSIDE THE WORKTREE — no \$JCODE_SCRATCH_DIR in worktree" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 1 '["src/"]' '[]' '["true"]'
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" run bash "$BUILDER" "$WT"
+
+  [ "$status" -eq 0 ]
+
+  # The literal \$JCODE_SCRATCH_DIR directory must NOT exist in the worktree
+  [ ! -d "$WT/\$JCODE_SCRATCH_DIR" ]
+
+  # Only the stub-touched files should appear in git status
+  CHANGED=$(git -C "$WT" status --porcelain --untracked-files=all)
+  [[ "$CHANGED" == *"src/out.txt"* ]]
+  # No \$JCODE_SCRATCH_DIR entry anywhere in git status
+  [[ "$CHANGED" != *'$JCODE_SCRATCH_DIR'* ]]
+  # Exactly one untracked file — no scratch leakage
+  CHANGED_COUNT=$(echo "$CHANGED" | grep -c . || true)
+  [ "$CHANGED_COUNT" -eq 1 ]
+
+  # files_changed must also be exactly what the stub touched — no scratch leakage
+  [[ "$output" == *'"files_changed": ["src/out.txt"]'* ]]
+}
+
+# ---------------------------------------------------------------------------
+# 9. SCRATCH IS SET — stub records the value of \$JCODE_SCRATCH_DIR.
+#    Assert it is non-empty and is NOT under the worktree path.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: SCRATCH IS SET — non-empty and outside worktree" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 1 '["src/"]' '[]' '["true"]'
+
+  RECORD_FILE="$WORKDIR/scratch_value.txt"
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_STUB_SCRATCH_RECORD="$RECORD_FILE" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -eq 0 ]
+  [ -f "$RECORD_FILE" ]
+
+  SCRATCH_VAL=$(cat "$RECORD_FILE")
+  [ -n "$SCRATCH_VAL" ]
+  # Must not be the literal "UNSET" placeholder
+  [[ "$SCRATCH_VAL" != "UNSET" ]]
+  # Must not be under the worktree
+  [[ "$SCRATCH_VAL" != "$WT"/* ]]
+  [[ "$SCRATCH_VAL" != "$WT" ]]
+}
+
+# ---------------------------------------------------------------------------
+# 10. USAGE NOT BESIDE THE WORK ORDER — with RUN_DIR unset, assert no file
+#     appears in the directory containing the work order.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: USAGE NOT BESIDE THE WORK ORDER — WO dir clean without RUN_DIR" {
+  WO_DIR="$WORKDIR/wo"
+  mkdir -p "$WO_DIR"
+  WO="$WO_DIR/wo.json"
+  _wo "$WO" 1 '["src/"]' '[]' '["true"]'
+
+  # Explicitly unset RUN_DIR so builder uses temp dirs
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    RUN_DIR="" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -eq 0 ]
+
+  # Only wo.json should be in the work order directory
+  FILES=$(ls -1 "$WO_DIR" 2>/dev/null)
+  [ "$(echo "$FILES" | wc -l | tr -d ' ')" -eq 1 ]
+  [[ "$FILES" == "wo.json" ]]
 }

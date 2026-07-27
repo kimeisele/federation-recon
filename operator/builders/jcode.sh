@@ -6,7 +6,9 @@
 #
 # Writes its report as JSON to stdout: {"outcome": "...", "files_changed": [...]}
 # Cost evidence (raw jcode usage before/after) goes to $RUN_DIR/builder_usage.txt
-# if RUN_DIR is set, otherwise beside the work order.
+# if RUN_DIR is set (preferred but not guaranteed), otherwise a temp directory.
+# JCODE_SCRATCH_DIR is set to a directory outside the worktree before invoking
+# jcode; temp scratch and usage dirs are cleaned up on exit.
 #
 # bash 3.2, python3, and git only. No jq.
 set -o errexit -o nounset -o pipefail
@@ -46,7 +48,31 @@ FORBIDDEN=$(python3 -c "import json; print(json.loads('''$WO_DATA''')['forbidden
 ACCEPTANCE=$(python3 -c "import json; print(json.loads('''$WO_DATA''')['acceptance'])" 2>/dev/null)
 
 # -----------------------------------------------------------------
-# 2. Build the prompt
+# 2. Set up directories outside the worktree
+# -----------------------------------------------------------------
+# RUN_DIR is preferred but not guaranteed; fall back to temp dirs.
+if [ -n "${RUN_DIR:-}" ]; then
+  SCRATCH_DIR="$RUN_DIR/builder-scratch"
+  USAGE_FILE="$RUN_DIR/builder_usage.txt"
+else
+  SCRATCH_DIR="$(mktemp -d)"
+  USAGE_DIR="$(mktemp -d)"
+  USAGE_FILE="$USAGE_DIR/builder_usage.txt"
+fi
+mkdir -p "$SCRATCH_DIR"
+export JCODE_SCRATCH_DIR="$SCRATCH_DIR"
+
+# Cleanup trap — only remove temp dirs we own (not RUN_DIR-managed ones)
+_cleanup_builder() {
+  if [ -z "${RUN_DIR:-}" ]; then
+    rm -rf "$SCRATCH_DIR" 2>/dev/null || true
+    rm -rf "${USAGE_DIR:-}" 2>/dev/null || true
+  fi
+}
+trap _cleanup_builder EXIT
+
+# -----------------------------------------------------------------
+# 3. Build the prompt
 # -----------------------------------------------------------------
 PROMPT="You are working on issue #${ISSUE} in this repository.
 
@@ -62,17 +88,17 @@ ${ACCEPTANCE}
 Complete the task described by the issue."
 
 # -----------------------------------------------------------------
-# 3. Provider
+# 4. Provider
 # -----------------------------------------------------------------
 PROVIDER="${JCODE_PROVIDER:-deepseek}"
 
 # -----------------------------------------------------------------
-# 4. Usage before
+# 5. Usage before
 # -----------------------------------------------------------------
 USAGE_BEFORE=$(jcode usage 2>&1 || true)
 
 # -----------------------------------------------------------------
-# 5. Invoke jcode
+# 6. Invoke jcode
 # -----------------------------------------------------------------
 set +o errexit
 JCODE_PROVIDER="$PROVIDER" jcode run --quiet -C "$WORKTREE" "$PROMPT" >/dev/null 2>&1
@@ -80,18 +106,13 @@ JCODE_EXIT=$?
 set -o errexit
 
 # -----------------------------------------------------------------
-# 6. Usage after
+# 7. Usage after
 # -----------------------------------------------------------------
 USAGE_AFTER=$(jcode usage 2>&1 || true)
 
 # -----------------------------------------------------------------
-# 7. Write usage file
+# 8. Write usage file
 # -----------------------------------------------------------------
-if [ -n "${RUN_DIR:-}" ]; then
-  USAGE_FILE="$RUN_DIR/builder_usage.txt"
-else
-  USAGE_FILE="$(dirname "$WORK_ORDER")/builder_usage.txt"
-fi
 mkdir -p "$(dirname "$USAGE_FILE")" 2>/dev/null || true
 {
   echo "=== jcode usage BEFORE ==="
@@ -101,7 +122,7 @@ mkdir -p "$(dirname "$USAGE_FILE")" 2>/dev/null || true
 } > "$USAGE_FILE"
 
 # -----------------------------------------------------------------
-# 8. If jcode failed, report failure
+# 9. If jcode failed, report failure
 # -----------------------------------------------------------------
 if [ "$JCODE_EXIT" -ne 0 ]; then
   echo '{"outcome":"failed","files_changed":[]}'
@@ -109,7 +130,7 @@ if [ "$JCODE_EXIT" -ne 0 ]; then
 fi
 
 # -----------------------------------------------------------------
-# 9. Determine what actually changed
+# 10. Determine what actually changed
 # -----------------------------------------------------------------
 CHANGED=$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null || true)
 
