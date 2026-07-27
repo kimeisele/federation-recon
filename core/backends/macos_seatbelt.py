@@ -17,6 +17,7 @@ import time
 # ── Installed paths — these define the trust boundary ────────────────────────
 _SANDBOX_BASE = "/usr/local/var/jcode-runs"
 _CANARY_DIR = os.path.join(_SANDBOX_BASE, "canaries")
+_RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
 _PROFILE_PATH = os.path.join(_SANDBOX_BASE, "profiles", "worker.sb")
 _WORKER_USER = "_jcode_worker"
 _WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
@@ -86,7 +87,7 @@ def run(canary_name, workspace):
     # runs inside.  The base directory (0771 root:wheel) prevents
     # non-wheel users from creating or listing entries under it.
     run_id = os.path.basename(workspace)
-    inner_ws = os.path.join(_SANDBOX_BASE, run_id)
+    inner_ws = os.path.join(_RUNS_DIR, run_id)
     os.makedirs(inner_ws, exist_ok=True)
     os.chmod(inner_ws, 0o777)
 
@@ -117,10 +118,13 @@ def run(canary_name, workspace):
         import resource
 
         # RLIMIT_AS is intentionally NOT set — it raises ValueError on macOS
+        # RLIMIT_NPROC is NOT set here either: on macOS it counts processes per
+        # REAL UID, and preexec still runs as the owner, who has hundreds. The
+        # worker's process limit is applied inside worker_exec.sh, after sudo
+        # has switched uid — measured: setting it here makes sudo fail to fork.
         # (ENOTSUP).  This is why mem_limit lives in unclaimable_capabilities.
         for name, rlim_const, value in [
             ("rlimit_cpu",   resource.RLIMIT_CPU,   lim["rlimit_cpu_seconds"]),
-            ("rlimit_nproc", resource.RLIMIT_NPROC, lim["rlimit_nproc"]),
             ("rlimit_fsize", resource.RLIMIT_FSIZE, lim["rlimit_fsize_bytes"]),
         ]:
             try:

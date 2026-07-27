@@ -32,7 +32,7 @@ BASE="/usr/local/var/jcode-runs"
 CANARY_DIR="$BASE/canaries"
 PROFILE="$BASE/profiles/worker.sb"
 
-WORKSPACE="$BASE/$RUN_ID"
+WORKSPACE="$BASE/runs/$RUN_ID"
 CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
 
 # Reject any name that does not resolve to an existing file in the
@@ -43,9 +43,16 @@ CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
     exit 1
 }
 
+# Resource limits are applied HERE, not by the caller: sudo has already
+# switched to the worker uid, so RLIMIT_NPROC counts the worker's processes
+# rather than the owner's. Applied before exec, inherited by everything below.
+ulimit -u 64        2>/dev/null || true
+ulimit -t 30        2>/dev/null || true
+ulimit -f 10240     2>/dev/null || true
+
 # env -i guarantees the owner's environment never crosses the boundary.
 # The workspace path is passed as a positional argument so the canary
 # script knows where to write results (it lives outside the workspace).
 exec /usr/bin/env -i PATH=/usr/bin:/bin \
     /usr/bin/sandbox-exec -f "$PROFILE" -D "WORKSPACE=$WORKSPACE" \
-    /usr/bin/python3 "$CANARY_SCRIPT" "$WORKSPACE"
+    /Library/Developer/CommandLineTools/usr/bin/python3 "$CANARY_SCRIPT" "$WORKSPACE"
