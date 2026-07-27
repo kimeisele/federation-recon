@@ -1,28 +1,26 @@
-# ADR — Execution Core S0: Bedrohungsmodell, Vertrauensgrenzen, Ausführungsprotokoll
+# ADR — Execution Core: Bedrohungsmodell, Vertrauensgrenzen, Ausführungsprotokoll
 
-**Status:** Entwurf, Revision 4. Kein Code, bis die Go/No-Go-Kriterien in §11 erfüllt sind.
+**Status:** Proposed. Kein bewiesenes Sicherheitsfundament — ein Vertrag, dessen Backends ihre Fähigkeiten erst durch Canaries nachweisen müssen (§7, §11).
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
-**Revision 4:** Substrat entschieden, gemessen statt vermutet. Kein Docker, keine VM, keine externen Abhängigkeiten — reines Python plus macOS-Seatbelt. Neu: §0 (der eigentliche Fix), §10 (Substrat mit Messwerten), §16 (Kosten und Zeit). Vorherige Revision:
-
-**Revision 3:** Nach REQUEST CHANGES. Die TCB war falsch durch Auslassung, der Verifier konnte sein eigenes Urteil fälschen, der Launcher glaubte Selbstauskünfte, und der Work Order durfte seine eigenen Grenzen setzen. Sechs Bestandteile wurden als Zeremonie gestrichen (§14) — das Dokument ist deshalb trotzdem nicht kürzer (247 gegen 236 Zeilen), weil die vollständige TCB, die Messliste und die Go/No-Go-Kriterien mehr Platz brauchen als das Gestrichene. Ich hatte „kürzer" behauptet, ohne zu zählen.
+**Revision 5.** Vollständige Neufassung, kein Patch. Revision 4 entschied in einem Abschnitt „keine VM" und ließ TCB, Diagramm, Messmodell und Roadmap weiter von Hypervisor und VM-Zerstörung sprechen. Diese Fassung ist in sich konsistent oder sie ist wertlos.
 
 ---
 
 ## 0. Der eigentliche Fix, vor allem anderen
 
-> **Der Supervisor führt niemals Builder-Ausgabe im eigenen Prozess aus.**
+> **Der Supervisor führt niemals Worker-Ausgabe im eigenen Prozess aus.**
 
-Kein `eval`, kein `source`, kein Aufruf einer Datei, die der Builder geschrieben hat. Ergebnisse kommen **ausschließlich als Dateien** zurück, die der Supervisor **liest und parst** — nie ausführt.
+Kein `eval`, kein `source`, kein Aufruf einer Datei, die der Worker geschrieben hat. Ergebnisse kommen als Dateien zurück und werden **gelesen und geparst** (§5), nie ausgeführt.
 
-Das behebt #104 vollständig und kostet nichts. Sandkasten, Benutzertrennung und Grenzen sind **Schicht zwei**: sie fangen ab, was passiert, wenn diese Regel irgendwann durch einen Bequemlichkeitspfad gebrochen wird.
+Das behebt #104 vollständig und kostet nichts.
 
-Diese Reihenfolge steht hier, weil die drei vorherigen Revisionen mit dem Sandkasten anfingen und den Satz oben nicht enthielten.
+**Es ersetzt keine Isolation.** Es verhindert nur, dass Worker-Ausgabe unmittelbar zu Codeausführung auf dem Host wird. Alles Weitere in diesem Dokument existiert für den Fall, dass diese Regel bricht.
 
 ---
 
 ## 1. Was tatsächlich passiert ist
 
-Drei echte Builder-Läufe am 2026-07-27, DeepSeek über `jcode`, auf dem persönlichen Rechner des Owners, als der Owner, ohne Isolation.
+Drei echte Läufe am 2026-07-27, DeepSeek über `jcode`, auf dem Rechner des Owners, als der Owner, ohne Isolation.
 
 | Lauf | Verdikt | Was er zeigte |
 |---|---|---|
@@ -36,231 +34,250 @@ Wörtlich in `operator/run.sh`:
 (cd "$WORKTREE" && eval "$cmd") >/dev/null 2>&1
 ```
 
-Ein Abnahmekommando durfte auf eine Datei zeigen, die der Builder erzeugt hat. Nachgeprüft: `git cat-file -e <base_sha>:scripts/test/gate-cleanup.bats` → existierte nicht. **Der Builder schrieb die Datei, der Orchestrator führte sie mit Owner-Rechten aus, mit unterdrückter Ausgabe.**
+Ein Abnahmekommando durfte auf eine Datei zeigen, die der Builder erzeugt hat. `git cat-file -e <base_sha>:scripts/test/gate-cleanup.bats` → existierte nicht. **Der Builder schrieb die Datei, der Orchestrator führte sie mit Owner-Rechten aus, mit unterdrückter Ausgabe.**
 
 ---
 
-## 2. Vertrauen
+## 2. Der Agentenfluss — entschieden
 
-### 2.1 Trusted Computing Base — vollständig
+**Das Modell läuft außerhalb der Isolationsgrenze. Seine Antworten sind Daten.**
+
+```
+Supervisor (Host)              Worker (isoliert)
+─────────────────              ─────────────────
+ruft das Modell auf
+hält das Credential
+empfängt Antwort als DATEN
+        │
+        │ schreibt Auftrag + Daten in den Arbeitsraum
+        ▼
+                               führt Werkzeuge aus
+                               führt Code aus
+                               schreibt Ergebnisdateien
+        ◄──────────────────────
+liest und parst (§5)
+führt niemals aus (§0)
+```
+
+**Jeder Werkzeugaufruf und jede Codeausführung findet ausschließlich im isolierten Worker statt.** Der Modell-Client läuft auf dem Host und gehört damit zur TCB.
+
+Folgen dieser Entscheidung:
+
+- **Der Broker entfällt als Komponente.** Es gibt keinen Modellaufruf aus dem Worker heraus, den man vermitteln müsste.
+- Der Worker braucht für den Bau selbst **kein Netz**.
+- **Paketinstallation ist damit nicht gelöst, sondern ausgeschlossen.** Ein Auftrag, der `pip install` oder `npm install` braucht, ist auf einem Backend ohne Netz-Fähigkeit **nicht ausführbar** und wird abgelehnt (§7). Das ist eine benannte Grenze, keine spätere Ausnahme.
+
+---
+
+## 3. Vertrauen
+
+### 3.1 Trusted Computing Base
 
 > Eine TCB, die man zu klein angibt, ist eine TCB, die man nicht prüft.
 
 1. **Der Owner**
-2. **Der Launcher** — winzig, deterministisch, kein Modell, klein genug zum Ganzlesen
-3. **Der Hypervisor**
-4. **Das Host-Betriebssystem**
-5. **Das VM-Basisimage**
-6. **Der Broker** — hält das Credential und erzwingt Grenzen, gehört also hierher
-7. **Die Verifier-Logik in der Prüf-VM** — der Supervisor-Prozess, nicht die geprüfte Nutzlast
-8. **Die Launcher-Policy-Datei** — sie legt die Grenzen fest
+2. **Der Supervisor** — klein, deterministisch, kein Modell, klein genug zum Ganzlesen
+3. **Das Host-Betriebssystem**
+4. **Die Implementierung des Isolation-Backends** samt Profil oder Policy (§7)
+5. **Der Modell-Client auf dem Host** — er hält das Credential (§2)
+6. **Die Canary-Suite** — sie entscheidet, welche Fähigkeiten ein Backend behaupten darf
+7. **Die Supervisor-Policy** — sie legt die Grenzen fest
 
-Revision 2 nannte nur 1–3. Das verkleinerte die TCB nicht, es verbarg sie.
+Kein Hypervisor in dieser Liste: ob einer existiert, hängt vom gewählten Backend ab (§7). Ein VM-Backend fügt ihn hinzu, ein Prozess-Backend nicht.
 
-### 2.2 Nicht vertrauenswürdig
+### 3.2 Nicht vertrauenswürdig
 
-Der LLM-Operator · der Builder und seine Werkzeugkette · das Repository einschließlich `base_sha` · die Tests im Repository · der Patch · **die Nutzlast in der Prüf-VM** · jede Ausgabe eines Laufs.
+Der LLM-Operator · das Builder-Modell und seine Ausgabe · das Repository einschließlich `base_sha` · die Tests im Repository · der Patch · **alles, was im Worker läuft** · jede Ausgabe eines Laufs.
 
-### 2.3 Was daraus folgt
+### 3.3 Was daraus folgt
 
 Der Operator darf Aufträge **vorschlagen** und Ergebnisse **lesen**. Er führt nicht aus, sperrt nicht ein, gibt nicht frei.
 
-**Unbequeme Folge:** Was der Operator heute „Abnahme" nennt — Mutationsläufe, Gate-Läufe, Vergleiche — sind **Behauptungen, keine Feststellungen**. Evidenz entsteht erst dort, wo der Launcher unabhängig misst.
+**Unbequeme Folge:** Was der Operator „Abnahme" nennt, sind **Behauptungen, keine Feststellungen**. Evidenz entsteht dort, wo der Supervisor unabhängig misst (§6).
 
-### 2.4 Dieses Dokument ist untrusted output
+### 3.4 Dieses Dokument ist untrusted output
 
-Vom Operator geschrieben, nach §2.2 also nicht vertrauenswürdig. Es braucht Prüfung durch jemand anderen. Das ist die einzige mit §2.1 verträgliche Behandlung.
+Vom Operator geschrieben, nach §3.2 also nicht vertrauenswürdig. Es braucht Prüfung durch jemand anderen.
 
-### 2.5 Was diese Architektur NICHT schützt
+### 3.5 Was diese Architektur NICHT schützt
 
-1. **Ein falscher Auftrag.** `wo-98-3` bestand jede mechanische Prüfung und war schädlich. **Kein Sandkasten behebt das.**
-2. **Semantische Korrektheit.** Bleibt menschliche Lektüre durch den Owner.
-3. **Eine gebrochene TCB.** Wer Launcher, Hypervisor, Host-OS, Image, Broker oder Policy bricht, hat alles.
-4. **Den Modellanbieter.** Er sieht, was der Broker sendet.
-
----
-
-## 3. Ausführung
-
-**Ein VM-Typ, ein Launcher-Pfad, zwei Läufe mit verschiedenen Eingaben.** Revision 2 beschrieb VM A und VM B als verschiedene Architekturen; das war Zeremonie und verdoppelte die zu prüfende Oberfläche.
-
-```
-TCB:  Owner · Launcher · Hypervisor · Host-OS · Basisimage · Broker · Verifier-Supervisor · Policy
-        │
-        │ startet, begrenzt, misst, sammelt ein, zerstört
-        ▼
-   ┌─ Lauf 1: BAU ─────────────┐     ┌─ Lauf 2: PRÜFUNG ─────────────────┐
-   │ Eingang: Base-Archiv,      │     │ Eingang: Base-Archiv, Envelope,   │
-   │          Work Order        │     │          Acceptance Bundle (ro)   │
-   │ Netz: keins, kein DNS,     │     │ Netz: keins                       │
-   │       kein Schluessel      │     │                                   │
-   │ Modell: nur ueber Broker   │     │ SUPERVISOR (privilegiert):        │
-   │ Ausgang: Output Envelope   │     │   wendet Patch an, haengt Bundle  │
-   └────────────────────────────┘     │   ro ein, fuehrt Pruefungen aus,  │
-                                       │   schreibt das Ergebnis           │
-                                       │ NUTZLAST (unprivilegiert):        │
-                                       │   gepatchter Code und seine Tests │
-                                       │   kann Ergebnis und Bundle NICHT  │
-                                       │   schreiben                       │
-                                       └───────────────────────────────────┘
-```
-
-**Der Split im Prüflauf ist tragend.** Eine frische VM tötet Persistenz *zwischen* Läufen, nicht Manipulation *innerhalb* eines Laufs. Ohne Rechtetrennung könnte die geprüfte Nutzlast ihr eigenes Urteil schreiben — strukturell dasselbe wie ein Audit-Log, das der auditierte Prozessbaum führt.
+1. **Ein falscher Auftrag.** `wo-98-3` bestand jede mechanische Prüfung und war schädlich. Kein Backend behebt das.
+2. **Semantische Korrektheit.** Bleibt menschliche Lektüre.
+3. **Eine gebrochene TCB.**
+4. **Den Modellanbieter.** Er sieht, was der Supervisor sendet.
 
 ---
 
-## 4. Was der Launcher unabhängig misst
+## 4. Ablauf
 
-Nichts Verdikt-Relevantes darf aus einer VM stammen, außer über den Supervisor-Kanal des Prüflaufs.
+Zwei getrennte isolierte Läufe, ein Supervisor.
+
+```
+TCB: Owner · Supervisor · Host-OS · Backend+Policy · Modell-Client · Canaries
+   │
+   │ 1. Modellaufruf auf dem Host → Antwort als Daten
+   │ 2. Arbeitsraum anlegen, Base + Auftrag hineinschreiben
+   ▼
+┌─ Lauf 1: BAU, isoliert ──────┐
+│  kein Netz                    │
+│  Ausgang: Ergebnisdateien     │
+└───────────────────────────────┘
+   │ 3. Supervisor liest, parst (§5), misst (§6)
+   ▼
+┌─ Lauf 2: PRÜFUNG, frisch ────┐
+│  Base + Patch + Acceptance    │
+│  Bundle (nie in Lauf 1)       │
+│  kein Netz                    │
+└───────────────────────────────┘
+   │ 4. Supervisor liest Exitstatus des Kindes selbst
+   ▼
+   Verdikt
+```
+
+**Zwei getrennte Läufe ersetzen den früher geforderten Supervisor/Nutzlast-Split innerhalb einer VM.** Das Acceptance Bundle betritt Lauf 1 nie; der geprüfte Code kann sein eigenes Urteil nicht schreiben, weil der Supervisor das Urteil **von außen** aus dem Exitstatus des Kindprozesses bildet.
+
+---
+
+## 5. Was der Supervisor parsen darf
+
+„Der Host interpretiert nichts" war unmöglich und widersprach §0 — ein Ergebnis muss gelesen werden, sonst gibt es kein Verdikt.
+
+**Erlaubt, und nur das:**
+
+- Bytegrößen-Prüfung **vor** jedem Lesen
+- **Kanonisches JSON**, strikt gegen ein festes Schema, Tiefe und Feldzahl begrenzt
+- Der Patch als **opake Bytes**: Größe, Hash, Weiterreichen
+
+**Verboten, ohne Ausnahme:** Ausführen · `pickle` · YAML · Archive entpacken · beliebige Deserialisierung · jedes Format, dessen Parser Code ausführen kann.
+
+Das Anwenden und Untersuchen des Patches geschieht im Prüflauf, nicht auf dem Host.
+
+---
+
+## 6. Was der Supervisor unabhängig misst
+
+Nichts Verdikt-Relevantes stammt aus dem Worker.
 
 | Messgröße | Quelle |
 |---|---|
-| Image-Digests beider Läufe | Launcher |
-| Bundle-Digest | Launcher |
-| Patch-Hash und Bytegröße | Launcher |
-| Envelope-Bytegröße | Launcher |
-| `run_id`-Bindung über alle Artefakte | Launcher |
-| Wanduhr Start/Ende | Launcher |
-| VM-Exit- und Terminierungsursache | Hypervisor |
-| Tatsächliche Anwendung jeder Grenze aus §6 | Launcher |
+| Exitstatus und Terminierungssignal | `waitpid` des Elternprozesses |
+| Wanduhr Start/Ende | Supervisor |
+| Verbrauchte CPU-Zeit | `rusage` des Kindes |
+| Spitzen-RSS | Watchdog des Supervisors |
+| Patch-Hash und Bytegröße | Supervisor |
+| Ergebnis-Bytegröße | Supervisor |
+| Digest des Acceptance Bundles | Supervisor |
+| Backend-Identität und Profil-Digest | Supervisor |
+| `run_id`-Bindung über alle Artefakte | Supervisor |
+| Tatsächliche Anwendung jeder Grenze | Supervisor |
 
 **Fehlende Evidenz ist Ablehnung.** „Nicht gemessen" und „eingehalten" dürfen nie dasselbe Ergebnis haben.
 
 ---
 
-## 5. Der Host interpretiert nichts
+## 7. Der Isolation-Backend-Vertrag
 
-Der Host darf am Envelope ausschließlich: **Bytegröße prüfen · Hash bilden · speichern · weiterreichen.**
+**Das ist der Kern dieses ADR.** Der Execution Core kennt kein Betriebssystem und keine Sandkasten-Technik. Er kennt **Fähigkeiten**, die ein Backend behauptet und deren Nachweis er verlangt.
 
-Kein Parsen, kein `git apply`, keine Pfadprüfung, keine Nebenwirkungsanalyse. Alles davon gehört in den Prüflauf.
+### 7.1 Fähigkeiten
 
-**`allowed_paths` entfällt vollständig** — auch als „Policy-Lint". Es ist unter zwei Namen zweimal gescheitert. Das Acceptance Bundle und die VM-Grenze machen es überflüssig, und ein Lint, der wie eine Grenze klingt, wird wie eine benutzt.
+| Fähigkeit | Bedeutung |
+|---|---|
+| `no_network` | Kein Netzzugriff, kein DNS aus dem Worker |
+| `fs_confinement` | Lesen und Schreiben nur im Arbeitsraum; kein Zugriff auf `$HOME`, Secrets, fremde Pfade |
+| `cpu_limit` | Durchgesetzte CPU-Obergrenze **für den gesamten Prozessbaum** |
+| `mem_limit` | Durchgesetzte Speichergrenze — **Verhinderung, nicht Erkennung** |
+| `pid_limit` | Durchgesetzte Prozessobergrenze |
+| `disk_quota` | Durchgesetzte Obergrenze für **die Summe** erzeugter Daten |
+| `tree_kill` | Zuverlässiges Töten des gesamten Prozessbaums |
+| `package_network` | Netz ausschließlich zu einem Paket-Spiegel mit Allowlist |
 
----
+### 7.2 Die Regel
 
-## 6. Grenzen — aus der Policy, nicht aus dem Auftrag
+> **Ein Backend darf nur die Fähigkeiten behaupten, die seine Canaries beweisen.**
+> **Ein Auftrag, der eine nicht bewiesene Fähigkeit braucht, wird abgelehnt — nicht ausgeführt.**
 
-Die Grenzen stehen in der **Launcher-Policy**. Ein Work Order darf **engere** Grenzen erbitten, niemals lockerere setzen. Revision 2 ließ den untrusted Operator seine eigene Käfiggröße wählen.
+Jede Fähigkeit hat genau einen Canary mit **technischem** Fehlersignal. Die Canary-Suite läuft bei jedem Supervisor-Start und ist fail-closed: kippt ein Canary, verliert das Backend die Fähigkeit sofort, und Aufträge, die sie brauchen, werden abgelehnt.
 
-CPU · RAM · PIDs · Disk · Laufzeit · Patchgröße · Envelope-Größe · Modellaufrufe.
+### 7.3 Backend `macos-seatbelt` — Prototyp, bekannte Grenzen
 
-Überschreitung oder fehlende Evidenz: **reject und VM-Zerstörung.**
+Aufbau: `sudo -u worker env -i sandbox-exec -f profile.sb /usr/bin/python3 job.py`, eine NOPASSWD-sudoers-Zeile, eigener unprivilegierter Benutzer, `env -i`, `rlimits` im `preexec`, RSS-Watchdog im Supervisor.
 
-**Neustarts entfallen als Konzept.** Läufe sind wegwerfbar und einmalig. Ein gescheiterter Lauf wird abgelehnt, nicht wiederholt.
-
----
-
-## 7. Output Envelope
-
-Genau eine begrenzte Struktur verlässt den Baulauf: `patch` · `exit_status` · `stdout`/`stderr` (untrusted, größenbegrenzt, markiert abgeschnitten) · `run_id`.
-
-Image- und Werkzeug-Digests stehen **nicht** darin — der Launcher misst sie selbst (§4). Alles außerhalb der Struktur wird verworfen; ein Lauf, der mehr zurückgeben will, ist rejected.
-
-Das Ergebnis des Prüflaufs liegt an einem Pfad, den **nur der Supervisor-Benutzer** beschreiben kann.
-
----
-
-## 8. Acceptance Bundle
-
-Vorbestehende Repo-Tests sind **keine vertrauenswürdigen Orakel.** Ein Patch kann eine Testdatei unberührt lassen und sie trotzdem neutralisieren — über einen Helper, den sie sourced, über Konfiguration, über eine Abhängigkeit, über Fixtures.
-
-Das Bundle ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**, selbstgenügsam samt Helfern und Fixtures, schreibgeschützt eingehängt **nach** dem Anwenden des Patches, Digest vom Launcher erfasst. Repo-Tests dürfen ergänzend laufen, nie allein entscheiden.
-
----
-
-## 9. Broker
-
-Auf dem Host, **in der TCB**, klein genug zum Ganzlesen. Typisiertes Protokoll · Größenlimits · Aufrufzähler · kurzlebiges Credential · **Append-only-Protokoll jedes Anfrage- und Antwort-Digests**.
-
-Der Baulauf hat kein Internet, kein DNS, keinen Schlüssel. Er sieht das Credential nie.
-
-**SHOULD:** Redaktionsdurchlauf, der bekannte Geheimnisformate vor dem Weiterleiten entfernt. Bestenfalls-Maßnahme, ausdrücklich als solche dokumentiert.
-
-**Restgefahr:** Der Modellanbieter sieht, was der Broker sendet. Keine Lücke im Entwurf, sondern die Natur eines externen Modells.
-
----
-
-## 10. Substrat — entschieden, gemessen
-
-**Kein Docker, keine VM, keine externen Abhängigkeiten.** Reines Python (Standardbibliothek) plus macOS-Seatbelt.
-
-### Gemessen auf dieser Maschine
+**Auf dieser Maschine gemessen:**
 
 | Prüfung | Ergebnis |
 |---|---|
-| `sandbox-exec`, Netz | gesperrt |
-| `sandbox-exec`, Schreiben außerhalb | `Operation not permitted` |
-| `sandbox-exec`, Secrets lesen — Profil mit `(allow file-read*)` | **gelungen — Allow-by-default ist Theater** |
-| `sandbox-exec`, Secrets und `$HOME` — Deny-by-default-Profil | gesperrt |
+| Netz aus dem Sandkasten | gesperrt |
+| Schreiben außerhalb | `Operation not permitted` |
+| Secrets lesen, Profil mit `(allow file-read*)` | **gelungen — Allow-by-default ist Theater** |
+| Secrets und `$HOME`, Deny-by-default-Profil | gesperrt |
 | Deny-by-default-Profil, legitime Arbeit | **ebenfalls gesperrt** — Systempfade fehlten |
 | `RLIMIT_CPU` | greift, Prozess getötet |
 | `RLIMIT_AS` (Speicher) | **`ValueError` — auf macOS nicht setzbar** |
 
-### Aufbau
+**Behauptbare Fähigkeiten:** `no_network`, `fs_confinement`, `pid_limit`, `tree_kill` — jeweils nach bestandenem Canary.
 
-```
-sudo -u builder env -i sandbox-exec -f profile.sb /usr/bin/python3 job.py
-```
+**Nicht behauptbar:**
 
-- **Eine** NOPASSWD-sudoers-Zeile, sonst nichts.
-- `env -i` — die Umgebung des Owners überquert die Grenze nie.
-- Eigener unprivilegierter Benutzer: DAC greift auch dann noch, wenn das Profil leckt. Genau das ist heute passiert.
-- `preexec` setzt `RLIMIT_CPU`, `RLIMIT_NPROC`, `RLIMIT_FSIZE` — alle drei nachweislich wirksam.
+- **`mem_limit`** — `RLIMIT_AS` ist auf macOS nicht setzbar; der Watchdog **erkennt**, er verhindert nicht. Erkennung ist keine Grenze.
+- **`disk_quota`** — `RLIMIT_FSIZE` begrenzt eine **einzelne Datei**, nicht die Summe. Zehntausend Dateien unter dem Limit füllen die Platte.
+- **`cpu_limit`** — `RLIMIT_CPU` gilt **pro Prozess**, nicht für den Baum. Ein Prozessbaum umgeht das Budget durch Aufteilen.
+- **`package_network`** — nicht gebaut.
 
-### Speicher: erkennen, nicht verhindern
+**Folge:** Auf diesem Backend sind Aufträge, die verlässliche Speicher-, Platten- oder Baum-CPU-Grenzen brauchen, **nicht ausführbar**. Das ist keine Schwäche der Dokumentation, sondern ihre Aufgabe.
 
-Es gibt auf macOS **keine verlässliche, öffentlich unterstützte Speichergrenze pro Prozess** ohne VM. `RLIMIT_AS` ist kaputt, gemessen. Die echten Mechanismen sind private APIs.
+**Fäulnis:** `sandbox-exec` ist deprecated und SBPL undokumentiert. Ein OS-Update bricht das Profil entweder laut (sicher) oder verschiebt Semantik still (gefährlich). Der Fäulnisvektor ist **Druck, nicht Größe**: ein breites `allow`, nachts eingefügt, um zu entsperren — exakt so entstand das undichte Profil in der Messung oben. **Keine `allow`-Zeile ohne gepaarten Negativtest.** Fehlende Rechte aus dem Sandbox-Log ableiten, nie breit raten.
 
-Stattdessen: Watchdog im Elternprozess, RSS jede Sekunde pollen, bei Schwellwert töten. Das Zeitfenster einer Abfrage bleibt offen; die Folge ist Swap-Druck, kein Datenverlust. **Als Einschränkung benannt, nicht als Lösung verkauft.**
+### 7.4 Backend `linux-namespaces` — später, stärker
 
-### Das Profil und seine Fäulnis
+cgroups v2 liefern durchgesetzte Speicher-, PID-, CPU- und IO-Grenzen für den gesamten Baum; Netz-Namespaces liefern echtes `no_network`. Ein solches Backend kann alle Fähigkeiten aus §7.1 behaupten, **wenn seine Canaries sie beweisen.**
 
-40–60 Zeilen SBPL, Deny-by-default, Lese- und Ausführrechte auf SIP-geschützte Systempfade (`/usr`, `/bin`, `/System`, dyld-Cache, `/dev/null`, `/dev/urandom`), Schreiben nur im Arbeitsverzeichnis, `network*` verboten.
+**Der Execution Core ändert sich dafür nicht.** Das ist der Zweck des Vertrags.
 
-**Der Fäulnisvektor ist Druck, nicht Größe.** Ein Auftrag scheitert, jemand fügt nachts ein breites `allow` ein, um zu entsperren, und es kommt nie wieder heraus. Exakt so ist das undichte Profil in der Messung oben entstanden.
+---
 
-Disziplin, ohne die es still verrottet:
+## 8. Grenzen
 
-1. Profil in Versionskontrolle.
-2. Die vier Handproben werden eine **dauerhafte Canary-Suite**: Netz muss scheitern, ein platziertes Fake-Secret muss unlesbar sein, Schreiben außerhalb muss scheitern, Arbeit innerhalb muss gelingen. Lauf bei **jedem** Supervisor-Start, fail-closed.
-3. **Keine `allow`-Zeile ohne gepaarten Negativtest**, der zeigt, was sie weiterhin verbietet.
-4. Fehlende Rechte aus dem tatsächlichen Sandbox-Verstoß im Unified Log ableiten (`log show --predicate 'subsystem == "com.apple.sandbox"'`), niemals breit raten.
+Aus der **Supervisor-Policy**, nicht aus dem Auftrag. Ein Auftrag darf **engere** Grenzen erbitten, niemals lockerere.
 
-### Was schlecht altert
+CPU · Speicher · PIDs · Disk · Laufzeit · Patchgröße · Ergebnisgröße · Modellaufrufe.
 
-- `sandbox-exec` ist deprecated und SBPL undokumentiert. Ein OS-Update kann das Profil laut brechen (ärgerlich, sicher) oder Semantik ändern, sodass ein `allow` breiter wird als gemeint (still, gefährlich). **Nur die Canaries merken das.**
-- Profil-Aufweichung unter Lieferdruck, eine Zeile nach der anderen.
-- Der Supervisor wächst sich einen Bequemlichkeitspfad, der Builder-Ausgabe im Prozess ausführt — und baut §0 leise wieder ab.
+Jede Grenze ist an eine Fähigkeit aus §7.1 gebunden. **Eine Grenze ohne bewiesene Fähigkeit ist keine Grenze** — der Supervisor lehnt den Auftrag ab, statt ihn ungeschützt auszuführen.
 
-### Was das nicht ist
+Überschreitung oder fehlende Evidenz: **reject, Arbeitsraum zerstören.** Läufe sind wegwerfbar und einmalig; ein gescheiterter Lauf wird abgelehnt, nicht wiederholt.
 
-Keine Grenze gegen einen Kernel-Exploit. Speicher ist Erkennung, nicht Verhinderung. **Für eine Maschine und einen Owner ist das eine vertretbare und ehrliche Position — vorausgesetzt, die Canaries laufen für immer.**
+---
 
-### Offene Entwurfsfrage
+## 9. Ergebnisformat
 
-Ein sandgekasteter Prozess hat kein Netz. Der Builder **ist** aber ein Modellaufruf. Zwei mögliche Formen, und diese Entscheidung ist **nicht getroffen**:
+Genau eine begrenzte Struktur verlässt den Bau-Lauf: `patch` (opake Bytes) · `exit_status` · `stdout`/`stderr` (untrusted, größenbegrenzt, markiert abgeschnitten) · `run_id`.
 
-- **(a)** Der Modell-Client läuft im Sandkasten, das Credential bleibt draußen, ein host-seitiger Proxy vermittelt. Der Broker aus §9 bleibt.
-- **(b)** Der Supervisor ruft das Modell selbst auf, empfängt den Vorschlag als **Daten**, und der Sandkasten dient nur dem **Ausführen und Prüfen**. Der Broker entfällt als Komponente.
+Digests und Messwerte stehen **nicht** darin — der Supervisor misst sie selbst (§6). Alles außerhalb der Struktur wird verworfen.
 
-**(b)** ist kleiner und passt zu §0 — der Supervisor behandelt Modellausgabe als Daten. **(a)** ist nötig, sobald der Bau selbst Netz braucht (`pip install`, `npm install`). Fable hat unabhängig davon vorhergesagt, dass die Kein-Netz-Regel genau daran zuerst bricht.
+---
 
-Das ist die eine Frage, die vor S1 entschieden werden muss.
+## 10. Acceptance Bundle
+
+Vorbestehende Repo-Tests sind **keine vertrauenswürdigen Orakel.** Ein Patch kann eine Testdatei unberührt lassen und sie über einen Helper, Konfiguration, eine Abhängigkeit oder Fixtures neutralisieren.
+
+Das Bundle ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**, selbstgenügsam, **betritt den Bau-Lauf nie**, wird im Prüflauf schreibgeschützt bereitgestellt, Digest vom Supervisor erfasst. Repo-Tests dürfen ergänzend laufen, nie allein entscheiden.
+
+---
 
 ## 11. Go/No-Go vor S1
 
-Jedes Kriterium ist durch **Lesen** prüfbar, nicht durch Vertrauen in einen Lauf.
+Jedes Kriterium ist durch **Lesen** prüfbar.
 
-1. §2.1 enthält die vollständige TCB und ist von jemand anderem als dem Operator geprüft — mit datierter schriftlicher Freigabe des Owners.
-2. Das Work-Order-Schema kann gelockerte Grenzen **strukturell nicht ausdrücken**. Dazu eine Datei bösartiger Testvektoren, die der Validator zurückweisen muss. Der Validator ist rein, deterministisch, ohne Shell-Aufruf.
-3. Die Evidenzliste aus §4 liegt als feste Checkliste vor, mit „fehlend = reject" **pro Punkt**.
-4. Der Supervisor/Nutzlast-Split ist spezifiziert: welcher Benutzer was ausführt, welche Pfade jeder beschreiben darf, wo das Ergebnis liegt. Eine Seite.
-5. Ein Substrat-Kandidat ist gewählt, und **jede** Eigenschaft aus §10 ist auf den konkreten durchsetzenden Mechanismus und den beweisenden Canary abgebildet. Eine Eigenschaft mit „angenommen" ist ein No-Go.
-6. Die Canary-Liste enthält zusätzlich: Ergebnisdatei aus der Nutzlast fälschen · Envelope-Größe überschreiten · Bundle-Mount manipulieren · einen zweiten Ausgabekanal öffnen. Jeder Canary hat ein **technisches** Fehlersignal, kein beobachtendes.
-7. Die API-Schlüssel sind entweder rotiert, **oder die Risikoannahme aus §13 ist für die Bauphase neu und schriftlich bestätigt** — die S1-Canaries werden absichtlich versuchen, Geheimnisse zu lesen.
-8. Es existiert kein Code, der nicht vertrauenswürdige Bytes auf dem Host über Hash, Größe, Speichern und Weiterreichen hinaus interpretiert.
+1. §3.1 vollständig, geprüft von jemand anderem als dem Operator, datierte Freigabe des Owners.
+2. Das Auftragsschema kann gelockerte Grenzen **strukturell nicht ausdrücken**; eine Datei bösartiger Testvektoren, die der Validator zurückweisen muss. Validator rein, deterministisch, ohne Shell-Aufruf.
+3. Die Messliste aus §6 liegt als feste Checkliste vor, „fehlend = reject" pro Punkt.
+4. **Der Fähigkeitsvertrag aus §7.1 ist festgeschrieben, und für jede Fähigkeit existiert genau ein Canary mit technischem Fehlersignal.**
+5. **Das gewählte Backend behauptet keine Fähigkeit, deren Canary nicht besteht.** Eine Fähigkeit mit „angenommen" ist ein No-Go.
+6. Der Supervisor **lehnt nachweislich ab**, wenn ein Auftrag eine nicht bewiesene Fähigkeit braucht — mit Testvektor.
+7. Die Parsing-Regel aus §5 ist implementiert: Bytelimit vor Lesen, kanonisches JSON gegen festes Schema, kein `pickle`, kein YAML, keine Archive.
+8. Die API-Schlüssel sind entweder rotiert **oder die Risikoannahme aus §13 ist für die Bauphase neu und schriftlich bestätigt** — die S1-Canaries versuchen absichtlich, Geheimnisse zu lesen.
 
-Fällt eines davon durch: **No-Go, erst das Dokument reparieren.** Prosa zu korrigieren ist billiger als einen laufenden Käfig.
+Fällt eines durch: **No-Go, erst das Dokument reparieren.**
 
 ---
 
@@ -268,84 +285,57 @@ Fällt eines davon durch: **No-Go, erst das Dokument reparieren.** Prosa zu korr
 
 | | Inhalt |
 |---|---|
-| **S0** | dieses Dokument, geprüft, Go/No-Go erfüllt |
-| **S1** | gehärtete wegwerfbare VM, Escape- und Quota-Canaries — **als dauerhafte Regressionsprüfung**, nicht als einmaliges Tor |
-| **S2** | netzloser Baulauf plus Host-Broker |
-| **S3** | unveränderliches Acceptance Bundle, Prüflauf mit Supervisor/Nutzlast-Split |
-| **S4** | Ende zu Ende mit absichtlich bösartigem Fake, der jeden Canary in einem Lauf versucht |
-| **S5** | echtes Modell und Dispatcher |
+| **S0** | dieses Dokument als *Proposed* — ein Vertrag, keine bewiesene Sicherheitsarchitektur |
+| **S1** | Spike: Backend `macos-seatbelt` plus vollständige Canary-Suite, **mit absichtlich bösartigem Fake-Angreifer**, kein echtes Modell |
+| **S2** | Supervisor: Auftragsvalidierung, Fähigkeitsprüfung, Ablehnung nicht abgedeckter Aufträge, Messung nach §6 |
+| **S3** | Prüflauf mit unveränderlichem Acceptance Bundle |
+| **S4** | Ende zu Ende mit bösartigem Fake, der jeden Canary in einem Lauf versucht |
+| **S5** | echtes Modell |
 
 **Kein echtes Modell vor bestandener S1–S4-Abnahme.**
 
-**LATER, außerhalb des Execution Core:** Zweitmodell- oder Mensch-Review von Work Orders (die `wo-98-3`-Klasse) · reproduzierbare Image-Builds; vorerst genügt ein gepinnter Digest eines von Hand gebauten Images.
+**LATER:** Backend `linux-namespaces` · `package_network` · Zweitmodell- oder Mensch-Review von Aufträgen (die `wo-98-3`-Klasse).
 
 ---
 
 ## 13. Vom Owner angenommenes Risiko
 
-Der Owner hat die Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-07-27).
+Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-07-27).
 
-- `~/.config/secrets/env` (chmod 600) war für builder-geschriebenen Code lesbar, der dreimal mit Owner-Rechten ausgeführt wurde.
-- Ob gelesen wurde, ist **unbekannt und nicht feststellbar** — die Ausgabe wurde nach `/dev/null` verworfen.
-- Host-Prüfung ohne Auffälligkeiten: keine neuen LaunchAgents, kein crontab, `~/.ssh` unberührt, Shell-Konfiguration seit dem 26.7. unverändert.
-- Netzverkehr wurde nicht aufgezeichnet und ist nicht rekonstruierbar.
+- `~/.config/secrets/env` war für Code lesbar, der dreimal mit Owner-Rechten ausgeführt wurde.
+- Ob gelesen wurde, ist **nicht mehr feststellbar** — die Ausgabe wurde verworfen.
+- Host-Prüfung ohne Auffälligkeiten: keine neuen LaunchAgents, kein crontab, `~/.ssh` unberührt.
+- Netzverkehr nicht aufgezeichnet, nicht rekonstruierbar.
 
-**Nicht widerlegt, sondern angenommen.** Datiert und zurechenbar.
+**Erledigt 2026-07-27:** `~/.config` und `~/.config/secrets` waren `755`, nur die Datei `600`. Jetzt `700`. Rückgängig mit `chmod 755 ~/.config/secrets`.
 
-**Erledigt am 2026-07-27:** `~/.config` und `~/.config/secrets` waren `755` — nur die Datei selbst `600`. Ein separater `builder`-Benutzer hätte das Verzeichnis betreten und auflisten können. Jetzt `700`. Rückgängig mit `chmod 755 ~/.config/secrets`.
-
-**Offen für S1:** Die Canaries werden absichtlich versuchen, diese Datei zu lesen. Die Annahme gilt für die Vergangenheit; für die Bauphase braucht es eine neue Entscheidung (§11.7).
+**Nicht widerlegt, sondern angenommen.** Offen für S1: die Canaries werden absichtlich versuchen, diese Datei zu lesen (§11.8).
 
 ---
 
----
+## 14. Was Revision 4 falsch hatte
 
-## 16. Kosten und Zeit
+- **VM und Seatbelt gleichzeitig.** §10 entschied „keine VM", TCB, Diagramm, Messmodell und Roadmap sprachen weiter von Hypervisor und VM-Zerstörung. Ein Abschnitt wurde gepatcht statt des Dokuments.
+- **Seatbelt als entschiedenes Fundament**, obwohl es drei der geforderten harten Grenzen nachweislich nicht liefert. Jetzt ein **Backend mit benannten Grenzen** unter einem portablen Vertrag.
+- **„Der Host interpretiert nichts"** — unmöglich und im Widerspruch zu §0. Ersetzt durch eine positive Regel (§5).
+- **Der Agentenfluss blieb offen.** Jetzt entschieden (§2): Modell außerhalb, Antworten sind Daten, Broker entfällt.
+- **`allowed_paths`** in jeder Form gestrichen — unter zwei Namen zweimal gescheitert.
 
-Bis Revision 3 hat niemand das geprüft. Der Betrieb am 2026-07-27 lief Stunden für vier Aufgaben.
+## 15. Kosten und Zeit
 
-### Wohin es tatsächlich geht
-
-**Geld:** in **Wiederholungen mit wachsendem Kontext.** Jeder Fehlversuch sendet das größer gewordene Transcript erneut, die Kosten steigen also überlinear mit der Versuchszahl — und ein Frontier-Modell in der inneren Schleife multipliziert das.
-
-**Zeit:** in **Gates × Versuche.** Sechs Minuten pro vollem Gate sind einmal in Ordnung und ruinös, wenn jede Iteration sie bezahlt. Stundenlange Läufe sind fast immer Versuche mal Gate, nicht Nachdenken.
-
-Beleg aus dem Betrieb: elf Dispatches, jeder mit gewachsenem Kontext, mehrere volle Gate-Läufe je Aufgabe.
-
-### Routing-Leiter
+**Geld** geht in Wiederholungen mit **wachsendem Kontext** — überlinear zur Versuchszahl, und ein Frontier-Modell in der inneren Schleife multipliziert es. **Zeit** geht in **Gates × Versuche**.
 
 | Stufe | Wofür | Regel |
 |---|---|---|
-| **Flash** | erster Versuch jedes gut spezifizierten Auftrags, mechanische Änderungen, Zusammenfassungen | **Kontext pro Versuch zurücksetzen**, nicht anhäufen |
-| **Pro** | Eskalation nach zwei Flash-Fehlschlägen; Fehlersuche mit echter Fehlerausgabe in der Hand | |
-| **Frontier-Operator** | Aufträge schreiben und zerlegen; alles prüfen, was Sandkasten-Profil, sudoers-Zeile oder Supervisor berührt | **niemals in der inneren Schleife** |
-| **niemals Modellarbeit** | Verifikation (Tests und Canaries sind deterministische Skripte) · die Routing-Entscheidung selbst · Umgang mit Geheimnissen · alles, was der vertraute Prozess ausführt | |
+| **Flash** | erster Versuch jedes gut spezifizierten Auftrags, mechanische Änderungen | **Kontext pro Versuch zurücksetzen** |
+| **Pro** | Eskalation nach zwei Flash-Fehlschlägen; Fehlersuche mit echter Ausgabe | |
+| **Frontier** | Aufträge schreiben und zerlegen; alles prüfen, was Backend, Profil, sudoers oder Supervisor berührt | **nie in der inneren Schleife** |
+| **niemals Modell** | Verifikation · Routing-Entscheidung · Geheimnisse · alles, was die TCB ausführt | |
 
-### Vor-Gate und Versuchsgrenzen
+**Schnelles Vor-Gate** (Sekunden) bei jeder Iteration, **volles Gate** nur auf dem Abgabekandidaten. Drei Versuche pro Stufe, dann eskalieren, dann anhalten.
 
-- **Schnelles Vor-Gate** bei jeder Iteration: Sekunden, nicht Minuten — Syntax, gezielte Tests, Canaries.
-- **Volles Gate** nur auf dem Kandidaten für die Abgabe.
-- **Drei Versuche pro Stufe**, dann eskalieren, dann anhalten und vorlegen. Unbegrenzte Schleifen sind der Ort, an dem beide Budgets sterben.
+## 16. Was bewusst fehlt
 
----
+**Ein Zeitplan.** Jede Schicht hat beim ersten echten Kontakt einen Defekt offenbart.
 
-## 14. Was gestrichen wurde
-
-Gegenüber Revision 2 entfernt, weil Zeremonie oder falsch benannt:
-
-- **gVisor** als Kandidat — falsche Schicht, importiert stille Fehler
-- **Die A/B-Asymmetrie** — ein Image, ein Launcher-Pfad, zwei Läufe mit anderen Eingaben
-- **`allowed_paths` in jeder Form**, auch als Lint
-- **Neustarts** als Konzept
-- **Werkzeugdiskussion in §10** über „Kandidat, per Canary zu prüfen" hinaus
-- **„Quarantäne"** der `operator/run.sh`-Maschinerie — es ist Löschung, nicht Quarantäne
-
-Zusätzlich in Revision 4 gestrichen:
-
-- **VM- und Container-Maschinerie** — Docker ist auf dieser Maschine ausgeschlossen, und eine selbstverwaltete VM war die überbaute Antwort auf eine gemessene Bedrohung
-- **Der Broker als eigene Komponente** — vorbehaltlich der offenen Frage in §10; bei Form (b) entfällt er
-- **Der Supervisor/Nutzlast-Split als VM-internes Konstrukt** — er wird durch zwei getrennte sandgekastete Aufrufe erreicht, deren Ergebnisse der Supervisor von außen liest
-
-## 15. Was bewusst fehlt
-
-**Ein Zeitplan.** Jede Schicht hat beim ersten echten Kontakt einen Defekt offenbart. Ein Datum wäre eine Behauptung über Arbeit, die niemand gesehen hat.
+**Ein Sicherheitsversprechen.** Dieses Dokument ist ein *Proposed ADR*: ein Vertrag darüber, welche Fähigkeiten nachgewiesen werden müssen. Bewiesen ist nach S1 genau das, was die Canaries zeigen — und nicht mehr.
