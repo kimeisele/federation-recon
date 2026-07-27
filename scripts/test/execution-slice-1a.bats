@@ -251,3 +251,164 @@ print(d.get('builder_claim_contradicted', 'absent'))
   [ "$VERDICT1" = "accepted" ]
   [ "$VERDICT2" = "accepted" ]
 }
+
+# ---------------------------------------------------------------------------
+# 8. WORK ORDER REACHES THE BUILDER — a builder that reads $WORK_ORDER,
+#    parses it with python3, and writes the issue number into a file under
+#    the worktree. Assert: the run is accepted, and the file contains the
+#    issue number from the work order.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: WORK ORDER REACHES THE BUILDER" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+
+  # Builder that reads $WORK_ORDER from the environment
+  BUILDER_SCRIPT="$WORKDIR/builder.sh"
+  cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
+#!/usr/bin/env bash
+set -o nounset
+WT="${1:?}"
+
+mkdir -p "$WT/operator"
+echo "marker" >> "$WT/operator/.fake-marker"
+
+ISSUE=$(python3 -c "import json; print(json.load(open('$WORK_ORDER'))['issue'])")
+echo "$ISSUE" > "$WT/operator/issue.txt"
+
+python3 -c "
+import json
+print(json.dumps({
+    'outcome': 'completed',
+    'files_changed': ['operator/.fake-marker', 'operator/issue.txt'],
+    'work_order_issue': $ISSUE
+}))
+"
+exit 0
+BUILDER_EOF
+  chmod +x "$BUILDER_SCRIPT"
+
+  WO="$WORKDIR/wo.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-8',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$BUILDER_SCRIPT'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-8/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "accepted" ]
+
+  BUILDER_STDOUT="$RUN_ROOT/wo-1-8/builder_stdout.txt"
+  REPORTED_ISSUE=$(python3 -c "import json; print(json.load(open('$BUILDER_STDOUT'))['work_order_issue'])")
+  [ "$REPORTED_ISSUE" = "1" ]
+
+  CHANGED=$(python3 -c "import json; print(json.load(open('$RESULT'))['changed_paths'])")
+  [[ "$CHANGED" == *"operator/issue.txt"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# 9. WORK ORDER IS THE VALIDATED ONE — invoke run.sh with a work order, and
+#    have the builder record the value of $WORK_ORDER. Assert that the
+#    recorded path exists and that its content parses as JSON with the same
+#    work_order_id as the input.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: WORK ORDER IS THE VALIDATED ONE" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+
+  # Builder script goes in WORKDIR — only needed until run.sh invokes it
+  BUILDER_SCRIPT="$WORKDIR/builder.sh"
+  cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
+#!/usr/bin/env bash
+set -o nounset
+WT="${1:?}"
+
+mkdir -p "$WT/operator"
+echo "marker" >> "$WT/operator/.fake-marker"
+
+WO_PATH="$WORK_ORDER"
+echo "$WO_PATH" > "$WT/operator/wo_path.txt"
+
+python3 -c "
+import json
+print(json.dumps({
+    'outcome': 'completed',
+    'files_changed': ['operator/.fake-marker', 'operator/wo_path.txt'],
+    'work_order_path': '$WO_PATH'
+}))
+"
+exit 0
+BUILDER_EOF
+  chmod +x "$BUILDER_SCRIPT"
+
+  # Work order goes under RUN_ROOT so it survives the RETURN trap
+  WO="$RUN_ROOT/wo-1-9-workorder.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-9',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$BUILDER_SCRIPT'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-9/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "accepted" ]
+
+  BUILDER_STDOUT="$RUN_ROOT/wo-1-9/builder_stdout.txt"
+  RECORDED_PATH=$(python3 -c "import json; print(json.load(open('$BUILDER_STDOUT'))['work_order_path'])")
+
+  # The recorded path must exist
+  [ -f "$RECORDED_PATH" ]
+
+  # Its content must parse as JSON with the same work_order_id
+  RECORDED_ID=$(python3 -c "import json; print(json.load(open('$RECORDED_PATH'))['work_order_id'])")
+  [ "$RECORDED_ID" = "wo-1-9" ]
+}
+
+# ---------------------------------------------------------------------------
+# 10. NO LEAK — after run.sh finishes, WORK_ORDER must not be set in the
+#     calling shell. Assert with a subshell check.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: NO LEAK — WORK_ORDER not set after run.sh" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" EXIT
+
+  WO="$WORKDIR/wo-noleak.json"
+  _wo "$WO" "wo-1-10" 1 '[]' '["true"]'
+
+  FAKE_TOUCH_FILE=operator/.fake-marker \
+  FAKE_OUTCOME=completed \
+  FAKE_EXIT=0 \
+    run bash "$RUNNER" "$WO"
+
+  [ "$status" -eq 0 ]
+
+  # WORK_ORDER must not leak into the calling shell
+  [ -z "${WORK_ORDER:-}" ]
+}
