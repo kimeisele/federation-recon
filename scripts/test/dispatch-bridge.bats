@@ -135,9 +135,16 @@ _stub_heartbeat() {
 
 @test "dispatch-bridge: END TO END — accepted when everything is clean" {
   STUB="$(_stub_heartbeat "ACTION: BUILD issue #0")"
+
+  # Stub the recorder so we never touch the real operator/.runtime/state.json.
+  RECORDER_LOG="${RUN_ROOT}/recorder.log"
+  HEARTBEAT_RECORD_CMD="echo ok >> ${RECORDER_LOG}" \
   HEARTBEAT_CMD="$STUB" run bash "$DISPATCH"
 
   [ "$status" -eq 0 ]
+
+  # Recorder must have been invoked exactly once.
+  [ "$(wc -l < "$RECORDER_LOG" | tr -d ' ')" -eq 1 ]
 
   # Find result.json — it's under a wo-0-* directory
   RESULT="$(find "$RUN_ROOT" -name "result.json" | head -1)"
@@ -174,6 +181,10 @@ with open('$_TMP_TEMPLATE', 'w') as f:
 "
 
   STUB="$(_stub_heartbeat "ACTION: BUILD issue #999")"
+
+  # Stub the recorder so we never touch the real operator/.runtime/state.json.
+  RECORDER_LOG="${RUN_ROOT}/recorder.log"
+  HEARTBEAT_RECORD_CMD="echo ok >> ${RECORDER_LOG}" \
   HEARTBEAT_CMD="$STUB" run bash "$DISPATCH"
 
   # Clean up immediately after dispatch runs
@@ -181,6 +192,10 @@ with open('$_TMP_TEMPLATE', 'w') as f:
   _TMP_TEMPLATE=""
 
   [ "$status" -ne 0 ]
+
+  # Recorder must have been invoked exactly once — dispatch.sh step 7a runs
+  # before the verdict check, so even a rejected run triggers the recorder.
+  [ "$(wc -l < "$RECORDER_LOG" | tr -d ' ')" -eq 1 ]
 
   RESULT="$(find "$RUN_ROOT" -name "result.json" | head -1)"
   [ -n "$RESULT" ]

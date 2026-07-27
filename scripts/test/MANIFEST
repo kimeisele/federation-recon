@@ -5,6 +5,7 @@
 # Enforced by scripts/ci-checks.sh, the required 'invariants' check.
 
 boundary-agreement.bats
+budget-cap.bats
 budget.bats
 ci-checks-composer.bats
 clean-procedure-artifacts.bats

@@ -5,15 +5,16 @@
 #   bash operator/dispatch.sh [--dry-run]
 #
 # Environment:
-#   HEARTBEAT_CMD   override the heartbeat command (default: bash operator/heartbeat.sh --dry-run)
-#   RUN_ROOT        run-directory root (default: operator/.runs, same as run.sh)
+#   HEARTBEAT_CMD         override the heartbeat command (default: bash operator/heartbeat.sh --dry-run)
+#   HEARTBEAT_RECORD_CMD  override the expert-call recording command (default: bash operator/heartbeat.sh --record-expert-call)
+#   RUN_ROOT              run-directory root (default: operator/.runs, same as run.sh)
 #
 # Exit codes:
-#   0 — nothing to execute (non-BUILD action) or run completed with verdict "accepted"
-#   1 — usage / unexpected error
+#   0 — nothing to execute (non-BUILD, non-STOP action) or run completed with verdict "accepted"
+#   1 — usage / unexpected error / FAILED to record expert call
 #   3 — BUILD action but no work-order template exists
 #   4 — work order failed schema validation
-#   5 — run completed with verdict "rejected"
+#   5 — STOP action refused or run completed with verdict "rejected"
 #
 # Boundaries: MUST NOT push, open a PR, merge, or write outside RUN_ROOT.
 set -o errexit -o nounset -o pipefail
@@ -59,8 +60,12 @@ fi
 # Format: "ACTION: <WORD> <rest>"
 ACTION_WORD="$(echo "$ACTION_LINE" | sed 's/^ACTION:[[:space:]]*//' | awk '{print $1}')"
 
-# ---- step 3: non-BUILD actions — exit quietly ----------------------------------
+# ---- step 3: non-BUILD actions ---------------------------------------------------
 if [ "$ACTION_WORD" != "BUILD" ]; then
+  if [ "$ACTION_WORD" = "STOP" ]; then
+    echo "dispatch: refused — $ACTION_LINE"
+    exit 5
+  fi
   echo "dispatch: nothing to execute — decision was $ACTION_LINE"
   exit 0
 fi
@@ -200,6 +205,14 @@ set +o errexit
 bash "$REPO_ROOT/operator/run.sh" "$WO_FILE"
 RUN_EXIT=$?
 set -o errexit
+
+# ---- step 7a: record expert call consumption ----------------------------------
+HEARTBEAT_RECORD_CMD="${HEARTBEAT_RECORD_CMD:-bash $REPO_ROOT/operator/heartbeat.sh --record-expert-call}"
+
+if ! eval "$HEARTBEAT_RECORD_CMD" 2>/dev/null; then
+  echo "dispatch: FAILED to record expert call after a completed run"
+  exit 1
+fi
 
 # Check the result to distinguish accepted from rejected.
 RESULT_FILE="$RUN_ROOT/$WO_ID/result.json"
