@@ -11,6 +11,7 @@
 # Usage:
 #   bash operator/heartbeat.sh [--init-runtime [--force]] [--break-lock]
 #                              [--dry-run] [--state-file PATH]
+#                              [--record-expert-call]
 #
 # Environment:
 #   OPERATOR_STATE_FILE  default runtime state path override
@@ -26,6 +27,7 @@ DRY_RUN=false
 INIT_RUNTIME=false
 FORCE_INIT=false
 BREAK_LOCK=false
+RECORD_EXPERT_CALL=false
 STALE_DAYS_PR=7
 STALE_DAYS_ISSUE=14
 
@@ -33,12 +35,14 @@ usage() {
   cat <<'EOF'
 Usage: bash operator/heartbeat.sh [--init-runtime [--force]] [--break-lock]
                                    [--dry-run] [--state-file PATH]
+                                   [--record-expert-call]
 
   --init-runtime     initialize runtime state from the immutable seed
   --force            with --init-runtime: backup current state, re-init from seed
   --break-lock       remove a stuck lock directory (PID dead, boot-id missing)
   --dry-run          decide without modifying the runtime state file
   --state-file PATH  use an explicit runtime checkpoint path
+  --record-expert-call  increment budget.expert_calls_this_cycle by 1 and exit
 
 Exit status: 0 = success / decision, 1 = local irrecoverable,
              2 = transient / lock contention
@@ -63,6 +67,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --break-lock)
       BREAK_LOCK=true
+      shift
+      ;;
+    --record-expert-call)
+      RECORD_EXPERT_CALL=true
       shift
       ;;
     --dry-run)
@@ -91,8 +99,21 @@ fi
 mode_count=0
 $INIT_RUNTIME && mode_count=$((mode_count + 1))
 $BREAK_LOCK && mode_count=$((mode_count + 1))
+$RECORD_EXPERT_CALL && mode_count=$((mode_count + 1))
 if [ "$mode_count" -gt 1 ]; then
-  die "--init-runtime and --break-lock are mutually exclusive"
+  die "--init-runtime, --break-lock, and --record-expert-call are mutually exclusive"
+fi
+
+if $DRY_RUN; then
+  if $INIT_RUNTIME; then
+    die "--dry-run and --init-runtime are mutually exclusive"
+  fi
+  if $BREAK_LOCK; then
+    die "--dry-run and --break-lock are mutually exclusive"
+  fi
+  if $RECORD_EXPERT_CALL; then
+    die "--dry-run and --record-expert-call are mutually exclusive"
+  fi
 fi
 
 if [ -z "$STATE_FILE" ]; then
@@ -815,6 +836,40 @@ if $INIT_RUNTIME; then
     echo "Runtime state initialized: $STATE_FILE"
     exit 0
   fi
+fi
+
+# ────────────────────────────────────────────────────────────
+#  --record-expert-call mode
+# ────────────────────────────────────────────────────────────
+
+if $RECORD_EXPERT_CALL; then
+  validate_runtime_path "$STATE_FILE" true
+
+  if $DRY_RUN; then
+    die "--record-expert-call is a mutation and cannot run under --dry-run"
+  fi
+
+  acquire_lock "$STATE_FILE"
+  cleanup_tempfiles
+
+  if ! validation_error="$(_python_validate_v2 "$STATE_FILE" 2>&1)"; then
+    die "invalid runtime state: $validation_error"
+  fi
+
+  _phase="$(_python_field "$STATE_FILE" phase)"
+  _cycle="$(_python_field "$STATE_FILE" cycle)"
+  _expert_calls="$(_python_field "$STATE_FILE" budget.expert_calls_this_cycle)"
+  _max_expert="$(_python_field "$STATE_FILE" budget.max_expert_calls)"
+  _last_heartbeat="$(_python_field "$STATE_FILE" last_heartbeat)"
+  _notes="$(_python_field "$STATE_FILE" notes)"
+  _now_iso="${HEARTBEAT_NOW:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+
+  _new_expert_calls=$((_expert_calls + 1))
+  _python_write_state "$STATE_FILE" "$_phase" "$_cycle" "$_new_expert_calls" "$_last_heartbeat" "$_notes" "$_now_iso"
+  _HB_FSYNC_DIR="$(dirname "$STATE_FILE")" _python_fsync_dir || exit 1
+
+  echo "expert calls: $_new_expert_calls/$_max_expert"
+  exit 0
 fi
 
 # ────────────────────────────────────────────────────────────
