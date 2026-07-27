@@ -1,0 +1,9 @@
+{
+  "work_order_id": "wo-98-1",
+  "issue": 98,
+  "base_sha": "70a6ba8d4afc2504ad0a07c67d1a030995223d78",
+  "allowed_paths": ["scripts/"],
+  "forbidden_paths": ["CLAUDE.md", ".github/", "governance/", "docs/", "operator/", "schemas/"],
+  "acceptance_commands": ["bash -n scripts/gate.sh", "bats scripts/test/gate-cleanup.bats"],
+  "builder": "operator/builders/jcode.sh"
+}
