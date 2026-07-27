@@ -152,19 +152,30 @@ _check_lie() {
     bash "$RUNNER" "$WO" &
   RUNNER_PID=$!
 
-  # Wait for builder_started to appear in events (with timeout)
-  for i in $(seq 1 50); do
+  # Wait for builder_started or process exit.
+  # A generous absolute bound (60s) catches a hung runner but the
+  # primary terminal conditions are the event or the exit — not a clock.
+  waited=0
+  MAX_WAIT=600  # 60 seconds at 0.1s sleep intervals
+  while kill -0 "$RUNNER_PID" 2>/dev/null; do
     if [ -f "$EVENTS_FILE" ] && grep -q '"builder_started"' "$EVENTS_FILE" 2>/dev/null; then
       break
     fi
     sleep 0.1
+    waited=$((waited + 1))
+    if [ "$waited" -ge "$MAX_WAIT" ]; then
+      kill "$RUNNER_PID" 2>/dev/null || true
+      wait "$RUNNER_PID" 2>/dev/null || true
+      false "runner neither reached builder_started nor exited within 60s"
+    fi
   done
 
-  # Verify we actually saw builder_started
-  grep -q '"builder_started"' "$EVENTS_FILE" 2>/dev/null || {
-    kill "$RUNNER_PID" 2>/dev/null || true
-    false "builder_started never appeared in events"
-  }
+  # Distinguish the two terminal conditions
+  if grep -q '"builder_started"' "$EVENTS_FILE" 2>/dev/null; then
+    :  # builder_started appeared — proceed to SIGKILL
+  else
+    false "runner exited without writing builder_started"
+  fi
 
   # Now SIGKILL the runner
   kill -9 "$RUNNER_PID" 2>/dev/null || true

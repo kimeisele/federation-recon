@@ -7,6 +7,7 @@
 boundary-agreement.bats
 budget-cap.bats
 budget.bats
+builder-jcode.bats
 ci-checks-composer.bats
 clean-procedure-artifacts.bats
 compose-digest.bats
