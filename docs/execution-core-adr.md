@@ -2,7 +2,7 @@
 
 **Status:** Proposed. Kein bewiesenes Sicherheitsfundament — ein Vertrag, dessen Backends ihre Fähigkeiten erst durch Canaries nachweisen müssen (§7, §11).
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
-**Revision 5.** Vollständige Neufassung, kein Patch. Revision 4 entschied in einem Abschnitt „keine VM" und ließ TCB, Diagramm, Messmodell und Roadmap weiter von Hypervisor und VM-Zerstörung sprechen. Diese Fassung ist in sich konsistent oder sie ist wertlos.
+**Revision 6.** Sechs Abschlussänderungen, kein neuer Entwurf. Revision 5 war die vollständige Neufassung. Revision 4 entschied in einem Abschnitt „keine VM" und ließ TCB, Diagramm, Messmodell und Roadmap weiter von Hypervisor und VM-Zerstörung sprechen. Diese Fassung ist in sich konsistent oder sie ist wertlos.
 
 ---
 
@@ -60,6 +60,8 @@ führt niemals aus (§0)
 ```
 
 **Jeder Werkzeugaufruf und jede Codeausführung findet ausschließlich im isolierten Worker statt.** Der Modell-Client läuft auf dem Host und gehört damit zur TCB.
+
+**Iterationspfad, ausdrücklich:** Größenbegrenzte Worker-Ausgabe darf dem Modell als **untrusted Daten** zurückgegeben werden — niemals ausgeführt. Jeder weitere Werkzeugaufruf ist ein **neuer isolierter Worker-Lauf**. Keine Host-Dateien und keine Geheimnisse gelangen in diesen Kontext.
 
 Folgen dieser Entscheidung:
 
@@ -189,13 +191,17 @@ Nichts Verdikt-Relevantes stammt aus dem Worker.
 | `mem_limit` | Durchgesetzte Speichergrenze — **Verhinderung, nicht Erkennung** |
 | `pid_limit` | Durchgesetzte Prozessobergrenze |
 | `disk_quota` | Durchgesetzte Obergrenze für **die Summe** erzeugter Daten |
-| `tree_kill` | Zuverlässiges Töten des gesamten Prozessbaums |
+| `tree_kill` | Zuverlässiges Töten des gesamten Prozessbaums — **auch eines Kindes, das per `setsid`, Double-Fork und Daemonisierung die ursprüngliche Prozessgruppe verlassen hat.** `kill(-pgid)` allein genügt nicht. Der Canary muss einen echten Ausbruchsversuch enthalten; erst wenn auch dieser Baum vollständig stirbt, darf ein Backend `tree_kill` behaupten |
 | `package_network` | Netz ausschließlich zu einem Paket-Spiegel mit Allowlist |
 
 ### 7.2 Die Regel
 
 > **Ein Backend darf nur die Fähigkeiten behaupten, die seine Canaries beweisen.**
 > **Ein Auftrag, der eine nicht bewiesene Fähigkeit braucht, wird abgelehnt — nicht ausgeführt.**
+
+Die Ablehnungsmeldung nennt **die fehlende Fähigkeit, das Backend und die exakte Policy-Regel**, die ablehnt. Damit führt der legitime Änderungsweg über eine sichtbare Policy-Änderung statt über das Abschalten von Canaries.
+
+**Es gibt kein `--skip-canaries`**, keinen stillen Fallback und kein zwischengespeichertes Ergebnis von gestern.
 
 Jede Fähigkeit hat genau einen Canary mit **technischem** Fehlersignal. Die Canary-Suite läuft bei jedem Supervisor-Start und ist fail-closed: kippt ein Canary, verliert das Backend die Fähigkeit sofort, und Aufträge, die sie brauchen, werden abgelehnt.
 
@@ -244,7 +250,9 @@ CPU · Speicher · PIDs · Disk · Laufzeit · Patchgröße · Ergebnisgröße �
 
 Jede Grenze ist an eine Fähigkeit aus §7.1 gebunden. **Eine Grenze ohne bewiesene Fähigkeit ist keine Grenze** — der Supervisor lehnt den Auftrag ab, statt ihn ungeschützt auszuführen.
 
-Überschreitung oder fehlende Evidenz: **reject, Arbeitsraum zerstören.** Läufe sind wegwerfbar und einmalig; ein gescheiterter Lauf wird abgelehnt, nicht wiederholt.
+Überschreitung oder fehlende Evidenz: **reject, Arbeitsraum zerstören.**
+
+**Ein Lauf wird niemals fortgesetzt oder wiederaufgenommen.** Ein erneuter Versuch ist ein vollständig neuer Lauf: neue `run_id`, neuer Arbeitsraum, frischer Modellkontext. Nichts aus einem abgelehnten Lauf wird übernommen.
 
 ---
 
@@ -260,7 +268,17 @@ Digests und Messwerte stehen **nicht** darin — der Supervisor misst sie selbst
 
 Vorbestehende Repo-Tests sind **keine vertrauenswürdigen Orakel.** Ein Patch kann eine Testdatei unberührt lassen und sie über einen Helper, Konfiguration, eine Abhängigkeit oder Fixtures neutralisieren.
 
-Das Bundle ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**, selbstgenügsam, **betritt den Bau-Lauf nie**, wird im Prüflauf schreibgeschützt bereitgestellt, Digest vom Supervisor erfasst. Repo-Tests dürfen ergänzend laufen, nie allein entscheiden.
+Das Bundle ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**, selbstgenügsam, **betritt den Bau-Lauf nie**, wird im Prüflauf schreibgeschützt bereitgestellt. Repo-Tests dürfen ergänzend laufen, nie allein entscheiden.
+
+**Provenienz, verbindlich:**
+
+- **vor** dem Bau-Lauf erstellt
+- außerhalb des Patch-Baums
+- Digest **vor** dem Lauf gebunden
+- **niemals vom geprüften Builder erzeugt oder verändert**
+- Autor und Freigabe im Run Record dokumentiert
+
+Schreibt der Operator das Bundle selbst, erbt die Abnahme nach §3.3 den Status **Behauptung, nicht Feststellung** — bis das Zweit-Review aus §12 LATER existiert. Das ist die `wo-98-3`-Klasse und muss hier stehen, nicht implizit bleiben.
 
 ---
 
@@ -321,21 +339,10 @@ Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-07-27).
 - **Der Agentenfluss blieb offen.** Jetzt entschieden (§2): Modell außerhalb, Antworten sind Daten, Broker entfällt.
 - **`allowed_paths`** in jeder Form gestrichen — unter zwei Namen zweimal gescheitert.
 
-## 15. Kosten und Zeit
-
-**Geld** geht in Wiederholungen mit **wachsendem Kontext** — überlinear zur Versuchszahl, und ein Frontier-Modell in der inneren Schleife multipliziert es. **Zeit** geht in **Gates × Versuche**.
-
-| Stufe | Wofür | Regel |
-|---|---|---|
-| **Flash** | erster Versuch jedes gut spezifizierten Auftrags, mechanische Änderungen | **Kontext pro Versuch zurücksetzen** |
-| **Pro** | Eskalation nach zwei Flash-Fehlschlägen; Fehlersuche mit echter Ausgabe | |
-| **Frontier** | Aufträge schreiben und zerlegen; alles prüfen, was Backend, Profil, sudoers oder Supervisor berührt | **nie in der inneren Schleife** |
-| **niemals Modell** | Verifikation · Routing-Entscheidung · Geheimnisse · alles, was die TCB ausführt | |
-
-**Schnelles Vor-Gate** (Sekunden) bei jeder Iteration, **volles Gate** nur auf dem Abgabekandidaten. Drei Versuche pro Stufe, dann eskalieren, dann anhalten.
-
-## 16. Was bewusst fehlt
+## 15. Was bewusst fehlt
 
 **Ein Zeitplan.** Jede Schicht hat beim ersten echten Kontakt einen Defekt offenbart.
+
+**Kosten- und Routingregeln.** Sie standen in Revision 5 als §15 hier und gehören nicht in eine Sicherheitsgrenze. Sie ziehen in ein eigenes Operations-Dokument um, dort ergänzt um: maximales Tokenbudget pro Auftrag, maximales Kostenbudget pro Auftrag, maximale Versuche, harter Stop bei Überschreitung.
 
 **Ein Sicherheitsversprechen.** Dieses Dokument ist ein *Proposed ADR*: ein Vertrag darüber, welche Fähigkeiten nachgewiesen werden müssen. Bewiesen ist nach S1 genau das, was die Canaries zeigen — und nicht mehr.
