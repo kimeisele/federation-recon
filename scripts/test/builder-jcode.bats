@@ -136,9 +136,9 @@ with open('$wo_file', 'w') as f:
 
 @test "builder-jcode: PROMPT CARRIES THE CONTRACT — prompt has issue, allowed, forbidden" {
   WO="$WORKDIR/wo.json"
-  _wo "$WO" 42 '["src/", "lib/"]' '["docs/", "governance/"]' '["true"]'
+  _wo "$WO" 42 '["app/", "pkg/"]' '["vendor/", "third_party/"]' '["true"]'
 
-  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" run bash "$BUILDER" "$WT"
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="app/out.txt" run bash "$BUILDER" "$WT"
 
   [ "$status" -eq 0 ]
 
@@ -151,12 +151,16 @@ with open('$wo_file', 'w') as f:
   [[ "$ARGS" == *"#42"* ]]
 
   # Assert allowed_paths entries in prompt
-  [[ "$ARGS" == *"src/"* ]]
-  [[ "$ARGS" == *"lib/"* ]]
+  [[ "$ARGS" == *"app/"* ]]
+  [[ "$ARGS" == *"pkg/"* ]]
 
   # Assert forbidden_paths entries in prompt
-  [[ "$ARGS" == *"docs/"* ]]
-  [[ "$ARGS" == *"governance/"* ]]
+  [[ "$ARGS" == *"vendor/"* ]]
+  [[ "$ARGS" == *"third_party/"* ]]
+
+  # Assert the prohibition itself — a distinctive phrase from the instruction,
+  # so that deleting the sentence while leaving the paths still reddens the test
+  [[ "$ARGS" == *"stop and report failure"* ]]
 }
 
 # ---------------------------------------------------------------------------
