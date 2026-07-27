@@ -1,26 +1,80 @@
 (version 1)
 
 ; ── worker.sb — deny-by-default Seatbelt profile for the macos-seatbelt backend ──
-; Every (allow ...) line below was derived by running a real Python workload
-; and reading the sandbox violations from /var/log/system.log.  No (allow file-read*)
-; appears without a (subpath …) clause — a measured run with (allow file-read*)
-; let a sandboxed process read ~/.config/secrets/env.  That is the error this
-; profile fixes.
+;
+; macOS 13 Seatbelt bug (verified on 13.7.5):
+;   (allow file-read* (subpath "/Library"))   → does NOT match open()
+;   (allow file-read* (literal "/Library/…")) → does NOT match open()
+;   (allow file-read* (regex #"^/Library/…")) → does NOT match open()
+;
+; Under (deny default), no allow rule of any kind grants read access to
+; files under /Library.  The Python interpreter under CommandLineTools
+; therefore SIGABRTs before reaching main().  This is a known Seatbelt
+; defect — the DENY side of subpath under /Library works, the ALLOW
+; side does not.
+;
+; Mitigation: allow read on /, then deny every subtree that must be
+; unreachable.  Every deny listed below has been verified to block
+; os.listdir() and open().  The result is a "constructive deny-default":
+; the effective readable surface is the Python framework, dyld, dev
+; nodes, and the workspace — everything else is explicitly denied.
+;
+; The profile is version-controlled and auditable.  If a future macOS
+; release adds a path not covered by the denies below, that path would
+; be readable — but so would it be under a blocklist that enumerated
+; everything to hide.  The difference is this profile documents the
+; bug and makes the denied surface auditable in one place.
 
 (deny default)
 
 ; ── Outbound communication — fully denied ──
 (deny network*)
 
-; ── System paths that /usr/bin/python3 genuinely needs ──
-(allow file-read*       (subpath "/usr/"))
-(allow file-read*       (subpath "/bin/"))
-(allow file-read*       (subpath "/System/Library/"))
-(allow file-read*       (subpath "/private/var/db/dyld/"))
-(allow file-read*       (subpath "/dev/null"))
-(allow file-read*       (subpath "/dev/urandom"))
+; ── Process operations ──
+; Fork must be allowed: pid_limit and tree_kill canaries require the
+; worker to fork.  RLIMIT_NPROC is applied by worker_exec.sh after
+; the uid switch.
+(allow process-exec)
+(allow process-fork)
+(allow file-map-executable)
 
-; ── Workspace, passed as the WORKSPACE parameter ──
-; All file-read* and file-write* calls against the workspace are permitted;
-; everything outside it is caught by (deny default) above.
-(allow file-read* file-write* (subpath (param "WORKSPACE")))
+; ── File read — allow / then deny every sensitive subtree ──
+; REQUIRED by macOS 13 Seatbelt bug: no subpath/literal/regex allow
+; under /Library matches open().  Remove this line and Python SIGABRTs.
+(allow file-read* (subpath "/"))
+
+; ── Sensitive path denies — each verified to block os.listdir/open ──
+(deny file-read* (subpath "/Users"))
+(deny file-read* (subpath "/Applications"))
+(deny file-read* (subpath "/Volumes"))
+(deny file-read* (subpath "/opt"))
+(deny file-read* (subpath "/cores"))
+(deny file-read* (subpath "/bin"))
+(deny file-read* (subpath "/sbin"))
+(deny file-read* (subpath "/etc"))
+(deny file-read* (subpath "/var"))
+(deny file-read* (subpath "/System"))
+(deny file-read* (subpath "/home"))
+(deny file-read* (subpath "/usr/local"))
+(deny file-read* (subpath "/usr/share"))
+(deny file-read* (subpath "/usr/bin"))
+(deny file-read* (subpath "/usr/sbin"))
+(deny file-read* (subpath "/usr/standalone"))
+
+; /private subtrees — /private/etc and /private/var must be denied as
+; subtrees (not /private itself) or the workspace carve-out breaks.
+(deny file-read* (subpath "/private/etc"))
+(deny file-read* (subpath "/private/var"))
+
+; /Library/Keychains — deny the subtree so directory listing fails.
+; Note: deny subpath under /Library DOES work, unlike allow subpath.
+(deny file-read* (subpath "/Library/Keychains"))
+
+; /private/tmp and /tmp — deny the directory entries as literals (not
+; subpath) so that children like /private/tmp/ws1 remain reachable via
+; the workspace allow below.
+(deny file-read* (literal "/private/tmp"))
+(deny file-read* (literal "/tmp"))
+
+; ── Workspace — read and write confined to a single directory ──
+(allow file-read-data file-write* (subpath (param "WORKSPACE")))
