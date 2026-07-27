@@ -126,8 +126,8 @@ sudo cp "$REPO/core/profiles/worker.sb" "$BASE/profiles/worker.sb"
 sudo chown root:wheel "$BASE/profiles/worker.sb"
 sudo chmod 0644 "$BASE/profiles/worker.sb"
 
-# Canary scripts (the scripts that run inside the sandbox)
-for f in "$REPO/core/canaries/scripts/"*.py; do
+# Canary scripts (the payloads that run inside the sandbox — from core/payloads/)
+for f in "$REPO/core/payloads/"*.py; do
     sudo cp "$f" "$BASE/canaries/"
 done
 sudo chown root:wheel "$BASE/canaries/"*.py
@@ -232,6 +232,7 @@ ls -l "$BASE/profiles/worker.sb"
 
 echo "=== Canary scripts ==="
 ls -l "$BASE/canaries/"
+# -r--r--r--  root  wheel  _fake_attacker.py
 # -r--r--r--  root  wheel  fs_confinement.py
 # -r--r--r--  root  wheel  no_network.py
 # -r--r--r--  root  wheel  pid_limit.py
@@ -272,13 +273,13 @@ Backend: macos-seatbelt
 Profile: /usr/local/var/jcode-runs/profiles/worker.sb
 
   canary no_network: PASS
-           tcp_1.1.1.1_80: BLOCKED (...) | tcp_8.8.8.8_53: BLOCKED (...) | dns_example_com: BLOCKED (...)
+           tcp_1.1.1.1_443: BLOCKED (...) | dns_example_com: BLOCKED (...)
   canary fs_confinement: PASS
-           read_real_secret: BLOCKED (...) | read_planted_secret: BLOCKED (...) | list_home: BLOCKED (...) | write_outside: BLOCKED (...) | write_inside: ALLOWED (...)
+           read_real_secret: BLOCKED (...) | read_planted_secret: BLOCKED (...) | list_home: BLOCKED (...) | list_keychains: BLOCKED (...) | list_private_tmp: BLOCKED (...) | write_outside: BLOCKED (...) | write_inside: ALLOWED (...)
   canary pid_limit: PASS
-           fork bomb stopped after roughly N concurrent children in parent
+           fork bomb stopped after N concurrent children in parent (rlimit enforced)
   canary tree_kill: PASS
-           escapee PID NNNNN was killed by kill_all(). uid-based kill survived the setsid+double-fork escape attempt.
+           escapee PID NNNNN was alive before kill_all and gone after. uid-based kill survived the setsid+double-fork escape attempt.
 
 Canary suite: 4/4 capabilities confirmed.
 

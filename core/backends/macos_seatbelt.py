@@ -54,13 +54,30 @@ def kill_all():
 
 # ── Run ────────────────────────────────────────────────────────────────────
 
-def run(canary_name, workspace):
+def run(canary_name, workspace, run_id=None, teardown=True):
     """Run the named canary inside the seatbelt sandbox.
 
     *canary_name* identifies a pre-installed script under
     /usr/local/var/jcode-runs/canaries/.  The wrapper resolves it to a
     root-owned file outside the workspace — nothing is ever executed from
     the workspace, and the caller cannot choose a path.
+
+    *workspace* is a host-side scratch directory.  Files in it (e.g.
+    _fake_attacker.py) are copied into the inner sandbox workspace before
+    execution, and result files (result.json, escapee.pid) are copied back
+    after the sandbox exits.
+
+    *run_id* is an optional explicit run identifier matching
+    [A-Za-z0-9_-]{1,64}.  If omitted, os.path.basename(workspace) is used
+    — the caller must ensure the basename passes the wrapper's validation.
+
+    *teardown* (default True): when False, the sandbox is started but the
+    method returns the subprocess.Popen immediately — without waiting for
+    completion or cleaning up the inner workspace.  This exists ONLY for
+    the tree_kill canary, which must observe the escapee while the sandbox
+    is still running (macOS seatbelt kills child processes when
+    sandbox-exec exits).  The caller is responsible for waiting on the
+    returned Popen and for calling kill_all().
 
     The script executes as the unprivileged _WORKER_USER with an empty
     environment, confined by the SBPL profile.  rlimits are applied in the
@@ -70,13 +87,16 @@ def run(canary_name, workspace):
     as _jcode_worker.  It hard-codes the profile path and canary directory;
     the caller cannot substitute either.
 
-    Returns a dict:
+    Returns:
+      teardown=True → a dict:
         exit_status     — int exit code, or None if killed by signal
         term_signal     — signal number, or None if exited normally
         wall_clock_ms   — elapsed wall-clock time (int, milliseconds)
         timed_out       — True if the wall-clock watchdog fired
         limits_applied  — dict: {rlimit_cpu: bool, rlimit_nproc: bool,
                                 rlimit_fsize: bool}
+
+      teardown=False → subprocess.Popen for the running sandbox.
     """
     policy = _load_policy()
     lim = policy["limits"]
@@ -86,7 +106,8 @@ def run(canary_name, workspace):
     # — not Unix permissions — is the confinement boundary for what
     # runs inside.  The base directory (0771 root:wheel) prevents
     # non-wheel users from creating or listing entries under it.
-    run_id = os.path.basename(workspace)
+    if run_id is None:
+        run_id = os.path.basename(workspace)
     inner_ws = os.path.join(_RUNS_DIR, run_id)
     os.makedirs(inner_ws, exist_ok=True)
     os.chmod(inner_ws, 0o777)
@@ -135,6 +156,21 @@ def run(canary_name, workspace):
 
     wall_start = time.monotonic()
     proc = subprocess.Popen(cmd, preexec_fn=_preexec)
+
+    # ── teardown=False: return early so the tree_kill canary can observe ──
+    # the escapee while the sandbox is still running.  macOS seatbelt kills
+    # child processes when sandbox-exec exits; if we wait for completion
+    # the escapee is already dead and we cannot prove kill_all works.
+    if not teardown:
+        # Let the payload daemonise and write escapee.pid.
+        time.sleep(1.0)
+        # Copy any result files back so the caller can read escapee.pid.
+        for fn in os.listdir(inner_ws):
+            src = os.path.join(inner_ws, fn)
+            dst = os.path.join(workspace, fn)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.copy(src, dst)
+        return proc
 
     # ── Wall-clock watchdog ────────────────────────────────────────────
     timed_out = False
