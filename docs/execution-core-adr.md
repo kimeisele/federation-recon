@@ -1,8 +1,22 @@
 # ADR — Execution Core S0: Bedrohungsmodell, Vertrauensgrenzen, Ausführungsprotokoll
 
-**Status:** Entwurf, Revision 3. Kein Code, bis die Go/No-Go-Kriterien in §11 erfüllt sind.
+**Status:** Entwurf, Revision 4. Kein Code, bis die Go/No-Go-Kriterien in §11 erfüllt sind.
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
+**Revision 4:** Substrat entschieden, gemessen statt vermutet. Kein Docker, keine VM, keine externen Abhängigkeiten — reines Python plus macOS-Seatbelt. Neu: §0 (der eigentliche Fix), §10 (Substrat mit Messwerten), §16 (Kosten und Zeit). Vorherige Revision:
+
 **Revision 3:** Nach REQUEST CHANGES. Die TCB war falsch durch Auslassung, der Verifier konnte sein eigenes Urteil fälschen, der Launcher glaubte Selbstauskünfte, und der Work Order durfte seine eigenen Grenzen setzen. Sechs Bestandteile wurden als Zeremonie gestrichen (§14) — das Dokument ist deshalb trotzdem nicht kürzer (247 gegen 236 Zeilen), weil die vollständige TCB, die Messliste und die Go/No-Go-Kriterien mehr Platz brauchen als das Gestrichene. Ich hatte „kürzer" behauptet, ohne zu zählen.
+
+---
+
+## 0. Der eigentliche Fix, vor allem anderen
+
+> **Der Supervisor führt niemals Builder-Ausgabe im eigenen Prozess aus.**
+
+Kein `eval`, kein `source`, kein Aufruf einer Datei, die der Builder geschrieben hat. Ergebnisse kommen **ausschließlich als Dateien** zurück, die der Supervisor **liest und parst** — nie ausführt.
+
+Das behebt #104 vollständig und kostet nichts. Sandkasten, Benutzertrennung und Grenzen sind **Schicht zwei**: sie fangen ab, was passiert, wenn diese Regel irgendwann durch einen Bequemlichkeitspfad gebrochen wird.
+
+Diese Reihenfolge steht hier, weil die drei vorherigen Revisionen mit dem Sandkasten anfingen und den Satz oben nicht enthielten.
 
 ---
 
@@ -166,21 +180,72 @@ Der Baulauf hat kein Internet, kein DNS, keinen Schlüssel. Er sieht das Credent
 
 ---
 
-## 10. Substrat
+## 10. Substrat — entschieden, gemessen
 
-**Es ist keine Entscheidung getroffen.** Zu erfüllende Eigenschaften:
+**Kein Docker, keine VM, keine externen Abhängigkeiten.** Reines Python (Standardbibliothek) plus macOS-Seatbelt.
 
-1. Wegwerfbare VM-Grenze ohne Host-Mounts
-2. Kein Netz — kein Internet, kein DNS, keine Erreichbarkeit des Hosts
-3. Durchsetzbare Ressourcengrenzen, deren Fehlkonfiguration ein **Fehler** ist und kein stilles Weiterlaufen
-4. Rootless, unprivilegiert
-5. Reproduzierbar identifizierbares Image (Digest)
+### Gemessen auf dieser Maschine
 
-**Ein korrekt konfigurierter wegwerfbarer VM genügt. gVisor entfällt.** Es verteidigt den Gastkern einer Maschine, die anschließend gelöscht wird, und sein rootless-Modus bringt genau die stillen Fehlermodi mit, die dieser Entwurf sonst ausschließt — kein Netstack, ignorierte cgroup-Fehler.
+| Prüfung | Ergebnis |
+|---|---|
+| `sandbox-exec`, Netz | gesperrt |
+| `sandbox-exec`, Schreiben außerhalb | `Operation not permitted` |
+| `sandbox-exec`, Secrets lesen — Profil mit `(allow file-read*)` | **gelungen — Allow-by-default ist Theater** |
+| `sandbox-exec`, Secrets und `$HOME` — Deny-by-default-Profil | gesperrt |
+| Deny-by-default-Profil, legitime Arbeit | **ebenfalls gesperrt** — Systempfade fehlten |
+| `RLIMIT_CPU` | greift, Prozess getötet |
+| `RLIMIT_AS` (Speicher) | **`ValueError` — auf macOS nicht setzbar** |
 
-Lima Plain Mode ist **Kandidat, per Canary zu prüfen**: statische Forwards und `host.lima.internal` bleiben möglich und müssen nachweislich gesperrt sein. `sandbox-exec` ist ausgeschlossen — ein Profil um einen Host-Prozess, das #104 nicht verhindert hätte.
+### Aufbau
 
----
+```
+sudo -u builder env -i sandbox-exec -f profile.sb /usr/bin/python3 job.py
+```
+
+- **Eine** NOPASSWD-sudoers-Zeile, sonst nichts.
+- `env -i` — die Umgebung des Owners überquert die Grenze nie.
+- Eigener unprivilegierter Benutzer: DAC greift auch dann noch, wenn das Profil leckt. Genau das ist heute passiert.
+- `preexec` setzt `RLIMIT_CPU`, `RLIMIT_NPROC`, `RLIMIT_FSIZE` — alle drei nachweislich wirksam.
+
+### Speicher: erkennen, nicht verhindern
+
+Es gibt auf macOS **keine verlässliche, öffentlich unterstützte Speichergrenze pro Prozess** ohne VM. `RLIMIT_AS` ist kaputt, gemessen. Die echten Mechanismen sind private APIs.
+
+Stattdessen: Watchdog im Elternprozess, RSS jede Sekunde pollen, bei Schwellwert töten. Das Zeitfenster einer Abfrage bleibt offen; die Folge ist Swap-Druck, kein Datenverlust. **Als Einschränkung benannt, nicht als Lösung verkauft.**
+
+### Das Profil und seine Fäulnis
+
+40–60 Zeilen SBPL, Deny-by-default, Lese- und Ausführrechte auf SIP-geschützte Systempfade (`/usr`, `/bin`, `/System`, dyld-Cache, `/dev/null`, `/dev/urandom`), Schreiben nur im Arbeitsverzeichnis, `network*` verboten.
+
+**Der Fäulnisvektor ist Druck, nicht Größe.** Ein Auftrag scheitert, jemand fügt nachts ein breites `allow` ein, um zu entsperren, und es kommt nie wieder heraus. Exakt so ist das undichte Profil in der Messung oben entstanden.
+
+Disziplin, ohne die es still verrottet:
+
+1. Profil in Versionskontrolle.
+2. Die vier Handproben werden eine **dauerhafte Canary-Suite**: Netz muss scheitern, ein platziertes Fake-Secret muss unlesbar sein, Schreiben außerhalb muss scheitern, Arbeit innerhalb muss gelingen. Lauf bei **jedem** Supervisor-Start, fail-closed.
+3. **Keine `allow`-Zeile ohne gepaarten Negativtest**, der zeigt, was sie weiterhin verbietet.
+4. Fehlende Rechte aus dem tatsächlichen Sandbox-Verstoß im Unified Log ableiten (`log show --predicate 'subsystem == "com.apple.sandbox"'`), niemals breit raten.
+
+### Was schlecht altert
+
+- `sandbox-exec` ist deprecated und SBPL undokumentiert. Ein OS-Update kann das Profil laut brechen (ärgerlich, sicher) oder Semantik ändern, sodass ein `allow` breiter wird als gemeint (still, gefährlich). **Nur die Canaries merken das.**
+- Profil-Aufweichung unter Lieferdruck, eine Zeile nach der anderen.
+- Der Supervisor wächst sich einen Bequemlichkeitspfad, der Builder-Ausgabe im Prozess ausführt — und baut §0 leise wieder ab.
+
+### Was das nicht ist
+
+Keine Grenze gegen einen Kernel-Exploit. Speicher ist Erkennung, nicht Verhinderung. **Für eine Maschine und einen Owner ist das eine vertretbare und ehrliche Position — vorausgesetzt, die Canaries laufen für immer.**
+
+### Offene Entwurfsfrage
+
+Ein sandgekasteter Prozess hat kein Netz. Der Builder **ist** aber ein Modellaufruf. Zwei mögliche Formen, und diese Entscheidung ist **nicht getroffen**:
+
+- **(a)** Der Modell-Client läuft im Sandkasten, das Credential bleibt draußen, ein host-seitiger Proxy vermittelt. Der Broker aus §9 bleibt.
+- **(b)** Der Supervisor ruft das Modell selbst auf, empfängt den Vorschlag als **Daten**, und der Sandkasten dient nur dem **Ausführen und Prüfen**. Der Broker entfällt als Komponente.
+
+**(b)** ist kleiner und passt zu §0 — der Supervisor behandelt Modellausgabe als Daten. **(a)** ist nötig, sobald der Bau selbst Netz braucht (`pip install`, `npm install`). Fable hat unabhängig davon vorhergesagt, dass die Kein-Netz-Regel genau daran zuerst bricht.
+
+Das ist die eine Frage, die vor S1 entschieden werden muss.
 
 ## 11. Go/No-Go vor S1
 
@@ -227,7 +292,40 @@ Der Owner hat die Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-
 
 **Nicht widerlegt, sondern angenommen.** Datiert und zurechenbar.
 
+**Erledigt am 2026-07-27:** `~/.config` und `~/.config/secrets` waren `755` — nur die Datei selbst `600`. Ein separater `builder`-Benutzer hätte das Verzeichnis betreten und auflisten können. Jetzt `700`. Rückgängig mit `chmod 755 ~/.config/secrets`.
+
 **Offen für S1:** Die Canaries werden absichtlich versuchen, diese Datei zu lesen. Die Annahme gilt für die Vergangenheit; für die Bauphase braucht es eine neue Entscheidung (§11.7).
+
+---
+
+---
+
+## 16. Kosten und Zeit
+
+Bis Revision 3 hat niemand das geprüft. Der Betrieb am 2026-07-27 lief Stunden für vier Aufgaben.
+
+### Wohin es tatsächlich geht
+
+**Geld:** in **Wiederholungen mit wachsendem Kontext.** Jeder Fehlversuch sendet das größer gewordene Transcript erneut, die Kosten steigen also überlinear mit der Versuchszahl — und ein Frontier-Modell in der inneren Schleife multipliziert das.
+
+**Zeit:** in **Gates × Versuche.** Sechs Minuten pro vollem Gate sind einmal in Ordnung und ruinös, wenn jede Iteration sie bezahlt. Stundenlange Läufe sind fast immer Versuche mal Gate, nicht Nachdenken.
+
+Beleg aus dem Betrieb: elf Dispatches, jeder mit gewachsenem Kontext, mehrere volle Gate-Läufe je Aufgabe.
+
+### Routing-Leiter
+
+| Stufe | Wofür | Regel |
+|---|---|---|
+| **Flash** | erster Versuch jedes gut spezifizierten Auftrags, mechanische Änderungen, Zusammenfassungen | **Kontext pro Versuch zurücksetzen**, nicht anhäufen |
+| **Pro** | Eskalation nach zwei Flash-Fehlschlägen; Fehlersuche mit echter Fehlerausgabe in der Hand | |
+| **Frontier-Operator** | Aufträge schreiben und zerlegen; alles prüfen, was Sandkasten-Profil, sudoers-Zeile oder Supervisor berührt | **niemals in der inneren Schleife** |
+| **niemals Modellarbeit** | Verifikation (Tests und Canaries sind deterministische Skripte) · die Routing-Entscheidung selbst · Umgang mit Geheimnissen · alles, was der vertraute Prozess ausführt | |
+
+### Vor-Gate und Versuchsgrenzen
+
+- **Schnelles Vor-Gate** bei jeder Iteration: Sekunden, nicht Minuten — Syntax, gezielte Tests, Canaries.
+- **Volles Gate** nur auf dem Kandidaten für die Abgabe.
+- **Drei Versuche pro Stufe**, dann eskalieren, dann anhalten und vorlegen. Unbegrenzte Schleifen sind der Ort, an dem beide Budgets sterben.
 
 ---
 
@@ -241,6 +339,12 @@ Gegenüber Revision 2 entfernt, weil Zeremonie oder falsch benannt:
 - **Neustarts** als Konzept
 - **Werkzeugdiskussion in §10** über „Kandidat, per Canary zu prüfen" hinaus
 - **„Quarantäne"** der `operator/run.sh`-Maschinerie — es ist Löschung, nicht Quarantäne
+
+Zusätzlich in Revision 4 gestrichen:
+
+- **VM- und Container-Maschinerie** — Docker ist auf dieser Maschine ausgeschlossen, und eine selbstverwaltete VM war die überbaute Antwort auf eine gemessene Bedrohung
+- **Der Broker als eigene Komponente** — vorbehaltlich der offenen Frage in §10; bei Form (b) entfällt er
+- **Der Supervisor/Nutzlast-Split als VM-internes Konstrukt** — er wird durch zwei getrennte sandgekastete Aufrufe erreicht, deren Ergebnisse der Supervisor von außen liest
 
 ## 15. Was bewusst fehlt
 
