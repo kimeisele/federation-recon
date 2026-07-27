@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-6f7a0b1a940a",
+  "referencing_repository": "kimeisele/hermes-sankhya-25",
+  "referencing_file_path": "docs/strategy/MOLTBOOK_INTELLIGENCE_LOOP.md",
+  "line_number": 61,
+  "referenced_finding_id": null,
+  "reference_type": "repo_reference",
+  "repository_pin": "pins/v2-consumption/hermes-sankhya-25.json",
+  "observed_at": "2026-07-27T09:41:24Z",
+  "cycle": 2
+}

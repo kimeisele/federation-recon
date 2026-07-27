@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-47401e2f48ff",
+  "lifecycle_state": "observed",
+  "statement": "Self-observation: Federation Node Census completed successfully — 14/14 nodes observed",
+  "evidence_refs": ["cov-ce56e1a8df13", "cov-40f944af1c02", "cov-03a57479a742", "cov-d9dd87154fdb", "cov-f252eee570cf", "cov-dfc1cc2291f0", "cov-3ba322239883", "cov-33711d354730", "cov-ec09e08a3e21", "cov-6d6f867600e1", "cov-c0410eef7a38", "cov-a039b4dfad85", "cov-2a942153985f", "cov-4531d50b30ad"],
+  "domain": "recon_self_observation",
+  "severity": "info",
+  "created_at": "2026-07-27T09:41:03Z"
+}
