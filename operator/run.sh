@@ -192,6 +192,7 @@ BUILDER=$(_wo_field "builder")
 RUN_DIR="$RUN_ROOT/$WO_ID"
 EVENTS_FILE="$RUN_DIR/events.jsonl"
 RESULT_FILE="$RUN_DIR/result.json"
+PATCH_FILE="$RUN_DIR/changes.patch"
 
 # ---- step 2: create run dir -------------------------------------------------
 mkdir -p "$RUN_DIR"
@@ -479,6 +480,109 @@ print(json.dumps({
 }, separators=(',', ':')))
 ")"
 
+# ---- step 9.5: save patch ----------------------------------------------------
+# Stage everything in the worktree so new files are captured, then produce a
+# patch against base_sha that is applicable with `git apply`.  If the patch
+# cannot be produced or written the run becomes rejected, because a verified
+# contribution nobody can see afterwards is worthless.
+set +o errexit
+PATCH_OUTCOME=$(python3 -c "
+import json, subprocess, os, sys
+
+wt = '$WORKTREE'
+base_sha = '$BASE_SHA'
+patch_file = '$PATCH_FILE'
+
+# Stage all changes including new files
+add = subprocess.run(['git', '-C', wt, 'add', '-A'],
+                     capture_output=True, text=True)
+if add.returncode != 0:
+    print(json.dumps({
+        'ok': False,
+        'error': 'git add -A exit {}: {}'.format(
+            add.returncode, add.stderr.strip()[:300])
+    }))
+    sys.exit(0)
+
+# Produce the diff against base_sha
+try:
+    with open(patch_file, 'w') as fh:
+        diff = subprocess.run(
+            ['git', '-C', wt, 'diff', '--cached', base_sha],
+            stdout=fh, stderr=subprocess.PIPE, text=True)
+        if diff.returncode != 0:
+            print(json.dumps({
+                'ok': False,
+                'error': 'git diff exit {}: {}'.format(
+                    diff.returncode, diff.stderr.strip()[:300])
+            }))
+            sys.exit(0)
+except OSError as e:
+    print(json.dumps({
+        'ok': False,
+        'error': 'cannot write patch: {}'.format(str(e))
+    }))
+    sys.exit(0)
+
+sz = os.path.getsize(patch_file)
+print(json.dumps({'ok': True, 'size_bytes': sz}))
+")
+PATCH_EXIT=$?
+set -o errexit
+
+PATCH_OK=false
+PATCH_ERROR=""
+
+if [ "$PATCH_EXIT" -ne 0 ]; then
+  PATCH_ERROR="internal error producing patch (python3 exit $PATCH_EXIT)"
+else
+  OK_VALUE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['ok'])" "$PATCH_OUTCOME")
+  if [ "$OK_VALUE" = "True" ]; then
+    PATCH_OK=true
+    PATCH_SIZE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['size_bytes'])" "$PATCH_OUTCOME")
+  else
+    PATCH_ERROR=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['error'])" "$PATCH_OUTCOME")
+  fi
+fi
+
+if ! $PATCH_OK; then
+  VERDICT="rejected"
+  # Update contradiction state to reflect the new verdict
+  if $BUILDER_COMPLETED; then
+    BUILDER_CLAIM_CONTRADICTED=true
+    if [ -n "$CONTRADICTION_REASON" ]; then
+      CONTRADICTION_REASON="${CONTRADICTION_REASON} patch save failed: ${PATCH_ERROR}"
+    else
+      CONTRADICTION_REASON="Builder reported 'completed' but patch save failed: ${PATCH_ERROR}"
+    fi
+  fi
+  BCC_PYTHON="False"
+  $BUILDER_CLAIM_CONTRADICTED && BCC_PYTHON="True"
+fi
+
+# Emit patch_saved event
+if $PATCH_OK; then
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'patch_saved',
+    'size_bytes': $PATCH_SIZE
+}, separators=(',', ':')))
+")"
+else
+  ESCAPED_PERR=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$PATCH_ERROR")
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'patch_saved',
+    'status': 'failed',
+    'reason': $ESCAPED_PERR
+}, separators=(',', ':')))
+")"
+fi
+
 # ---- step 10: remove worktree; write result.json ----------------------------
 git worktree remove --force "$WORKTREE" 2>/dev/null || true
 git worktree prune 2>/dev/null || true
@@ -495,6 +599,14 @@ print(json.dumps({
 
 # Build result.json using python3 — the only safe way to compose JSON
 ESCAPED_REASON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$CONTRADICTION_REASON")
+
+PATCH_OK_PYTHON="False"
+$PATCH_OK && PATCH_OK_PYTHON="True"
+
+ESCAPED_PATCH_ERROR="null"
+if [ -n "$PATCH_ERROR" ]; then
+  ESCAPED_PATCH_ERROR=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$PATCH_ERROR")
+fi
 
 python3 -c "
 import json
@@ -534,12 +646,16 @@ result = {
         {'command': cmd, 'exit_status': acc_exits[i] if i < len(acc_exits) else -1}
         for i, cmd in enumerate(wo['acceptance_commands'])
     ],
+    'patch_path': 'changes.patch',
     'events_file': 'events.jsonl'
 }
 
 if $BCC_PYTHON:
     result['builder_claim_contradicted'] = True
     result['builder_claim_contradicted_reason'] = $ESCAPED_REASON
+
+if not $PATCH_OK_PYTHON:
+    result['patch_error'] = $ESCAPED_PATCH_ERROR
 
 with open('$RESULT_FILE', 'w') as f:
     json.dump(result, f, indent=2, sort_keys=True)

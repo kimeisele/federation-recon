@@ -423,3 +423,223 @@ with open('$WO', 'w') as f:
   # WORK_ORDER must not leak into the calling shell
   [ -z "${WORK_ORDER:-}" ]
 }
+
+# ---------------------------------------------------------------------------
+# 11. PATCH IS SAVED — after an accepted run whose builder changed a file,
+#     $RUN_DIR/changes.patch exists, is non-empty, and mentions the changed
+#     file.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: PATCH IS SAVED — changes.patch exists and is non-empty" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+
+  BUILDER_SCRIPT="$WORKDIR/builder.sh"
+  cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
+#!/usr/bin/env bash
+set -o nounset
+WT="${1:?}"
+mkdir -p "$WT/operator"
+echo "patch-saved-content" > "$WT/operator/patch-test.txt"
+python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': ['operator/patch-test.txt']}))"
+exit 0
+BUILDER_EOF
+  chmod +x "$BUILDER_SCRIPT"
+
+  WO="$RUN_ROOT/wo-1-11.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-11',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$BUILDER_SCRIPT'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-11/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "accepted" ]
+
+  PATCH="$RUN_ROOT/wo-1-11/changes.patch"
+  [ -f "$PATCH" ]
+  [ -s "$PATCH" ]
+
+  # The patch must reference the file the builder created
+  grep -q "operator/patch-test.txt" "$PATCH"
+}
+
+# ---------------------------------------------------------------------------
+# 12. PATCH APPLIES — create a fresh worktree at base_sha, `git apply` the
+#     saved patch, and assert the file the builder changed is present with
+#     the expected content.  This is the real acceptance test.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: PATCH APPLIES — saved patch is applicable with git apply" {
+  WORKDIR="$(mktemp -d)"
+
+  BUILDER_SCRIPT="$WORKDIR/builder.sh"
+  cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
+#!/usr/bin/env bash
+set -o nounset
+WT="${1:?}"
+mkdir -p "$WT/operator"
+echo "apply-test-v9" > "$WT/operator/apply-test.txt"
+python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': ['operator/apply-test.txt']}))"
+exit 0
+BUILDER_EOF
+  chmod +x "$BUILDER_SCRIPT"
+
+  WO="$RUN_ROOT/wo-1-12.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-12',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$BUILDER_SCRIPT'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-12/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "accepted" ]
+
+  PATCH="$RUN_ROOT/wo-1-12/changes.patch"
+  [ -f "$PATCH" ]
+  [ -s "$PATCH" ]
+
+  # Create a fresh worktree at base_sha and apply the patch
+  APPLY_WT="$(mktemp -d)"
+
+  # Single cleanup trap for both WORKDIR and APPLY_WT
+  apply_cleanup() {
+    if [ -n "${APPLY_WT:-}" ] && [ -d "$APPLY_WT" ]; then
+      git -C "$REPO_ROOT" worktree remove --force "$APPLY_WT" 2>/dev/null || true
+      git -C "$REPO_ROOT" worktree prune 2>/dev/null || true
+      rm -rf "$APPLY_WT"
+    fi
+    rm -rf "$WORKDIR"
+  }
+  trap apply_cleanup RETURN
+
+  git -C "$REPO_ROOT" worktree add --detach "$APPLY_WT" "$BASE_SHA" >/dev/null 2>&1 || {
+    false "failed to create worktree for patch application"
+  }
+
+  git -C "$APPLY_WT" apply "$PATCH" || {
+    false "git apply failed"
+  }
+
+  # The file must exist with the expected content
+  [ -f "$APPLY_WT/operator/apply-test.txt" ]
+  CONTENT=$(cat "$APPLY_WT/operator/apply-test.txt")
+  [ "$CONTENT" = "apply-test-v9" ]
+}
+
+# ---------------------------------------------------------------------------
+# 13. EMPTY IS NOT MISSING — a run where the builder changes nothing leaves
+#     a patch file that exists and is empty, so "no changes" and "patch lost"
+#     remain distinguishable.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: EMPTY IS NOT MISSING — no-change run leaves empty patch" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+
+  # Builder that changes nothing — just reports completed and exits 0
+  BUILDER_SCRIPT="$WORKDIR/noop-builder.sh"
+  cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
+#!/usr/bin/env bash
+python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': []}))"
+exit 0
+BUILDER_EOF
+  chmod +x "$BUILDER_SCRIPT"
+
+  WO="$RUN_ROOT/wo-1-13.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-13',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$BUILDER_SCRIPT'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-13/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "accepted" ]
+
+  PATCH="$RUN_ROOT/wo-1-13/changes.patch"
+  [ -f "$PATCH" ]
+  [ ! -s "$PATCH" ]
+}
+
+# ---------------------------------------------------------------------------
+# 14. PATCH FAILURE REJECTS — make the patch file unwritable so the save
+#     fails, and assert the run is rejected with the reason named in
+#     result.json.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: PATCH FAILURE REJECTS — unwritable patch rejects the run" {
+  WORKDIR="$(mktemp -d)"
+  trap "rm -rf $WORKDIR" RETURN
+
+  WO="$RUN_ROOT/wo-1-14.json"
+  python3 -c "
+import json
+wo = {
+    'work_order_id': 'wo-1-14',
+    'issue': 1,
+    'base_sha': '$BASE_SHA',
+    'allowed_paths': ['operator/'],
+    'forbidden_paths': [],
+    'acceptance_commands': ['true'],
+    'builder': '$FAKE_BUILDER'
+}
+with open('$WO', 'w') as f:
+    json.dump(wo, f)
+"
+
+  # Pre-create the run dir with changes.patch as a directory so the write fails
+  mkdir -p "$RUN_ROOT/wo-1-14/changes.patch"
+
+  FAKE_TOUCH_FILE=operator/.fake-marker \
+  FAKE_OUTCOME=completed \
+  FAKE_EXIT=0 \
+    run bash "$RUNNER" "$WO"
+
+  [ "$status" -eq 0 ]
+
+  RESULT="$RUN_ROOT/wo-1-14/result.json"
+  VERDICT=$(python3 -c "import json; print(json.load(open('$RESULT'))['verdict'])")
+  [ "$VERDICT" = "rejected" ]
+
+  PATCH_ERROR=$(python3 -c "import json; print(json.load(open('$RESULT'))['patch_error'])")
+  [ -n "$PATCH_ERROR" ]
+}
