@@ -2,7 +2,7 @@
 
 **Status:** Entwurf, Revision 3. Kein Code, bis die Go/No-Go-Kriterien in §11 erfüllt sind.
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
-**Revision 3:** Nach REQUEST CHANGES. Die TCB war falsch durch Auslassung, der Verifier konnte sein eigenes Urteil fälschen, der Launcher glaubte Selbstauskünfte, und der Work Order durfte seine eigenen Grenzen setzen. Dieses Dokument ist **kürzer** als Revision 2: mehrere Bestandteile waren Zeremonie.
+**Revision 3:** Nach REQUEST CHANGES. Die TCB war falsch durch Auslassung, der Verifier konnte sein eigenes Urteil fälschen, der Launcher glaubte Selbstauskünfte, und der Work Order durfte seine eigenen Grenzen setzen. Sechs Bestandteile wurden als Zeremonie gestrichen (§14) — das Dokument ist deshalb trotzdem nicht kürzer (247 gegen 236 Zeilen), weil die vollständige TCB, die Messliste und die Go/No-Go-Kriterien mehr Platz brauchen als das Gestrichene. Ich hatte „kürzer" behauptet, ohne zu zählen.
 
 ---
 
