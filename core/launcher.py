@@ -68,7 +68,7 @@ def _run_canary_suite():
     results = {}
 
     print(f"Backend: {policy['backend']}")
-    print(f"Profile: {os.path.join(_CORE_DIR, 'profiles', 'worker.sb')}")
+    print(f"Profile: /usr/local/var/jcode-runs/profiles/worker.sb")
     print()
 
     for cap in _CANARY_ORDER:

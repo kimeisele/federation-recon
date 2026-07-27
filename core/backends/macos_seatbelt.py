@@ -14,14 +14,12 @@ import shutil
 import subprocess
 import time
 
-# ── Paths baked in at import time ──────────────────────────────────────────
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_CORE = os.path.dirname(_HERE)
-_POLICY_PATH = os.path.join(_CORE, "policy.json")
-_PROFILE_PATH = os.path.join(_CORE, "profiles", "worker.sb")
+# ── Installed paths — these define the trust boundary ────────────────────────
+_SANDBOX_BASE = "/usr/local/var/jcode-runs"
+_CANARY_DIR = os.path.join(_SANDBOX_BASE, "canaries")
+_PROFILE_PATH = os.path.join(_SANDBOX_BASE, "profiles", "worker.sb")
 _WORKER_USER = "_jcode_worker"
-_WRAPPER_PATH = os.path.join(_CORE, "worker_exec.sh")
-_SANDBOX_BASE = "/tmp/jcode_sandbox"
+_WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
 
 _policy = None
 
@@ -29,7 +27,8 @@ _policy = None
 def _load_policy():
     global _policy
     if _policy is None:
-        with open(_POLICY_PATH) as f:
+        _CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        with open(os.path.join(_CORE, "policy.json")) as f:
             _policy = json.load(f)
     return _policy
 
@@ -54,16 +53,21 @@ def kill_all():
 
 # ── Run ────────────────────────────────────────────────────────────────────
 
-def run(script_path, workspace):
-    """Run *script_path* inside the seatbelt sandbox.
+def run(canary_name, workspace):
+    """Run the named canary inside the seatbelt sandbox.
+
+    *canary_name* identifies a pre-installed script under
+    /usr/local/var/jcode-runs/canaries/.  The wrapper resolves it to a
+    root-owned file outside the workspace — nothing is ever executed from
+    the workspace, and the caller cannot choose a path.
 
     The script executes as the unprivileged _WORKER_USER with an empty
-    environment, confined by the SBPL profile at _PROFILE_PATH.  rlimits
-    are applied in the pre-exec hook before sudo hands off to the wrapper.
+    environment, confined by the SBPL profile.  rlimits are applied in the
+    pre-exec hook before sudo hands off to the wrapper.
 
     The wrapper (core/worker_exec.sh) is the ONLY command sudoers permits
-    as _jcode_worker.  It hard-codes the profile path and computes the
-    workspace from a validated run-id — the caller cannot substitute either.
+    as _jcode_worker.  It hard-codes the profile path and canary directory;
+    the caller cannot substitute either.
 
     Returns a dict:
         exit_status     — int exit code, or None if killed by signal
@@ -76,33 +80,33 @@ def run(script_path, workspace):
     policy = _load_policy()
     lim = policy["limits"]
 
-    # The wrapper computes its workspace as _SANDBOX_BASE/<run-id>.
-    # Use the caller's workspace basename as the run-id so the wrapper
-    # and Python agree on where files live.
+    # Per-run directory under the root-owned base.  Mode 0777 so the
+    # worker can read and write its own workspace.  The sandbox profile
+    # — not Unix permissions — is the confinement boundary for what
+    # runs inside.  The base directory (0771 root:wheel) prevents
+    # non-wheel users from creating or listing entries under it.
     run_id = os.path.basename(workspace)
     inner_ws = os.path.join(_SANDBOX_BASE, run_id)
-
-    # Copy caller's workspace files into the inner workspace that the
-    # wrapper will confine.  The wrapper always runs canary.py, so rename
-    # the caller's script if it has a different basename.
     os.makedirs(inner_ws, exist_ok=True)
     os.chmod(inner_ws, 0o777)
+
+    # Copy caller's workspace files (e.g. _fake_attacker.py) into the
+    # inner workspace that the sandbox will confine.  The canary script
+    # itself is NOT written here — it runs from the root-owned canary dir.
     for fn in os.listdir(workspace):
         src = os.path.join(workspace, fn)
         dst = os.path.join(inner_ws, fn)
         if os.path.isfile(src):
             shutil.copy(src, dst)
-    script_basename = os.path.basename(script_path)
-    if script_basename != "canary.py":
-        shutil.copy(os.path.join(inner_ws, script_basename),
-                    os.path.join(inner_ws, "canary.py"))
 
-    # Build the command line.  The wrapper handles env -i, the profile,
-    # and the workspace — the caller only supplies a validated run-id.
+    # The wrapper takes run_id and canary_name.  It resolves the canary
+    # script from the root-owned canary directory; the caller cannot
+    # influence the path beyond choosing a valid name.
     cmd = [
         "sudo", "-u", _WORKER_USER,
         _WRAPPER_PATH,
         run_id,
+        canary_name,
     ]
 
     # Collected inside the preexec_fn (runs in the forked child).

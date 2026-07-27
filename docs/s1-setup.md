@@ -1,6 +1,6 @@
 # S1 Setup — macos-seatbelt backend
 
-Three privileged steps the **owner** must perform by hand. Once done,
+Four privileged steps the **owner** must perform by hand. Once done,
 `python3 core/launcher.py` runs the canary suite and verifies the
 backend.
 
@@ -61,30 +61,101 @@ sudo dscl . -delete /Users/_jcode_worker Password
 
 ---
 
-## Step 2 — Install the trusted wrapper
+## Step 2 — Create the trusted base directory and install artifacts
 
-The wrapper `core/worker_exec.sh` is the ONLY executable permitted in
-the sudoers line (Step 3).  It hard-codes the sandbox profile path and
-computes the workspace from a validated run-id — the caller cannot
-substitute either.
+The sandbox boundary depends on a root-owned base directory whose
+ancestors are not world-writable.  `/tmp` is world-writable (`drwxrwxrwt`)
+— any local user can pre-create or symlink paths under it.  We must not
+execute anything from a location an attacker can influence.
 
-It must be owned by root and **not writable by the owner or the worker**.
-If the owner could edit it, they could replace the profile path or drop
-the `env -i` and inject environment variables across the boundary.
-If the worker could edit it, the worker could escape its own sandbox.
+The base directory lives at `/usr/local/var/jcode-runs`.  Its ancestors
+(`/usr`, `/usr/local`, `/usr/local/var`) are system directories; none
+are world-writable.
+
+### 2a — Create the base directory
 
 ```bash
-# Install with root ownership; mode 0755 (rwxr-xr-x)
-sudo chown root:wheel core/worker_exec.sh
-sudo chmod 0755 core/worker_exec.sh
+sudo mkdir -p /usr/local/var/jcode-runs
+sudo chown root:wheel /usr/local/var/jcode-runs
+sudo chmod 0771 /usr/local/var/jcode-runs
+```
+
+Mode `0771` means:
+- Owner (root): read, write, execute
+- Group (wheel): read, write, execute (can create per-run directories)
+- Others: execute only (can traverse to known subpaths)
+
+Only root and wheel members can list the directory or create entries
+inside it.  On a single-user macOS machine, wheel contains only root
+and the owner.  Per-run directories underneath are created by the
+owner (a wheel member), mode `0777`, so the worker can read and write
+its own workspace.  The sandbox profile — not Unix permissions — is
+the confinement boundary for what runs inside.
+
+Verify:
+
+```bash
+ls -ld /usr/local/var/jcode-runs
+# Expected: drwxrwx--x  ... root  wheel  ... /usr/local/var/jcode-runs
+
+# Confirm it is not world-writable (the 'other' permission digit is not 7)
+[ "$(stat -f '%Mp' /usr/local/var/jcode-runs | tail -c 2)" != "7" ] && echo "PASS: not world-writable"
+
+# Confirm it is root-owned
+[ "$(stat -f '%Su' /usr/local/var/jcode-runs)" = "root" ] && echo "PASS: root-owned"
+```
+
+### 2b — Create subdirectories and install files
+
+```bash
+REPO="/path/to/federation-recon"
+BASE="/usr/local/var/jcode-runs"
+
+# Subdirectories
+sudo mkdir -p "$BASE/canaries" "$BASE/profiles"
+sudo chown root:wheel "$BASE/canaries" "$BASE/profiles"
+sudo chmod 0755 "$BASE/canaries" "$BASE/profiles"
+
+# Wrapper (root:wheel, 0755 — owner can read/execute but NOT write)
+sudo cp "$REPO/core/worker_exec.sh" "$BASE/worker_exec.sh"
+sudo chown root:wheel "$BASE/worker_exec.sh"
+sudo chmod 0755 "$BASE/worker_exec.sh"
+
+# Sandbox profile
+sudo cp "$REPO/core/profiles/worker.sb" "$BASE/profiles/worker.sb"
+sudo chown root:wheel "$BASE/profiles/worker.sb"
+sudo chmod 0644 "$BASE/profiles/worker.sb"
+
+# Canary scripts (the scripts that run inside the sandbox)
+for f in "$REPO/core/canaries/scripts/"*.py; do
+    sudo cp "$f" "$BASE/canaries/"
+done
+sudo chown root:wheel "$BASE/canaries/"*.py
+sudo chmod 0444 "$BASE/canaries/"*.py
+```
+
+### 2c — Verify the wrapper
+
+The wrapper is the ONLY command sudoers permits as `_jcode_worker`.  If
+the owner could rewrite it, the sudoers line grants the owner arbitrary
+execution as the worker — which is not a catastrophe since the owner is
+trusted, but it means the wrapper must not live at a path a *worker* or
+any other local user can influence.
+
+```bash
+# Wrapper is root-owned and not owner-writable
+ls -l /usr/local/var/jcode-runs/worker_exec.sh
+# Expected: -rwxr-xr-x  1 root  wheel  ... worker_exec.sh
 
 # Verify — owner must NOT be able to write it
-ls -l core/worker_exec.sh
-# Expected: -rwxr-xr-x  1 root  wheel  ... core/worker_exec.sh
+[ ! -w /usr/local/var/jcode-runs/worker_exec.sh ] && echo "PASS: not owner-writable"
 
-# Verify it runs (will fail because run-id directory doesn't exist,
-# but proves it's executable and validates the argument)
-sudo -u _jcode_worker "$(pwd)/core/worker_exec.sh" test123
+# Canary scripts are root-owned and read-only
+ls -l /usr/local/var/jcode-runs/canaries/
+# Expected: -r--r--r--  1 root  wheel  ... for each .py file
+
+# Wrapper runs (will fail on missing run-id directory — that's fine)
+sudo -u _jcode_worker /usr/local/var/jcode-runs/worker_exec.sh test123 no_network
 # Expected: "env: ... No such file or directory" (workspace dir missing)
 #           NOT "command not found" and NOT a sudo password prompt.
 ```
@@ -97,13 +168,13 @@ Add this **exact** line to `/etc/sudoers.d/jcode-worker`, replacing
 `<owner>` with your account name (not `%staff`):
 
 ```
-<owner>  ALL=(_jcode_worker) NOPASSWD: /absolute/path/core/worker_exec.sh
+<owner>  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
 ```
 
-Example for user `ss` with the repo at `/Users/ss/dev/kimeisele/federation-recon`:
+Example for user `ss`:
 
 ```
-ss  ALL=(_jcode_worker) NOPASSWD: /Users/ss/dev/kimeisele/federation-recon/core/worker_exec.sh
+ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
 ```
 
 Then fix permissions:
@@ -120,7 +191,7 @@ sudo -l
 # Must show the worker_exec.sh entry without prompting for a password.
 
 # Wrapper is permitted
-sudo -u _jcode_worker /absolute/path/core/worker_exec.sh test123
+sudo -u _jcode_worker /usr/local/var/jcode-runs/worker_exec.sh test123 no_network
 # Expected: runs (fails on missing workspace dir — that's fine)
 
 # Direct sandbox-exec MUST be REFUSED — this proves the sudoers line
@@ -139,6 +210,52 @@ computed workspace are ever used.
 
 ---
 
+## Step 4 — Verify the whole boundary
+
+This step confirms that every component of the trusted base is in place
+and correctly owned.
+
+```bash
+BASE="/usr/local/var/jcode-runs"
+
+echo "=== Base directory ==="
+ls -ld "$BASE"
+# drwxrwx--x  root  wheel
+
+echo "=== Wrapper ==="
+ls -l "$BASE/worker_exec.sh"
+# -rwxr-xr-x  root  wheel
+
+echo "=== Profile ==="
+ls -l "$BASE/profiles/worker.sb"
+# -rw-r--r--  root  wheel
+
+echo "=== Canary scripts ==="
+ls -l "$BASE/canaries/"
+# -r--r--r--  root  wheel  fs_confinement.py
+# -r--r--r--  root  wheel  no_network.py
+# -r--r--r--  root  wheel  pid_limit.py
+# -r--r--r--  root  wheel  tree_kill.py
+
+echo "=== Boundary check ==="
+# At setup time no per-run directories exist.  Everything under the
+# base should be non-world-writable.  Per-run directories created at
+# runtime are mode 0777 (the sandbox profile handles confinement).
+find "$BASE" -perm -o+w -ls
+# Expected: no output (or only per-run dirs from a concurrent run)
+
+# The wrapper is not writable by anyone but root
+[ "$(stat -f '%p' "$BASE/worker_exec.sh" | cut -c 3-9)" = "755" ] \
+    && echo "PASS: wrapper mode 0755"
+
+# The canary directory is not writable by the worker
+sudo -u _jcode_worker touch "$BASE/canaries/test_write" 2>&1 \
+    && echo "FAIL: worker can write to canary dir" \
+    || echo "PASS: worker cannot write to canary dir"
+```
+
+---
+
 ## Run the canary suite
 
 ```bash
@@ -152,7 +269,7 @@ cd /path/to/federation-recon
 === Execution Core S1 — Canary Suite ===
 
 Backend: macos-seatbelt
-Profile: /path/to/federation-recon/core/profiles/worker.sb
+Profile: /usr/local/var/jcode-runs/profiles/worker.sb
 
   canary no_network: PASS
            tcp_1.1.1.1_80: BLOCKED (...) | tcp_8.8.8.8_53: BLOCKED (...) | dns_example_com: BLOCKED (...)

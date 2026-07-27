@@ -13,55 +13,13 @@ import shutil
 import tempfile
 
 
-_CANARY_BODY = r"""
-import json, os, sys, time
-
-# Fork bomb: each child forks again, cascading.
-# Must be stopped by RLIMIT_NPROC (nproc=64 from policy.json).
-# If not stopped, this would bring the host to its knees.
-# The sandbox profile denies network so no remote amplification.
-
-count = 0
-try:
-    while True:
-        pid = os.fork()
-        if pid == 0:
-            # Child: loop again
-            count = 0
-            continue
-        else:
-            count += 1
-except OSError as e:
-    # Expected: EAGAIN or similar when rlimit is hit
-    # Write result before any forked children exit
-    pass
-except Exception as e:
-    pass
-
-# Only the original process should reach here (children loop).
-# If this fires, the rlimit stopped the cascade.
-result = {
-    "passed": True,
-    "reason": f"fork bomb stopped after roughly {count} concurrent children in parent",
-}
-with open(os.path.join(os.path.dirname(__file__), "result.json"), "w") as f:
-    json.dump(result, f)
-sys.exit(0)
-"""
-
-
 def run(backend):
     ws = tempfile.mkdtemp(prefix="canary_pid_limit_")
     try:
         src = os.path.join(os.path.dirname(__file__), "_fake_attacker.py")
         shutil.copy(src, os.path.join(ws, "_fake_attacker.py"))
 
-        script = os.path.join(ws, "canary.py")
-        with open(script, "w") as f:
-            f.write(_CANARY_BODY)
-        os.chmod(script, 0o700)
-
-        result = backend.run(script, ws)
+        result = backend.run("pid_limit", ws)
 
         # The fork bomb should have been stopped by the rlimit,
         # resulting in exit 0 (not killed by a signal).

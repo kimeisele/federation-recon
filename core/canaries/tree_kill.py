@@ -15,22 +15,10 @@ Mechanism:
   4. Verify the grandchild PID no longer exists via os.kill(pid, 0).
 """
 
-import json
 import os
 import shutil
 import tempfile
 import time
-
-
-_ESCAPEE_SCRIPT = r"""
-import os, sys, time
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _fake_attacker as fa
-
-pid_file = os.path.join(os.path.dirname(__file__), "escapee.pid")
-fa.escape_and_sleep(pid_file, sleep_secs=120)
-"""
 
 
 def run(backend):
@@ -39,13 +27,8 @@ def run(backend):
         src = os.path.join(os.path.dirname(__file__), "_fake_attacker.py")
         shutil.copy(src, os.path.join(ws, "_fake_attacker.py"))
 
-        script = os.path.join(ws, "escapee.py")
-        with open(script, "w") as f:
-            f.write(_ESCAPEE_SCRIPT)
-        os.chmod(script, 0o700)
-
-        # Phase 1: spawn the escapee
-        backend.run(script, ws)
+        # Phase 1: spawn the escapee inside the sandbox
+        backend.run("tree_kill", ws)
 
         # Give the daemonised grandchild a moment to write its PID
         time.sleep(1)
