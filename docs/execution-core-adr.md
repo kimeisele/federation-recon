@@ -1,8 +1,8 @@
 # ADR — Execution Core S0: Bedrohungsmodell, Vertrauensgrenzen, Ausführungsprotokoll
 
-**Status:** Entwurf, Revision 2. Kein Code, bis der Entwurf kritisch geprüft ist — **nicht vom Operator**, siehe §2.4.
+**Status:** Entwurf, Revision 3. Kein Code, bis die Go/No-Go-Kriterien in §11 erfüllt sind.
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
-**Revision 2:** Nach blockierender Prüfung. Sieben Korrekturen, die den Entwurf im Kern ändern: die TCB war zu groß, die Orakel waren keine, der Host analysierte nicht vertrauenswürdige Eingaben, und „der Builder braucht Netz" war eine falsche Schlussfolgerung.
+**Revision 3:** Nach REQUEST CHANGES. Die TCB war falsch durch Auslassung, der Verifier konnte sein eigenes Urteil fälschen, der Launcher glaubte Selbstauskünfte, und der Work Order durfte seine eigenen Grenzen setzen. Dieses Dokument ist **kürzer** als Revision 2: mehrere Bestandteile waren Zeremonie.
 
 ---
 
@@ -16,7 +16,7 @@ Drei echte Builder-Läufe am 2026-07-27, DeepSeek über `jcode`, auf dem persön
 | `wo-98-2` | rejected | Werkzeug schrieb außerhalb der erlaubten Pfade; Builder meldete `completed` (#101) |
 | `wo-98-3` | accepted | Arbeit war inhaltlich falsch und schädlich; Abnahme war zirkulär (#103) |
 
-Quer über alle drei, wörtlich in `operator/run.sh`:
+Wörtlich in `operator/run.sh`:
 
 ```bash
 (cd "$WORKTREE" && eval "$cmd") >/dev/null 2>&1
@@ -26,211 +26,222 @@ Ein Abnahmekommando durfte auf eine Datei zeigen, die der Builder erzeugt hat. N
 
 ---
 
-## 2. Bedrohungsmodell
+## 2. Vertrauen
 
 ### 2.1 Trusted Computing Base — vollständig
 
-Die TCB besteht aus **genau drei** Elementen:
+> Eine TCB, die man zu klein angibt, ist eine TCB, die man nicht prüft.
 
-1. **Der Owner.**
-2. **Ein winziger deterministischer Launcher.** Kein Modell, keine Heuristik, keine Prosa-Auswertung. Er validiert einen Work Order gegen Schema und Policy, startet die VM, sammelt ein begrenztes Ergebnis ein, zerstört die VM. Klein genug, dass ein Mensch ihn ganz liest.
-3. **Der Hypervisor.**
+1. **Der Owner**
+2. **Der Launcher** — winzig, deterministisch, kein Modell, klein genug zum Ganzlesen
+3. **Der Hypervisor**
+4. **Das Host-Betriebssystem**
+5. **Das VM-Basisimage**
+6. **Der Broker** — hält das Credential und erzwingt Grenzen, gehört also hierher
+7. **Die Verifier-Logik in der Prüf-VM** — der Supervisor-Prozess, nicht die geprüfte Nutzlast
+8. **Die Launcher-Policy-Datei** — sie legt die Grenzen fest
 
-### 2.2 Nicht vertrauenswürdig — ebenfalls vollständig
+Revision 2 nannte nur 1–3. Das verkleinerte die TCB nicht, es verbarg sie.
 
-- **Der LLM-Operator.** Diese Sitzung. Nichtdeterministisch, nicht auditierbar, hat heute mehrfach Messungen produziert, die sauber aussahen und leer waren.
-- **Der Builder** und seine Werkzeugkette (`jcode`, Modellanbieter). Hat nachweislich außerhalb seines Arbeitsverzeichnisses geschrieben und es nicht gemeldet.
-- **Das Repository**, einschließlich `base_sha`.
-- **Die Tests im Repository.**
-- **Der Patch** und jede Ausgabe eines Laufs.
+### 2.2 Nicht vertrauenswürdig
 
-### 2.3 Was daraus für den Operator folgt
+Der LLM-Operator · der Builder und seine Werkzeugkette · das Repository einschließlich `base_sha` · die Tests im Repository · der Patch · **die Nutzlast in der Prüf-VM** · jede Ausgabe eines Laufs.
 
-Der Operator darf Aufträge **vorschlagen** und Ergebnisse **lesen**. Er darf nicht selbst ausführen, nicht selbst einsperren, nicht selbst freigeben.
+### 2.3 Was daraus folgt
 
-**Konsequenz, die unbequem ist und hier stehen muss:** Was der Operator heute als „Abnahme" fährt — Mutationsläufe, Gate-Läufe, Vergleiche — sind **Behauptungen, keine Feststellungen**. Sie stammen von einer nicht vertrauenswürdigen Komponente auf dem Host. Erst wenn der Launcher ein Ergebnis erzeugt, ist es Evidenz.
+Der Operator darf Aufträge **vorschlagen** und Ergebnisse **lesen**. Er führt nicht aus, sperrt nicht ein, gibt nicht frei.
+
+**Unbequeme Folge:** Was der Operator heute „Abnahme" nennt — Mutationsläufe, Gate-Läufe, Vergleiche — sind **Behauptungen, keine Feststellungen**. Evidenz entsteht erst dort, wo der Launcher unabhängig misst.
 
 ### 2.4 Dieses Dokument ist untrusted output
 
-Es wurde vom Operator geschrieben. Nach §2.2 ist es damit nicht vertrauenswürdige Ausgabe und braucht Prüfung durch jemand anderen. Das ist kein rhetorischer Zusatz, sondern die einzige mit §2.1 verträgliche Behandlung.
+Vom Operator geschrieben, nach §2.2 also nicht vertrauenswürdig. Es braucht Prüfung durch jemand anderen. Das ist die einzige mit §2.1 verträgliche Behandlung.
 
-### 2.5 Was diese Architektur ausdrücklich NICHT schützt
+### 2.5 Was diese Architektur NICHT schützt
 
-Vor den Maßnahmen, damit das Dokument nicht mehr Sicherheit verkauft, als es liefert.
-
-1. **Ein falscher Auftrag.** `wo-98-3` bestand jede mechanische Prüfung und war schädlich. Ursache war die Auftragsgestaltung. **Kein Sandkasten behebt das.**
-2. **Semantische Korrektheit.** Ein Pfad-Lint sagt *wo*, ein Exitstatus sagt *fertig*. Keins sagt *richtig*. Bleibt menschliche Lektüre durch den Owner.
-3. **Ein bösartiger Launcher oder Hypervisor.** Sie sind die TCB; wer sie bricht, hat alles.
-4. **Der Modellanbieter** sieht, was der Broker ihm sendet.
+1. **Ein falscher Auftrag.** `wo-98-3` bestand jede mechanische Prüfung und war schädlich. **Kein Sandkasten behebt das.**
+2. **Semantische Korrektheit.** Bleibt menschliche Lektüre durch den Owner.
+3. **Eine gebrochene TCB.** Wer Launcher, Hypervisor, Host-OS, Image, Broker oder Policy bricht, hat alles.
+4. **Den Modellanbieter.** Er sieht, was der Broker sendet.
 
 ---
 
-## 3. Vertrauensgrenzen
+## 3. Ausführung
+
+**Ein VM-Typ, ein Launcher-Pfad, zwei Läufe mit verschiedenen Eingaben.** Revision 2 beschrieb VM A und VM B als verschiedene Architekturen; das war Zeremonie und verdoppelte die zu prüfende Oberfläche.
 
 ```
-┌─ TCB ────────────────────────────────────────────────────────┐
-│  Owner · deterministischer Launcher · Hypervisor              │
-└──────────────────────────────────────────────────────────────┘
-        │ startet, begrenzt, sammelt ein, zerstört
-        ▼
-┌─ HOST, untrusted-Zone ───────────────────────────────────────┐
-│  LLM-Operator (schlägt vor, liest)                            │
-│  Modell-Broker (typisiert, größenbegrenzt, kurzlebiges Cred)  │
-└──────────────────────────────────────────────────────────────┘
+TCB:  Owner · Launcher · Hypervisor · Host-OS · Basisimage · Broker · Verifier-Supervisor · Policy
         │
+        │ startet, begrenzt, misst, sammelt ein, zerstört
         ▼
-┌─ VM A: BAU, wegwerfbar ──────────┐  ┌─ VM B: PRÜFUNG, frisch ─┐
-│  Eingang: Base-Archiv,           │  │  Eingang: Base-Archiv,   │
-│           Work Order              │  │   Output Envelope aus A, │
-│  Netz: KEINS. Kein DNS.           │  │   Acceptance Bundle (ro) │
-│        Kein API-Key.              │  │  Netz: KEINS             │
-│  Modellzugriff: nur über Broker   │  │  Wendet den Patch selbst │
-│  Ausgang: Output Envelope (§6)    │  │   an, parst ihn selbst   │
-└──────────────────────────────────┘  │  Ausgang: typisiertes    │
-                                       │   Ergebnis               │
-                                       └──────────────────────────┘
+   ┌─ Lauf 1: BAU ─────────────┐     ┌─ Lauf 2: PRÜFUNG ─────────────────┐
+   │ Eingang: Base-Archiv,      │     │ Eingang: Base-Archiv, Envelope,   │
+   │          Work Order        │     │          Acceptance Bundle (ro)   │
+   │ Netz: keins, kein DNS,     │     │ Netz: keins                       │
+   │       kein Schluessel      │     │                                   │
+   │ Modell: nur ueber Broker   │     │ SUPERVISOR (privilegiert):        │
+   │ Ausgang: Output Envelope   │     │   wendet Patch an, haengt Bundle  │
+   └────────────────────────────┘     │   ro ein, fuehrt Pruefungen aus,  │
+                                       │   schreibt das Ergebnis           │
+                                       │ NUTZLAST (unprivilegiert):        │
+                                       │   gepatchter Code und seine Tests │
+                                       │   kann Ergebnis und Bundle NICHT  │
+                                       │   schreiben                       │
+                                       └───────────────────────────────────┘
 ```
 
-**A und B teilen nichts** außer dem Base-Archiv und dem Envelope. Keine gemeinsame VM, kein gemeinsamer Zustand, keine Wiederverwendung.
+**Der Split im Prüflauf ist tragend.** Eine frische VM tötet Persistenz *zwischen* Läufen, nicht Manipulation *innerhalb* eines Laufs. Ohne Rechtetrennung könnte die geprüfte Nutzlast ihr eigenes Urteil schreiben — strukturell dasselbe wie ein Audit-Log, das der auditierte Prozessbaum führt.
 
 ---
 
-## 4. Das Acceptance Bundle
+## 4. Was der Launcher unabhängig misst
 
-Vorbestehende Repo-Tests sind **keine vertrauenswürdigen Orakel**. Ein Patch kann eine Testdatei unverändert lassen und sie trotzdem neutralisieren: über einen Helper, den sie sourced, über Konfiguration, über eine Abhängigkeit, über die Fixture-Daten.
+Nichts Verdikt-Relevantes darf aus einer VM stammen, außer über den Supervisor-Kanal des Prüflaufs.
 
-Deshalb:
-
-- Das **Acceptance Bundle** ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**.
-- Es enthält seine Prüfungen samt Helfern und Fixtures, selbstgenügsam.
-- Es wird in VM B **schreibgeschützt** eingehängt, nachdem der Patch angewandt wurde.
-- Sein Digest steht im Ergebnis.
-- Repo-Tests dürfen zusätzlich laufen. Sie sind **ergänzend**, nie allein entscheidend.
-
-Ein Patch, der Bundle-Pfade zu ändern versucht, wird zurückgewiesen — geprüft in VM B, nicht auf dem Host.
-
----
-
-## 5. Der Host analysiert den Patch nicht
-
-Der Host ist in der untrusted-Zone und darf nicht vertrauenswürdige Eingaben nicht interpretieren. Er darf ausschließlich:
-
-- die **Bytegröße** gegen ein Limit prüfen,
-- einen **Hash** bilden,
-- das **Artefakt speichern**,
-- es an VM B **weiterreichen**.
-
-Kein Parsen, kein `git apply`, keine Pfadprüfung, keine Nebenwirkungsanalyse. Alles davon gehört in VM B.
-
-`allowed_paths` verliert damit endgültig den Namen „Grenze". Es ist ein **Policy-Lint innerhalb von VM B**.
-
----
-
-## 6. Output Envelope
-
-Genau eine begrenzte Struktur verlässt VM A. Keine weiteren Dateien, keine weiteren Kanäle.
-
-| Feld | Grenze |
+| Messgröße | Quelle |
 |---|---|
-| `patch` | Bytelimit |
-| `exit_status` | ganze Zahl |
-| `stdout`, `stderr` | untrusted, größenbegrenzt, abgeschnitten mit Markierung |
-| `tool_digests` | Digests von Image und Werkzeugkette |
-| `run_id` | vom Launcher vergeben |
+| Image-Digests beider Läufe | Launcher |
+| Bundle-Digest | Launcher |
+| Patch-Hash und Bytegröße | Launcher |
+| Envelope-Bytegröße | Launcher |
+| `run_id`-Bindung über alle Artefakte | Launcher |
+| Wanduhr Start/Ende | Launcher |
+| VM-Exit- und Terminierungsursache | Hypervisor |
+| Tatsächliche Anwendung jeder Grenze aus §6 | Launcher |
 
-Alles außerhalb dieser Struktur wird verworfen. Ein Lauf, der mehr zurückzugeben versucht, ist **rejected**.
-
-Das ersetzt „nur ein Patch" aus Revision 1, das dem Evidenzmodell widersprach: ohne Exitstatus und Ausgaben gäbe es nichts zu untersuchen, wenn ein Lauf scheitert.
+**Fehlende Evidenz ist Ablehnung.** „Nicht gemessen" und „eingehalten" dürfen nie dasselbe Ergebnis haben.
 
 ---
 
-## 7. Harte Grenzen
+## 5. Der Host interpretiert nichts
 
-Jede ist ein Zahlenwert im Work Order oder in der Launcher-Policy. **Überschreitung oder fehlende Evidenz bedeutet immer: reject und VM-Zerstörung.** Fehlende Evidenz zählt wie Überschreitung — „nicht gemessen" und „eingehalten" dürfen nicht dasselbe Ergebnis haben.
+Der Host darf am Envelope ausschließlich: **Bytegröße prüfen · Hash bilden · speichern · weiterreichen.**
 
-| Grenze | gilt für |
+Kein Parsen, kein `git apply`, keine Pfadprüfung, keine Nebenwirkungsanalyse. Alles davon gehört in den Prüflauf.
+
+**`allowed_paths` entfällt vollständig** — auch als „Policy-Lint". Es ist unter zwei Namen zweimal gescheitert. Das Acceptance Bundle und die VM-Grenze machen es überflüssig, und ein Lint, der wie eine Grenze klingt, wird wie eine benutzt.
+
+---
+
+## 6. Grenzen — aus der Policy, nicht aus dem Auftrag
+
+Die Grenzen stehen in der **Launcher-Policy**. Ein Work Order darf **engere** Grenzen erbitten, niemals lockerere setzen. Revision 2 ließ den untrusted Operator seine eigene Käfiggröße wählen.
+
+CPU · RAM · PIDs · Disk · Laufzeit · Patchgröße · Envelope-Größe · Modellaufrufe.
+
+Überschreitung oder fehlende Evidenz: **reject und VM-Zerstörung.**
+
+**Neustarts entfallen als Konzept.** Läufe sind wegwerfbar und einmalig. Ein gescheiterter Lauf wird abgelehnt, nicht wiederholt.
+
+---
+
+## 7. Output Envelope
+
+Genau eine begrenzte Struktur verlässt den Baulauf: `patch` · `exit_status` · `stdout`/`stderr` (untrusted, größenbegrenzt, markiert abgeschnitten) · `run_id`.
+
+Image- und Werkzeug-Digests stehen **nicht** darin — der Launcher misst sie selbst (§4). Alles außerhalb der Struktur wird verworfen; ein Lauf, der mehr zurückgeben will, ist rejected.
+
+Das Ergebnis des Prüflaufs liegt an einem Pfad, den **nur der Supervisor-Benutzer** beschreiben kann.
+
+---
+
+## 8. Acceptance Bundle
+
+Vorbestehende Repo-Tests sind **keine vertrauenswürdigen Orakel.** Ein Patch kann eine Testdatei unberührt lassen und sie trotzdem neutralisieren — über einen Helper, den sie sourced, über Konfiguration, über eine Abhängigkeit, über Fixtures.
+
+Das Bundle ist ein eigenes, unveränderliches Artefakt **außerhalb des Patch-Baums**, selbstgenügsam samt Helfern und Fixtures, schreibgeschützt eingehängt **nach** dem Anwenden des Patches, Digest vom Launcher erfasst. Repo-Tests dürfen ergänzend laufen, nie allein entscheiden.
+
+---
+
+## 9. Broker
+
+Auf dem Host, **in der TCB**, klein genug zum Ganzlesen. Typisiertes Protokoll · Größenlimits · Aufrufzähler · kurzlebiges Credential · **Append-only-Protokoll jedes Anfrage- und Antwort-Digests**.
+
+Der Baulauf hat kein Internet, kein DNS, keinen Schlüssel. Er sieht das Credential nie.
+
+**SHOULD:** Redaktionsdurchlauf, der bekannte Geheimnisformate vor dem Weiterleiten entfernt. Bestenfalls-Maßnahme, ausdrücklich als solche dokumentiert.
+
+**Restgefahr:** Der Modellanbieter sieht, was der Broker sendet. Keine Lücke im Entwurf, sondern die Natur eines externen Modells.
+
+---
+
+## 10. Substrat
+
+**Es ist keine Entscheidung getroffen.** Zu erfüllende Eigenschaften:
+
+1. Wegwerfbare VM-Grenze ohne Host-Mounts
+2. Kein Netz — kein Internet, kein DNS, keine Erreichbarkeit des Hosts
+3. Durchsetzbare Ressourcengrenzen, deren Fehlkonfiguration ein **Fehler** ist und kein stilles Weiterlaufen
+4. Rootless, unprivilegiert
+5. Reproduzierbar identifizierbares Image (Digest)
+
+**Ein korrekt konfigurierter wegwerfbarer VM genügt. gVisor entfällt.** Es verteidigt den Gastkern einer Maschine, die anschließend gelöscht wird, und sein rootless-Modus bringt genau die stillen Fehlermodi mit, die dieser Entwurf sonst ausschließt — kein Netstack, ignorierte cgroup-Fehler.
+
+Lima Plain Mode ist **Kandidat, per Canary zu prüfen**: statische Forwards und `host.lima.internal` bleiben möglich und müssen nachweislich gesperrt sein. `sandbox-exec` ist ausgeschlossen — ein Profil um einen Host-Prozess, das #104 nicht verhindert hätte.
+
+---
+
+## 11. Go/No-Go vor S1
+
+Jedes Kriterium ist durch **Lesen** prüfbar, nicht durch Vertrauen in einen Lauf.
+
+1. §2.1 enthält die vollständige TCB und ist von jemand anderem als dem Operator geprüft — mit datierter schriftlicher Freigabe des Owners.
+2. Das Work-Order-Schema kann gelockerte Grenzen **strukturell nicht ausdrücken**. Dazu eine Datei bösartiger Testvektoren, die der Validator zurückweisen muss. Der Validator ist rein, deterministisch, ohne Shell-Aufruf.
+3. Die Evidenzliste aus §4 liegt als feste Checkliste vor, mit „fehlend = reject" **pro Punkt**.
+4. Der Supervisor/Nutzlast-Split ist spezifiziert: welcher Benutzer was ausführt, welche Pfade jeder beschreiben darf, wo das Ergebnis liegt. Eine Seite.
+5. Ein Substrat-Kandidat ist gewählt, und **jede** Eigenschaft aus §10 ist auf den konkreten durchsetzenden Mechanismus und den beweisenden Canary abgebildet. Eine Eigenschaft mit „angenommen" ist ein No-Go.
+6. Die Canary-Liste enthält zusätzlich: Ergebnisdatei aus der Nutzlast fälschen · Envelope-Größe überschreiten · Bundle-Mount manipulieren · einen zweiten Ausgabekanal öffnen. Jeder Canary hat ein **technisches** Fehlersignal, kein beobachtendes.
+7. Die API-Schlüssel sind entweder rotiert, **oder die Risikoannahme aus §13 ist für die Bauphase neu und schriftlich bestätigt** — die S1-Canaries werden absichtlich versuchen, Geheimnisse zu lesen.
+8. Es existiert kein Code, der nicht vertrauenswürdige Bytes auf dem Host über Hash, Größe, Speichern und Weiterreichen hinaus interpretiert.
+
+Fällt eines davon durch: **No-Go, erst das Dokument reparieren.** Prosa zu korrigieren ist billiger als einen laufenden Käfig.
+
+---
+
+## 12. Reihenfolge
+
+| | Inhalt |
 |---|---|
-| CPU | VM A, VM B |
-| RAM | VM A, VM B |
-| PIDs | VM A, VM B |
-| Disk | VM A, VM B |
-| Laufzeit | VM A, VM B |
-| Patchgröße | Envelope |
-| Loggröße | Envelope |
-| Modellaufrufe | Broker |
-| Neustarts | Launcher |
-
----
-
-## 8. Substrat: Eigenschaften zuerst, Auswahl danach
-
-**Es ist keine Substratentscheidung getroffen.** Was feststeht, sind die zu erfüllenden Eigenschaften:
-
-1. Wegwerfbare VM-Grenze ohne Host-Mounts.
-2. Kein Netz aus VM A und VM B — kein Internet, **kein DNS**, keine Erreichbarkeit des Hosts.
-3. Durchsetzbare Ressourcengrenzen nach §7, deren **Fehlkonfiguration ein Fehler ist und kein stilles Weiterlaufen**.
-4. Rootless, unprivilegiert.
-5. Reproduzierbar identifizierbares Image (Digest).
-
-Kandidaten und ihre offenen Fragen:
-
-- **Lima Plain Mode** deaktiviert Mounts, Guest Agent, dynamische Portweiterleitung und SSH-Agent-Forwarding. **Statische Forwards und die SSH-Basis bleiben möglich, und das Standardnetz macht den Host über `host.lima.internal` erreichbar.** Beides muss ausdrücklich gesperrt und per Canary bewiesen werden — nicht angenommen.
-- **gVisor / `runsc`** ist Kandidat, keine beschlossene Architektur. Der einfache `--rootless`-Modus unterstützt **kein Netstack** und **ignoriert cgroup-Konfigurationsfehler**. Damit sind Egress-Kontrolle und Ressourcengrenzen offen, nicht gelöst.
-
-`sandbox-exec` ist ausgeschlossen. Es wurde geprüft und sperrt Schreibzugriffe, ist aber ein Profil um einen Prozess **auf dem Host** und hätte #104 nicht verhindert, weil die Abnahme außerhalb davon lief.
-
----
-
-## 9. Der Builder bekommt kein Netz
-
-„Der Builder braucht Netz, weil er ein Modellaufruf ist" war die falsche Schlussfolgerung aus Revision 1. Richtig ist:
-
-- VM A hat **kein Internet, kein DNS, keinen API-Key**.
-- Modellaufrufe laufen über einen **Broker auf dem Host** mit typisiertem Protokoll, Größenlimits, Aufrufzähler und **kurzlebigem Credential**.
-- Der Broker sieht, was gesendet wird, und kann es begrenzen und protokollieren. Der Builder sieht den Schlüssel nie.
-
-Restgefahr, benannt statt weggeredet: **Der Modellanbieter sieht, was der Broker sendet.** Das ist keine Lücke im Entwurf, sondern die Natur eines externen Modells.
-
----
-
-## 10. Salvage-Grenze
-
-**Behalten:** Work-Order-Modell und Schema · Ereignis- und Evidenzmodell · Patch als Artefakt · Mutationstest-Disziplin · unabhängige Prüfung von Behauptungen · `builder_claim_contradicted`.
-
-**Verwerfen oder Quarantäne:** Shell als Sicherheitskernel · Host-Worktrees als Ausführungsraum · `eval` und freie Abnahmekommandos · `allowed_paths` als angebliche Grenze · jede Ausführung mit Host-Identität, Host-Secrets oder Host-Dateisystem · **Repo-Tests als alleiniges Orakel**.
-
----
-
-## 11. Reihenfolge
-
-| | Inhalt | Abnahme |
-|---|---|---|
-| **S0** | korrigierter Trust-/TCB-Entwurf | kritisch geprüft, nicht vom Operator |
-| **S1** | gehärtete wegwerfbare VM, Escape- und Quota-Canaries | Ein absichtlich bösartiger Testbauer versucht: Host-`$HOME` lesen, Secrets lesen, DNS auflösen, `host.lima.internal` erreichen, ins Netz, in fremde Pfade schreiben, unbegrenzt forken, Disk füllen, Laufzeit überschreiten. **Jeder Versuch scheitert technisch** — nicht durch Nachschau |
-| **S2** | netzloser Builder plus Host-Modellbroker | VM A ohne Netz und ohne Schlüssel baut trotzdem; der Broker begrenzt und zählt |
-| **S3** | unveränderliches Acceptance Bundle, frische Verifier-VM | Ein Patch, der einen Test-Helper ändert, um ein unverändertes Testfile zu neutralisieren, wird zurückgewiesen |
-| **S4** | Ende zu Ende mit absichtlich bösartigem Fake | Der Fake versucht jeden Angriff aus S1–S3 in einem Lauf; alle scheitern, das Ergebnis ist typisiert und begrenzt |
-| **S5** | echtes Modell und Dispatcher | erst danach |
+| **S0** | dieses Dokument, geprüft, Go/No-Go erfüllt |
+| **S1** | gehärtete wegwerfbare VM, Escape- und Quota-Canaries — **als dauerhafte Regressionsprüfung**, nicht als einmaliges Tor |
+| **S2** | netzloser Baulauf plus Host-Broker |
+| **S3** | unveränderliches Acceptance Bundle, Prüflauf mit Supervisor/Nutzlast-Split |
+| **S4** | Ende zu Ende mit absichtlich bösartigem Fake, der jeden Canary in einem Lauf versucht |
+| **S5** | echtes Modell und Dispatcher |
 
 **Kein echtes Modell vor bestandener S1–S4-Abnahme.**
 
+**LATER, außerhalb des Execution Core:** Zweitmodell- oder Mensch-Review von Work Orders (die `wo-98-3`-Klasse) · reproduzierbare Image-Builds; vorerst genügt ein gepinnter Digest eines von Hand gebauten Images.
+
 ---
 
-## 12. Vom Owner angenommenes Risiko
+## 13. Vom Owner angenommenes Risiko
 
 Der Owner hat die Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-07-27).
 
 - `~/.config/secrets/env` (chmod 600) war für builder-geschriebenen Code lesbar, der dreimal mit Owner-Rechten ausgeführt wurde.
-- Ob gelesen wurde, ist **unbekannt und nicht mehr feststellbar**: die Ausgabe wurde nach `/dev/null` verworfen.
+- Ob gelesen wurde, ist **unbekannt und nicht feststellbar** — die Ausgabe wurde nach `/dev/null` verworfen.
 - Host-Prüfung ohne Auffälligkeiten: keine neuen LaunchAgents, kein crontab, `~/.ssh` unberührt, Shell-Konfiguration seit dem 26.7. unverändert.
 - Netzverkehr wurde nicht aufgezeichnet und ist nicht rekonstruierbar.
 
 **Nicht widerlegt, sondern angenommen.** Datiert und zurechenbar.
 
+**Offen für S1:** Die Canaries werden absichtlich versuchen, diese Datei zu lesen. Die Annahme gilt für die Vergangenheit; für die Bauphase braucht es eine neue Entscheidung (§11.7).
+
 ---
 
-## 13. Was bewusst fehlt
+## 14. Was gestrichen wurde
 
-**Ein Zeitplan.** Jede Schicht hat beim ersten echten Kontakt einen Defekt offenbart. Ein Datum wäre eine Behauptung über Arbeit, die noch niemand gesehen hat.
+Gegenüber Revision 2 entfernt, weil Zeremonie oder falsch benannt:
 
-**Eine Substratentscheidung.** §8 nennt Eigenschaften und offene Fragen. Wer hier ein Werkzeug festlegt, bevor die Eigenschaften geprüft sind, wiederholt den Fehler von `allowed_paths`: ein Name, der nach Grenze klingt, ohne eine zu sein.
+- **gVisor** als Kandidat — falsche Schicht, importiert stille Fehler
+- **Die A/B-Asymmetrie** — ein Image, ein Launcher-Pfad, zwei Läufe mit anderen Eingaben
+- **`allowed_paths` in jeder Form**, auch als Lint
+- **Neustarts** als Konzept
+- **Werkzeugdiskussion in §10** über „Kandidat, per Canary zu prüfen" hinaus
+- **„Quarantäne"** der `operator/run.sh`-Maschinerie — es ist Löschung, nicht Quarantäne
+
+## 15. Was bewusst fehlt
+
+**Ein Zeitplan.** Jede Schicht hat beim ersten echten Kontakt einen Defekt offenbart. Ein Datum wäre eine Behauptung über Arbeit, die niemand gesehen hat.
