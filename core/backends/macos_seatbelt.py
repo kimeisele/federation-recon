@@ -10,7 +10,6 @@ boundary.  env -i guarantees an empty initial environment.
 
 import json
 import os
-import signal
 import subprocess
 import time
 
