@@ -10,6 +10,7 @@ boundary.  env -i guarantees an empty initial environment.
 
 import json
 import os
+import shutil
 import subprocess
 import time
 
@@ -19,6 +20,8 @@ _CORE = os.path.dirname(_HERE)
 _POLICY_PATH = os.path.join(_CORE, "policy.json")
 _PROFILE_PATH = os.path.join(_CORE, "profiles", "worker.sb")
 _WORKER_USER = "_jcode_worker"
+_WRAPPER_PATH = os.path.join(_CORE, "worker_exec.sh")
+_SANDBOX_BASE = "/tmp/jcode_sandbox"
 
 _policy = None
 
@@ -56,7 +59,11 @@ def run(script_path, workspace):
 
     The script executes as the unprivileged _WORKER_USER with an empty
     environment, confined by the SBPL profile at _PROFILE_PATH.  rlimits
-    are applied in the pre-exec hook before sudo hands off to sandbox-exec.
+    are applied in the pre-exec hook before sudo hands off to the wrapper.
+
+    The wrapper (core/worker_exec.sh) is the ONLY command sudoers permits
+    as _jcode_worker.  It hard-codes the profile path and computes the
+    workspace from a validated run-id — the caller cannot substitute either.
 
     Returns a dict:
         exit_status     — int exit code, or None if killed by signal
@@ -69,15 +76,33 @@ def run(script_path, workspace):
     policy = _load_policy()
     lim = policy["limits"]
 
-    # Build the command line.  env -i clears the owner's environment
-    # entirely; the only variable the child sees is PATH.
+    # The wrapper computes its workspace as _SANDBOX_BASE/<run-id>.
+    # Use the caller's workspace basename as the run-id so the wrapper
+    # and Python agree on where files live.
+    run_id = os.path.basename(workspace)
+    inner_ws = os.path.join(_SANDBOX_BASE, run_id)
+
+    # Copy caller's workspace files into the inner workspace that the
+    # wrapper will confine.  The wrapper always runs canary.py, so rename
+    # the caller's script if it has a different basename.
+    os.makedirs(inner_ws, exist_ok=True)
+    os.chmod(inner_ws, 0o777)
+    for fn in os.listdir(workspace):
+        src = os.path.join(workspace, fn)
+        dst = os.path.join(inner_ws, fn)
+        if os.path.isfile(src):
+            shutil.copy(src, dst)
+    script_basename = os.path.basename(script_path)
+    if script_basename != "canary.py":
+        shutil.copy(os.path.join(inner_ws, script_basename),
+                    os.path.join(inner_ws, "canary.py"))
+
+    # Build the command line.  The wrapper handles env -i, the profile,
+    # and the workspace — the caller only supplies a validated run-id.
     cmd = [
         "sudo", "-u", _WORKER_USER,
-        "env", "-i",
-        "PATH=/usr/bin:/bin",
-        "sandbox-exec", "-f", _PROFILE_PATH,
-        "-D", "WORKSPACE=" + workspace,
-        "/usr/bin/python3", script_path,
+        _WRAPPER_PATH,
+        run_id,
     ]
 
     # Collected inside the preexec_fn (runs in the forked child).
@@ -119,6 +144,17 @@ def run(script_path, workspace):
             proc.wait()
 
     wall_end = time.monotonic()
+
+    # Copy any result files the sandboxed script wrote back to the
+    # caller's workspace (e.g. result.json, escapee.pid).
+    for fn in os.listdir(inner_ws):
+        src = os.path.join(inner_ws, fn)
+        dst = os.path.join(workspace, fn)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            shutil.copy(src, dst)
+
+    # Clean up the inner workspace.
+    shutil.rmtree(inner_ws, ignore_errors=True)
 
     rc = proc.returncode
     exit_status = rc if rc >= 0 else None
