@@ -1,8 +1,8 @@
 {
   "repository": "kimeisele/steward",
   "requested_ref": "main",
-  "resolved_commit_sha": "a007a1428745b9bf342ae1c086e6d717338669a3",
-  "observation_timestamp": "2026-07-24T15:24:49Z",
+  "resolved_commit_sha": "ddf2b81a9b7a466f89ce2a8dc29da4f9160a6597",
+  "observation_timestamp": "2026-07-28T08:25:20Z",
   "acquisition_method": "gh-api",
   "dirty_state_assertion": false
 }

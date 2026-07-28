@@ -1,31 +1,31 @@
 {
   "procedure_id": "v2-consumption",
   "procedure_version": "v2",
-  "run_timestamp": "2026-07-25T05:59:55Z",
+  "run_timestamp": "2026-07-28T08:25:58Z",
   "attention_items": [{
-  "target": "kimeisele/*",
+  "target": "kimeisele/hermes-sankhya-25",
   "status": "observed",
   "attention_rank": 0,
-  "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 1 of 10 — F-02 falsifier is active if this persists across ten cycles.",
+  "headline": "REPO MENTION: 4 reference(s) to federation-recon repository name (weaker evidence than Finding ID citation) in kimeisele/hermes-sankhya-25",
   "refs": ["consumption/"]
 }],
   "summary": {
-  "pins": 6,
+  "pins": 13,
   "finding_references": 0,
-  "repo_references": 0,
-  "total_consumption_records": 0,
-  "coverage_records": 6,
-  "observed_repositories": 6,
+  "repo_references": 4,
+  "total_consumption_records": 4,
+  "coverage_records": 13,
+  "observed_repositories": 13,
   "partial_failures": 0,
-  "cycle": 1
+  "cycle": 2
 },
   "budget": {
-  "total_bytes": 3959,
+  "total_bytes": 9756,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:1564] [consumption:1564] [coverage:3500] [self-observation:3959]"
+  "checkpoints": " [discovery:0] [pins:3409] [consumption:4940] [coverage:9155] [self-observation:9756]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }
