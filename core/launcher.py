@@ -58,14 +58,16 @@ def _run_one_canary(cap_name, backend):
 
 
 def _run_canary_suite():
-    """Run all canaries.  Returns a set of surviving capabilities."""
+    """Run all canaries.  Returns (passed_all, surviving_set)."""
     sys.path.insert(0, _CORE_DIR)
 
     import backends.macos_seatbelt as backend
 
     policy = _load_policy()
     claimed = set(policy.get("claimed_capabilities", []))
-    results = {}
+
+    # Snapshot the original set BEFORE running — this is the denominator.
+    original_claimed = set(claimed)
 
     print(f"Backend: {policy['backend']}")
     print(f"Profile: /usr/local/var/jcode-runs/profiles/worker.sb")
@@ -77,7 +79,6 @@ def _run_canary_suite():
             continue
         try:
             passed, reason = _run_one_canary(cap, backend)
-            results[cap] = (passed, reason)
             status = "PASS" if passed else "FAIL"
             print(f"  canary {cap}: {status}")
             print(f"           {reason}")
@@ -88,20 +89,11 @@ def _run_canary_suite():
             claimed.discard(cap)
         print()
 
-    # Never write the surviving set back to disk — the JSON file is the
-    # canonical record of what the backend *may* claim.
-    policy["claimed_capabilities"] = sorted(claimed)
-
-    total = len([c for c in _CANARY_ORDER if c in _load_policy()["claimed_capabilities"]])
+    total = len(original_claimed)
     surviving = len(claimed)
     print(f"Canary suite: {surviving}/{total} capabilities confirmed.")
 
-    if surviving == 0:
-        print("FATAL: zero capabilities confirmed.  Check docs/s1-setup.md.",
-              file=sys.stderr)
-        sys.exit(2)
-
-    return policy
+    return surviving == total, claimed
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
@@ -113,7 +105,12 @@ def main(argv=None):
     print("=== Execution Core S1 — Canary Suite ===")
     print()
 
-    policy = _run_canary_suite()
+    all_passed, _ = _run_canary_suite()
+
+    if not all_passed:
+        print("REFUSED: one or more canaries failed. Check output above for details.",
+              file=sys.stderr)
+        sys.exit(1)
 
     print("All canaries complete.  Ready for orders (S2+).")
     if argv:

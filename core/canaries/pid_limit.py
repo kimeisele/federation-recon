@@ -1,43 +1,58 @@
 """
-Canary: pid_limit — a fork bomb MUST be stopped at the rlimit.
+Canary: pid_limit — host-side orchestrator.
 
-Must hold: the fork bomb is killed by RLIMIT_NPROC (or the kernel
-refuses further forks).  The mechanism is EAGAIN/ENOMEM from fork(),
-or SIGKILL from the OOM killer — both are detected via the resulting
-exit_status / term_signal.
+Runs the pid_limit payload inside the sandbox and judges the result.
+The payload reports the fork count it reached; the host decides pass or fail.
+
+Must hold: the fork bomb is stopped by RLIMIT_NPROC (ulimit -u 64) before
+it can consume unbounded resources.  The fork count in the parent should
+be modest (well under the ulimit, since children also fork).
 """
 
 import json
 import os
+import secrets
 import shutil
+import string
 import tempfile
 
 
 def run(backend):
-    ws = tempfile.mkdtemp(prefix="canary_pid_limit_")
+    run_id = _gen_run_id()
+    tmp = tempfile.mkdtemp(prefix="canary_pid_limit_")
+
     try:
-        src = os.path.join(os.path.dirname(__file__), "_fake_attacker.py")
-        shutil.copy(src, os.path.join(ws, "_fake_attacker.py"))
+        backend.run("pid_limit", tmp, run_id=run_id)
 
-        result = backend.run("pid_limit", ws)
+        result_path = os.path.join(tmp, "result.json")
+        if not os.path.exists(result_path):
+            return False, "no result.json produced"
 
-        # The fork bomb should have been stopped by the rlimit,
-        # resulting in exit 0 (not killed by a signal).
-        # If it was killed by SIGKILL (term_signal=9), that's also fine
-        # — the limit worked, just more violently.
-        # If exit_status is 0 and the result file says passed, that's ideal.
-        result_path = os.path.join(ws, "result.json")
-        if os.path.exists(result_path):
-            with open(result_path) as f:
-                data = json.load(f)
-            return data["passed"], data["reason"]
+        with open(result_path) as f:
+            data = json.load(f)
 
-        # Fallback: interpret the backend result
-        if result["exit_status"] == 0:
-            return True, "fork bomb exited cleanly (rlimit stopped it)"
-        elif result["term_signal"] is not None:
-            return True, f"fork bomb killed by signal {result['term_signal']} (rlimit enforced)"
-        else:
-            return False, f"exit_status={result['exit_status']} — limit may not have applied"
+        fork_count = data.get("fork_count")
+        if fork_count is None:
+            return False, "result.json missing fork_count"
+
+        # The ulimit is 64.  Children also fork, so the parent's count of
+        # concurrent children is typically well below 64 when the limit
+        # bites.  A count over 100 suggests the rlimit did not apply.
+        if fork_count > 100:
+            return False, (
+                f"fork bomb reached {fork_count} concurrent children — "
+                "rlimit may not have applied"
+            )
+
+        return True, (
+            f"fork bomb stopped after {fork_count} concurrent children "
+            "in parent (rlimit enforced)"
+        )
+
     finally:
-        shutil.rmtree(ws, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _gen_run_id(length=16):
+    alphabet = string.ascii_letters + string.digits + "_-"
+    return "".join(secrets.choice(alphabet) for _ in range(length))

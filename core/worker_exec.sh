@@ -11,6 +11,10 @@ set -e
     exit 1
 }
 
+# sudo startet uns mit dem cwd des Aufrufers. Der Worker darf es nicht
+# lesen, was jeden getcwd-Aufruf scheitern laesst. Sofort wegwechseln.
+cd / || exit 1
+
 RUN_ID="$1"
 CANARY_NAME="$2"
 
@@ -53,6 +57,10 @@ ulimit -f 10240     2>/dev/null || true
 # env -i guarantees the owner's environment never crosses the boundary.
 # The workspace path is passed as a positional argument so the canary
 # script knows where to write results (it lives outside the workspace).
+# Python haelt das cwd im Modulsuchpfad. Liegt es ausserhalb des
+# Workspace, scheitert jeder Import mit PermissionError.
+cd "$WORKSPACE" || exit 1
+
 exec /usr/bin/env -i PATH=/usr/bin:/bin \
     /usr/bin/sandbox-exec -f "$PROFILE" -D "WORKSPACE=$WORKSPACE" \
     /Library/Developer/CommandLineTools/usr/bin/python3 "$CANARY_SCRIPT" "$WORKSPACE"

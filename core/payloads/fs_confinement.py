@@ -1,15 +1,11 @@
 """
-Canary script: fs_confinement — filesystem access MUST be confined to workspace.
+Payload: fs_confinement — filesystem access checks from inside the sandbox.
 
 Executed inside the seatbelt sandbox by worker_exec.sh.
 Receives the workspace path as sys.argv[1].
 
-Must hold:
-  - Reading ~/.config/secrets/env FAILS
-  - Reading a planted fake secret outside the workspace FAILS
-  - Listing $HOME FAILS
-  - Writing outside the workspace FAILS
-  - Writing inside the workspace SUCCEEDS
+Reports raw check results — does NOT judge.  The host-side canary
+decides pass or fail.
 """
 
 import json
@@ -40,36 +36,22 @@ if home and home != "/var/empty":
 else:
     checks["list_home"] = (False, "HOME not set — expected")
 
-# 4. Attempt to write outside the workspace (resolves ../outside)
+# 4. Attempt to list /Library/Keychains
+checks["list_keychains"] = fa.try_list_dir("/Library/Keychains")
+
+# 5. Attempt to list /private/tmp
+checks["list_private_tmp"] = fa.try_list_dir("/private/tmp")
+
+# 6. Attempt to write outside the workspace
 outside = os.path.realpath(os.path.join(ws, "..", "outside_canary_test"))
 checks["write_outside"] = fa.try_write_file(outside, "should-fail")
 
-# 5. Attempt to write inside the workspace
+# 7. Attempt to write inside the workspace
 inside = os.path.join(ws, "inside_test.txt")
 checks["write_inside"] = fa.try_write_file(inside, "should-succeed")
 
-# Evaluate
-must_fail = ["read_real_secret", "read_planted_secret", "list_home", "write_outside"]
-must_succeed = ["write_inside"]
-
-passed = True
-parts = []
-for name in must_fail:
-    ok, detail = checks[name]
-    if ok:
-        passed = False
-        parts.append(f"{name}: LEAKED (BAD) ({detail})")
-    else:
-        parts.append(f"{name}: BLOCKED ({detail})")
-
-for name in must_succeed:
-    ok, detail = checks[name]
-    if not ok:
-        passed = False
-        parts.append(f"{name}: BLOCKED (BAD) ({detail})")
-    else:
-        parts.append(f"{name}: ALLOWED ({detail})")
-
 with open(os.path.join(ws, "result.json"), "w") as f:
-    json.dump({"passed": passed, "reason": " | ".join(parts)}, f)
-sys.exit(0 if passed else 1)
+    json.dump(
+        {"checks": {name: {"succeeded": ok, "detail": detail} for name, (ok, detail) in checks.items()}},
+        f,
+    )
