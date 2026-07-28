@@ -6,11 +6,19 @@ Tree kill uses pkill -9 -u to survive setsid+double-fork escapees.
 
 Design invariant: the owner's environment never crosses the isolation
 boundary.  env -i guarantees an empty initial environment.
+
+File transfer discipline (defence against confused-deputy symlink attacks):
+  - Never os.path.isfile() on an untrusted path.  Use os.lstat + S_ISREG.
+  - Reject symlinks, directories, FIFOs, sockets, devices, hard links.
+  - Open with O_RDONLY | O_NOFOLLOW, then fstat + re-check S_ISREG.
+  - Egress: allowlist of {"result.json", "escapee.pid"} only, 64 KiB cap.
+  - Refusal is visible via raised PermissionError.
 """
 
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 
@@ -21,6 +29,14 @@ _RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
 _PROFILE_PATH = os.path.join(_SANDBOX_BASE, "profiles", "worker.sb")
 _WORKER_USER = "_jcode_worker"
 _WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
+
+# Egress allowlist — only these filenames may be copied out of the sandbox.
+_EGRESS_ALLOWLIST = frozenset({"result.json", "escapee.pid"})
+# Maximum bytes for any egress file (64 KiB).
+_EGRESS_MAX_BYTES = 65536
+
+# Path to the root-owned kill helper.
+_KILL_HELPER_PATH = os.path.join(_SANDBOX_BASE, "worker_kill.sh")
 
 _policy = None
 
@@ -34,22 +50,199 @@ def _load_policy():
     return _policy
 
 
+# ── Secure file transfer helpers ────────────────────────────────────────────
+
+_ERROR_NOT_REGULAR = "not a regular file: {path}"
+_ERROR_NLINK = "hard link count > 1: {path} ({nlink})"
+_ERROR_TRUNCATED = "file truncated after open — possible race: {path}"
+_ERROR_TOO_LARGE = "file too large: {size} > {limit} bytes: {path}"
+
+
+def _secure_open_read(path):
+    """Open *path* for reading with symlink-attack defences.
+
+    Returns a (fd, stat_result) pair that is guaranteed to describe the
+    same regular file.  Raises PermissionError if the file is not a
+    regular file, is a hard link (nlink > 1), or changes type between
+    lstat and open/fstat.
+    """
+    lst = os.lstat(path)
+    if not stat.S_ISREG(lst.st_mode):
+        raise PermissionError(_ERROR_NOT_REGULAR.format(path=path))
+    if lst.st_nlink > 1:
+        raise PermissionError(_ERROR_NLINK.format(path=path, nlink=lst.st_nlink))
+
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise PermissionError(_ERROR_NOT_REGULAR.format(path=path))
+        if fst.st_nlink > 1:
+            raise PermissionError(_ERROR_NLINK.format(path=path, nlink=fst.st_nlink))
+        # Sanity: the file we opened should be the one we stat'd.
+        if fst.st_ino != lst.st_ino or fst.st_dev != lst.st_dev:
+            raise PermissionError(_ERROR_TRUNCATED.format(path=path))
+    except PermissionError:
+        os.close(fd)
+        raise
+    except Exception:
+        os.close(fd)
+        raise
+
+    return fd, fst
+
+
+def _read_fd_all(fd, max_bytes):
+    """Read up to *max_bytes* bytes from fd.  When None, read until EOF."""
+    data = bytearray()
+    if max_bytes is None:
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data.extend(chunk)
+    else:
+        remaining = max_bytes + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            data.extend(chunk)
+            remaining -= len(chunk)
+    return bytes(data)
+
+
+def _copy_file_secure(src, dst, max_bytes=None):
+    """Copy *src* to *dst* with symlink-attack defences.
+
+    *src* must be a regular file (not a symlink, device, FIFO, etc.)
+    with nlink == 1.  Opened with O_NOFOLLOW; re-verified via fstat.
+
+    When *max_bytes* is set, the copy is capped at that value and a
+    PermissionError is raised if the source exceeds it.
+
+    Raises PermissionError on any violation.  Silent skip is not acceptable.
+    """
+    fd, fst = _secure_open_read(src)
+    try:
+        size = fst.st_size
+        if max_bytes is not None and size > max_bytes:
+            raise PermissionError(
+                _ERROR_TOO_LARGE.format(
+                    path=src, size=size, limit=max_bytes
+                )
+            )
+
+        # Read the whole file when no cap is given (ingress).  Silent truncation
+        # is not acceptable — max_bytes=None means no cap, not a hidden 64 KiB.
+        data = _read_fd_all(fd, max_bytes)
+
+        with open(dst, "wb") as out:
+            out.write(data)
+    finally:
+        os.close(fd)
+
+
+def _copy_egress(src, dst):
+    """Copy *src* (from inner workspace) to *dst* (host workspace).
+
+    Restricted to the egress allowlist with a 64 KiB byte cap.
+
+    Returns the basename if the file was skipped (not in allowlist),
+    or None if it was copied or already existed.  Skipped files are
+    silently not copied — the allowlist is a FILTER, not an assertion.
+
+    Raises PermissionError when a file IS in the allowlist but is not
+    a regular file (symlink, directory, FIFO, device, hard link).
+    """
+    basename = os.path.basename(src)
+    if basename not in _EGRESS_ALLOWLIST:
+        return basename  # Skip — not a denial.
+    if os.path.exists(dst):
+        return None  # Do not overwrite an existing host-side file.
+    _copy_file_secure(src, dst, max_bytes=_EGRESS_MAX_BYTES)
+    return None
+
+
+def _copy_ingress(src, dst):
+    """Copy *src* (from host workspace) to *dst* (inner workspace).
+
+    Regular-file-only discipline; no allowlist needed on ingress because
+    the caller controls the workspace, but we enforce the same defences
+    against symlink substitution.
+    """
+    _copy_file_secure(src, dst)
+
+
+# ── Kill-unavailable exception ────────────────────────────────────────────
+
+class KillUnavailable(Exception):
+    """Raised when the kill helper cannot be executed at all.
+
+    Missing file, sudo refusal, or any other condition that prevents
+    the helper from running qualifies.  A kill path that cannot report
+    its own failure is the defect this exception exists to prevent.
+    """
+    pass
+
+
 # ── Tree kill ──────────────────────────────────────────────────────────────
 
 def kill_all():
     """Kill every process owned by the worker user.
 
-    Uses pkill(1) to send SIGKILL to every process of _WORKER_USER.
-    kill(-pgid) alone is insufficient: a child that calls setsid() then
-    double-forks creates a grandchild in a new session and process group,
-    unreachable via the original pgid.  pkill -9 -u kills by uid; the
-    escapee cannot shed its uid on macOS (no user namespaces).
+    Uses the root-owned worker_kill.sh helper via sudo -n -u _jcode_worker.
+    Running AS the worker is sufficient: a process may signal processes of
+    its own uid.  No root privilege is needed.
+
+    Returns a structured dict:
+        ok          — False when returncode is neither 0 nor 1
+        returncode  — exit code from the helper
+        stderr      — stderr captured from the helper
+        killed_any  — True if pkill reported killing at least one process
+
+    Raises KillUnavailable if the helper cannot be executed at all.
     """
-    subprocess.run(
-        ["/usr/bin/pkill", "-9", "-u", _WORKER_USER],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if not os.path.exists(_KILL_HELPER_PATH):
+        raise KillUnavailable(
+            f"kill helper not found: {_KILL_HELPER_PATH}"
+        )
+
+    cmd = ["sudo", "-n", "-u", _WORKER_USER, _KILL_HELPER_PATH]
+    try:
+        # cwd="/" is load-bearing, not tidiness. sudo hands the helper the
+        # caller's working directory, and the worker cannot read the owner's
+        # repo. /bin/sh then emits "shell-init: error retrieving current
+        # directory" on startup — before the script's own `cd /` can run.
+        # That noise lands in stderr, and stderr is how we judge the kill.
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd="/",
+        )
+    except FileNotFoundError:
+        raise KillUnavailable("sudo not found — cannot run kill helper")
+    except subprocess.TimeoutExpired:
+        raise KillUnavailable("kill helper timed out after 10 seconds")
+
+    rc = result.returncode
+    stderr = result.stderr or ""
+
+    # pkill exits 1 both when nothing matched and when it was refused
+    # permission to signal what it found — measured, as the owner:
+    #   pkill: signalling pid 137: Operation not permitted
+    #   returncode: 1
+    # Treating rc 1 as success on its own is what hid a kill path that had
+    # never worked. Any stderr means the helper had something to complain
+    # about, and a kill that complains has not proven it killed.
+    return {
+        "ok": rc in (0, 1) and not stderr.strip(),
+        "returncode": rc,
+        "stderr": stderr,
+        "killed_any": rc == 0,
+    }
 
 
 # ── Run ────────────────────────────────────────────────────────────────────
@@ -62,10 +255,9 @@ def run(canary_name, workspace, run_id=None, teardown=True):
     root-owned file outside the workspace — nothing is ever executed from
     the workspace, and the caller cannot choose a path.
 
-    *workspace* is a host-side scratch directory.  Files in it (e.g.
-    _fake_attacker.py) are copied into the inner sandbox workspace before
-    execution, and result files (result.json, escapee.pid) are copied back
-    after the sandbox exits.
+    *workspace* is a host-side scratch directory.  Files in it are copied
+    into the inner sandbox workspace before execution, and result files
+    (result.json, escapee.pid) are copied back after the sandbox exits.
 
     *run_id* is an optional explicit run identifier matching
     [A-Za-z0-9_-]{1,64}.  If omitted, os.path.basename(workspace) is used
@@ -93,8 +285,6 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         term_signal     — signal number, or None if exited normally
         wall_clock_ms   — elapsed wall-clock time (int, milliseconds)
         timed_out       — True if the wall-clock watchdog fired
-        limits_applied  — dict: {rlimit_cpu: bool, rlimit_nproc: bool,
-                                rlimit_fsize: bool}
 
       teardown=False → subprocess.Popen for the running sandbox.
     """
@@ -112,14 +302,13 @@ def run(canary_name, workspace, run_id=None, teardown=True):
     os.makedirs(inner_ws, exist_ok=True)
     os.chmod(inner_ws, 0o777)
 
-    # Copy caller's workspace files (e.g. _fake_attacker.py) into the
-    # inner workspace that the sandbox will confine.  The canary script
-    # itself is NOT written here — it runs from the root-owned canary dir.
+    # Copy caller's workspace files into the inner workspace that the
+    # sandbox will confine.  The canary script itself is NOT written
+    # here — it runs from the root-owned canary dir.
     for fn in os.listdir(workspace):
         src = os.path.join(workspace, fn)
         dst = os.path.join(inner_ws, fn)
-        if os.path.isfile(src):
-            shutil.copy(src, dst)
+        _copy_ingress(src, dst)
 
     # The wrapper takes run_id and canary_name.  It resolves the canary
     # script from the root-owned canary directory; the caller cannot
@@ -130,10 +319,6 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         run_id,
         canary_name,
     ]
-
-    # Collected inside the preexec_fn (runs in the forked child).
-    # Must be a mutable container because the child can't return values.
-    limits_applied = {}
 
     def _preexec():
         import resource
@@ -150,12 +335,11 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         ]:
             try:
                 resource.setrlimit(rlim_const, (value, value))
-                limits_applied[name] = True
             except Exception:
-                limits_applied[name] = False
+                pass
 
     wall_start = time.monotonic()
-    proc = subprocess.Popen(cmd, preexec_fn=_preexec)
+    proc = subprocess.Popen(cmd, preexec_fn=_preexec, cwd="/")
 
     # ── teardown=False: return early so the tree_kill canary can observe ──
     # the escapee while the sandbox is still running.  macOS seatbelt kills
@@ -168,17 +352,21 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         for fn in os.listdir(inner_ws):
             src = os.path.join(inner_ws, fn)
             dst = os.path.join(workspace, fn)
-            if os.path.isfile(src) and not os.path.exists(dst):
-                shutil.copy(src, dst)
+            _copy_egress(src, dst)
         return proc
 
     # ── Wall-clock watchdog ────────────────────────────────────────────
     timed_out = False
+    kill_ok = True
     try:
         proc.wait(timeout=lim["wall_clock_seconds"])
     except subprocess.TimeoutExpired:
         timed_out = True
-        kill_all()
+        try:
+            kill_result = kill_all()
+            kill_ok = kill_result["ok"]
+        except KillUnavailable as exc:
+            kill_ok = False
         # Give the kill a moment to propagate, then force-clean the sudo
         # wrapper (which runs as root and is not reached by pkill -u worker).
         try:
@@ -191,11 +379,14 @@ def run(canary_name, workspace, run_id=None, teardown=True):
 
     # Copy any result files the sandboxed script wrote back to the
     # caller's workspace (e.g. result.json, escapee.pid).
+    # Files not in the allowlist are silently skipped and recorded.
+    egress_skipped = []
     for fn in os.listdir(inner_ws):
         src = os.path.join(inner_ws, fn)
         dst = os.path.join(workspace, fn)
-        if os.path.isfile(src) and not os.path.exists(dst):
-            shutil.copy(src, dst)
+        skip_name = _copy_egress(src, dst)
+        if skip_name is not None:
+            egress_skipped.append(skip_name)
 
     # Clean up the inner workspace.
     shutil.rmtree(inner_ws, ignore_errors=True)
@@ -209,5 +400,6 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         "term_signal": term_signal,
         "wall_clock_ms": int((wall_end - wall_start) * 1000),
         "timed_out": timed_out,
-        "limits_applied": limits_applied,
+        "kill_ok": kill_ok,
+        "egress_skipped": egress_skipped,
     }

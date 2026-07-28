@@ -50,9 +50,21 @@ CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
 # Resource limits are applied HERE, not by the caller: sudo has already
 # switched to the worker uid, so RLIMIT_NPROC counts the worker's processes
 # rather than the owner's. Applied before exec, inherited by everything below.
-ulimit -u 64        2>/dev/null || true
-ulimit -t 30        2>/dev/null || true
-ulimit -f 10240     2>/dev/null || true
+# Fail-closed: if a limit cannot be applied, the wrapper exits non-zero before
+# exec.  Silently continuing without an enforced limit while claiming it is
+# the defect this infrastructure exists to prevent.
+ulimit -u 64  2>/dev/null || {
+    echo "worker_exec.sh: FAILED to set RLIMIT_NPROC (ulimit -u 64)" >&2
+    exit 1
+}
+ulimit -t 30  2>/dev/null || {
+    echo "worker_exec.sh: FAILED to set RLIMIT_CPU (ulimit -t 30)" >&2
+    exit 1
+}
+ulimit -f 10240  2>/dev/null || {
+    echo "worker_exec.sh: FAILED to set RLIMIT_FSIZE (ulimit -f 10240)" >&2
+    exit 1
+}
 
 # env -i guarantees the owner's environment never crosses the boundary.
 # The workspace path is passed as a positional argument so the canary

@@ -10,7 +10,7 @@ import importlib, json, os, sys
 
 _CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 _POLICY_PATH = os.path.join(_CORE_DIR, "policy.json")
-_CANARY_ORDER = ["no_network", "fs_confinement", "pid_limit", "tree_kill"]
+_CANARY_ORDER = ["no_network", "fs_confinement", "pid_limit", "tree_kill", "symlink_egress"]
 _policy_cache = None
 
 

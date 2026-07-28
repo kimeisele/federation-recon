@@ -19,8 +19,6 @@ import tempfile
 def run(backend):
     run_id = _gen_run_id()
     tmp = tempfile.mkdtemp(prefix="canary_no_network_")
-    _fake = os.path.join(os.path.dirname(__file__), "..", "payloads", "_fake_attacker.py")
-    shutil.copy(_fake, os.path.join(tmp, "_fake_attacker.py"))
 
     try:
         backend.run("no_network", tmp, run_id=run_id)

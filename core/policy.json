@@ -4,7 +4,8 @@
     "no_network",
     "fs_confinement",
     "pid_limit",
-    "tree_kill"
+    "tree_kill",
+    "symlink_egress"
   ],
   "unclaimable_capabilities": {
     "mem_limit": "RLIMIT_AS raises ValueError on macOS. A watchdog can detect but not prevent.",
