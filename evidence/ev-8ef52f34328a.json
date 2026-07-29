@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-8ef52f34328a",
+  "repository_pin": "pins/v1-census/agent-music.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-29T07:33:57Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

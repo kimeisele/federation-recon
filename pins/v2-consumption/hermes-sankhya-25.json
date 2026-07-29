@@ -1,0 +1,8 @@
+{
+  "repository": "kimeisele/hermes-sankhya-25",
+  "requested_ref": "main",
+  "resolved_commit_sha": "55f449cc683d6f7ce4b8d42f64b86ec96b0119ba",
+  "observation_timestamp": "2026-07-29T08:32:05Z",
+  "acquisition_method": "gh-api",
+  "dirty_state_assertion": false
+}

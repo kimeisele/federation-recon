@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-dede3f831a2b",
+  "referencing_repository": "kimeisele/hermes-sankhya-25",
+  "referencing_file_path": "docs/authority/charter.md",
+  "line_number": 54,
+  "referenced_finding_id": null,
+  "reference_type": "repo_reference",
+  "repository_pin": "pins/v2-consumption/hermes-sankhya-25.json",
+  "observed_at": "2026-07-29T08:32:05Z",
+  "cycle": 2
+}
