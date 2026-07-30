@@ -127,11 +127,20 @@ def run(backend):
     os.chmod(writable_path, 0o666)
     writable_checksum = _checksum_bytes(writable_content.encode())
 
+    # Generate a per-run marker for the write_inside preservation check.
+    # The canary generates this, passes it in config.json, and the payload
+    # must write exactly this content.  A per-run value cannot be satisfied
+    # by a stale file, unlike a hard-coded constant both sides share (F1 fix).
+    write_marker = "canary-write-marker-" + secrets.token_hex(16)
+
     try:
-        # Write config so the payload knows the writable path.
+        # Write config so the payload knows the writable path and the marker.
         config_path = os.path.join(tmp, "config.json")
         with open(config_path, "w") as f:
-            json.dump({"writable_path": writable_path}, f)
+            json.dump({
+                "writable_path": writable_path,
+                "write_marker": write_marker,
+            }, f)
 
         # Host-side precheck.
         precheck = _precheck_targets()
@@ -182,8 +191,8 @@ def run(backend):
             if name == "read_planted_secret":
                 ev["expected_checksum"] = planted_checksum
             elif name == "write_inside":
-                # The write_inside test writes "canary-write-test" to a file.
-                ev["expected_bytes"] = _checksum_bytes(b"canary-write-test")
+                # Computed after verification below.
+                pass
             elif name == "write_outside":
                 ev["expected_checksum"] = writable_checksum
 
@@ -206,24 +215,38 @@ def run(backend):
                 f"could not verify writable file after run: {exc}"
             )
 
-        # Also verify write_inside: read back the file the payload wrote.
+        # Verify write_inside: read back the file the payload wrote.
+        # FAIL (not silently skip) if the file is absent — "not present"
+        # is "unavailable", and a payload that reports "allowed" without
+        # writing proves nothing (F1 fix).
         inside_path = os.path.join(tmp, "inside_test.txt")
-        if os.path.exists(inside_path):
-            try:
-                with open(inside_path, "rb") as f:
-                    inside_bytes = f.read()
-                inside_checksum = _checksum_bytes(inside_bytes)
-                expected_inside = _checksum_bytes(b"canary-write-test")
-                if inside_checksum != expected_inside:
-                    return False, (
-                        f"WRITE INSIDE checksum mismatch: "
-                        f"expected {expected_inside}, got {inside_checksum} — "
-                        "bytes read back differ from what was written"
-                    )
-            except Exception as exc:
-                return False, (
-                    f"could not verify write_inside file: {exc}"
-                )
+        if not os.path.exists(inside_path):
+            return False, (
+                "write_inside file not found in host workspace — "
+                "inside_test.txt was not copied out of the sandbox "
+                "(check _EGRESS_ALLOWLIST) or the payload did not write it"
+            )
+        try:
+            with open(inside_path, "rb") as f:
+                inside_bytes = f.read()
+        except Exception as exc:
+            return False, (
+                f"could not read write_inside file: {exc}"
+            )
+
+        expected_inside = _checksum_bytes(write_marker.encode())
+        inside_checksum = _checksum_bytes(inside_bytes)
+        if inside_checksum != expected_inside:
+            return False, (
+                f"WRITE INSIDE checksum mismatch: "
+                f"expected {expected_inside}, got {inside_checksum} — "
+                "bytes read back differ from what the canary requested "
+                "(payload wrote different content than the marker)"
+            )
+
+        # Add evidence for the write_inside check.
+        evidence["write_inside"]["expected_bytes"] = expected_inside
+        evidence["write_inside"]["actual_checksum"] = inside_checksum
 
         passed = True
         parts = []

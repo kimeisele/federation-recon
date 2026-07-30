@@ -180,14 +180,14 @@ def run(backend):
         # Run the fs_confinement payload (which needs no network) and
         # verify it produces correct output.
         # Write a compute-style task: the payload writes a known result.
-        preservation_compute = "no-network-preservation-" + _gen_marker()
-        expected_checksum = hashlib.sha256(preservation_compute.encode()).hexdigest()
+        preservation_marker = "no-network-preservation-" + _gen_marker()
+        expected_checksum = hashlib.sha256(preservation_marker.encode()).hexdigest()
 
         pres_config_path = os.path.join(tmp_preservation, "config.json")
         with open(pres_config_path, "w") as f:
             json.dump({
                 "preservation_test": True,
-                "expected_content": preservation_compute,
+                "write_marker": preservation_marker,
                 "expected_checksum": expected_checksum,
             }, f)
 
@@ -213,21 +213,28 @@ def run(backend):
                 "a network-free compute job could not write its result"
             )
 
-        # Checksum the written content.
+        # Verify the file actually reached the host workspace (F1 fix).
+        # Previously inside_test.txt was not in the egress allowlist, so the
+        # file never arrived and the preservation half was dead code.
         inside_path = os.path.join(tmp_preservation, "inside_test.txt")
-        if os.path.exists(inside_path):
-            with open(inside_path, "rb") as f:
-                inside_bytes = f.read()
-            inside_checksum = hashlib.sha256(inside_bytes).hexdigest()
-            preservation_detail = (
-                f"compute job completed, write_inside allowed, "
-                f"checksum={inside_checksum}"
+        if not os.path.exists(inside_path):
+            return False, (
+                "preservation: inside_test.txt not found in host workspace — "
+                "the file may not have been copied out of the sandbox"
             )
-        else:
-            preservation_detail = (
-                f"compute job completed, write_inside allowed "
-                f"(inside_test.txt not in host workspace)"
+        with open(inside_path, "rb") as f:
+            inside_bytes = f.read()
+        inside_checksum = hashlib.sha256(inside_bytes).hexdigest()
+        if inside_checksum != expected_checksum:
+            return False, (
+                "preservation: inside_test.txt checksum mismatch — "
+                f"expected {expected_checksum}, got {inside_checksum}"
             )
+
+        preservation_detail = (
+            f"compute job completed, write_inside allowed, "
+            f"checksum={inside_checksum}"
+        )
 
         preservation_ok = True
 

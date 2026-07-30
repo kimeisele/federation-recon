@@ -18,6 +18,7 @@ workspace.
 import os
 import secrets
 import shutil
+import stat
 import string
 import tempfile
 
@@ -119,7 +120,11 @@ def _marker_in_workspace(workspace, marker):
     or None if no file contains it."""
     for fn in os.listdir(workspace):
         path = os.path.join(workspace, fn)
-        if not os.path.isfile(path):
+        try:
+            lst = os.lstat(path)
+            if not stat.S_ISREG(lst.st_mode):
+                continue
+        except OSError:
             continue
         try:
             with open(path, "r") as f:

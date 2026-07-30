@@ -233,6 +233,13 @@ seine eigene Konfiguration nicht mehr lesen, die Sandbox war funktionsunfähig,
 und alle sieben Canaries blieben grün. Dieselbe Änderung als Mutation gegen den
 heutigen Stand macht zwei Canaries rot und verweigert die Bereitschaftsmeldung.
 
+**Gekoppelte Erhaltungsprobe.** Die Erhaltungshälfte von `no_network` führt die
+`fs_confinement`-Payload als netzwerkfreie Rechenaufgabe aus. Ein Fehler in
+dieser Payload färbt daher beide Canaries rot — gemessen: eine mutierte Payload
+ergab 5/8 statt 7/8. Die Kaskade ist ehrlich, aber die beiden Fähigkeiten sind
+dadurch **nicht unabhängig** belegt. Wer eine der beiden für sich allein
+beurteilen will, braucht eine eigene Erhaltungsprobe.
+
 **Gemessene Grenze bei `tree_kill`.** Der Canary belegt die Fähigkeit: der Slot
 erreicht null Prozesse und bleibt dort, gegen einen Baum, der nachweislich
 regeneriert (gemessen: 11 von 14 PIDs binnen 0,3 s ausgetauscht). Was **nicht**

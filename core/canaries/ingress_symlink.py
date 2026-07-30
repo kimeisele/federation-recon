@@ -6,13 +6,13 @@ files into a workspace whose directory was pre-created by an attacker
 with a symlink pointing outside the workspace.
 
 Testing approach — direct mechanism test (not adversarial-worker):
-We cannot spawn a process as _jcode_worker from the canary: the only
+We cannot spawn a process as any slot user from the canary: the only
 NOPASSWD sudoers entries are the two wrappers (worker_exec.sh and
-worker_kill.sh), and running either as the worker would grant more
+worker_kill_self.sh), and running either as a slot would grant more
 capability than the canary should exercise.  Instead, this canary
 pre-creates the inner workspace directory (with a symlink planted
 inside it) from the host side — simulating what an attacker who had
-already compromised the worker identity would do — then calls
+already compromised the sandbox identity would do — then calls
 backend.run() and asserts that:
 
   Phase 1 (directory guard):
@@ -46,7 +46,6 @@ import tempfile
 
 _SANDBOX_BASE = "/usr/local/var/jcode-runs"
 _RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
-_WORKER_USER = "_jcode_worker"
 
 
 def run(backend):

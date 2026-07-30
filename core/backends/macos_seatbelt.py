@@ -36,7 +36,7 @@ _WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
 _KILL_SELF_PATH = os.path.join(_SANDBOX_BASE, "worker_kill_self.sh")
 
 # Egress allowlist — only these filenames may be copied out of the sandbox.
-_EGRESS_ALLOWLIST = frozenset({"result.json", "escapee.pid"})
+_EGRESS_ALLOWLIST = frozenset({"result.json", "escapee.pid", "inside_test.txt"})
 # Maximum bytes for any egress file (64 KiB).
 _EGRESS_MAX_BYTES = 65536
 
@@ -441,14 +441,32 @@ def _quarantine(slot_name, reason):
     Renames slots/<slot> to slots/<slot>.quarantined.<timestamp> if a
     claim directory exists, writes the reason into it.  The slot is not
     reused and no code path may auto-clear it.
+
+    If the rename fails (e.g. concurrent removal), attempts shutil.rmtree
+    as a fallback so the slot is not permanently leaked (F4 fix).  All
+    failures are logged.
     """
     claim_dir = os.path.join(_SLOTS_DIR, slot_name)
     ts = int(time.time())
     q_dir = os.path.join(_SLOTS_DIR, f"{slot_name}.quarantined.{ts}")
     try:
         os.rename(claim_dir, q_dir)
-    except OSError:
-        pass
+    except OSError as exc:
+        print(
+            f"[seatbelt] _quarantine({slot_name}): rename failed: {exc} — "
+            "attempting rmtree fallback",
+            file=sys.stderr,
+        )
+        if os.path.isdir(claim_dir):
+            try:
+                shutil.rmtree(claim_dir)
+            except Exception as rmtree_exc:
+                print(
+                    f"[seatbelt] _quarantine({slot_name}): rmtree fallback "
+                    f"also failed: {rmtree_exc} — slot may be permanently leaked",
+                    file=sys.stderr,
+                )
+        return
     try:
         with open(os.path.join(q_dir, "reason"), "w") as f:
             f.write(reason)
@@ -472,7 +490,15 @@ def _release_slot(slot_name, slot_uid, deadline_seconds=10):
 
     Only a slot proven empty is released by removing its claim directory.
     """
-    kill_slot(slot_name, slot_uid)
+    kill_result = kill_slot(slot_name, slot_uid)
+    if not kill_result["ok"]:
+        print(
+            f"[seatbelt] _release_slot({slot_name}): kill_slot returned "
+            f"ok=False (returncode={kill_result['returncode']}, "
+            f"stderr={kill_result['stderr']!r}) — "
+            "polling loop will proceed but may not find an empty slot",
+            file=sys.stderr,
+        )
     deadline = time.time() + deadline_seconds
     while time.time() < deadline:
         try:
@@ -664,6 +690,24 @@ def reconcile():
                 result["errors"] += 1
             continue
 
+        # Grace period (F2 fix): if the claim directory was created within the
+        # last few seconds, treat it as live regardless of its mapping.  Between
+        # _claim_set_run_id() (which writes run_id) and os.mkdir() (which creates
+        # the inner workspace directory), a concurrent reconcile() would see a
+        # claimed slot with a run_id whose directory does not yet exist.  Without
+        # this grace period, reconcile() would not find the run_id in the runs/
+        # listing (it does not exist) and would release the slot — deleting the
+        # claim directory — while the run() caller has already started working.
+        try:
+            claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+            ctime = os.stat(claim_dir).st_ctime
+            if time.time() - ctime < 5.0:
+                # Too young to be confidently orphaned — leave it alone.
+                continue
+        except OSError:
+            # Can't stat — may have been removed by a concurrent caller.
+            pass
+
         uid = _SLOT_MAP[slot_name]
         # Check if the slot is proven empty.
         try:
@@ -681,7 +725,6 @@ def reconcile():
 
         if pgrep_result.returncode == 1:
             # No processes — slot is empty, release it.
-            claim_dir = os.path.join(_SLOTS_DIR, slot_name)
             try:
                 shutil.rmtree(claim_dir)
                 result["released_slots"] += 1
@@ -699,23 +742,25 @@ def reconcile():
 # ── Run ────────────────────────────────────────────────────────────────────
 
 def _verify_runs_dir_secure():
-    """Verify _RUNS_DIR is not group- or world-writable.
+    """Verify _RUNS_DIR and _SLOTS_DIR are not group- or world-writable.
 
-    Raises PermissionError if the directory's permissions are too permissive.
+    Raises PermissionError if any directory's permissions are too permissive.
+    A lock directory anyone can write is not a lock (F3 fix).
     """
-    try:
-        st = os.stat(_RUNS_DIR)
-    except OSError as exc:
-        raise PermissionError(
-            f"cannot stat runs directory {_RUNS_DIR}: {exc}"
-        )
-    mode = st.st_mode
-    if mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise PermissionError(
-            f"runs directory {_RUNS_DIR} has permissions "
-            f"{oct(stat.S_IMODE(mode))} — refusing to run because a "
-            "writable runs directory defeats isolation"
-        )
+    for label, path in [("runs", _RUNS_DIR), ("slots", _SLOTS_DIR)]:
+        try:
+            st = os.stat(path)
+        except OSError as exc:
+            raise PermissionError(
+                f"cannot stat {label} directory {path}: {exc}"
+            )
+        mode = st.st_mode
+        if mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise PermissionError(
+                f"{label} directory {path} has permissions "
+                f"{oct(stat.S_IMODE(mode))} — refusing to run because a "
+                "writable directory defeats isolation"
+            )
 
 
 def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
@@ -794,6 +839,16 @@ def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
     inner_ws = os.path.join(_RUNS_DIR, run_id)
 
     try:
+        # Record run_id in the claim directory BEFORE creating the inner
+        # workspace.  Order matters (F2 fix): a concurrent reconcile() sees
+        # the mapping before the run directory exists, so a claim directory
+        # never exists without its run_id mapping.  Between this write and
+        # os.mkdir below, reconcile() sees a slot claimed with a run_id
+        # whose directory does not yet exist — the grace period in reconcile
+        # (couple seconds) prevents it from removing the non-existent run
+        # directory prematurely.
+        _claim_set_run_id(slot_name, run_id)
+
         try:
             os.mkdir(inner_ws, 0o700)
         except FileExistsError:
@@ -802,9 +857,6 @@ def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
                 "refusing to reuse; a pre-existing directory may contain "
                 "symlinks planted by the worker"
             )
-
-        # Record run_id in the claim directory for reconcile() mapping.
-        _claim_set_run_id(slot_name, run_id)
 
         # Stage all ingress files while the directory is still owner-only.
         for fn in os.listdir(workspace):

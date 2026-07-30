@@ -72,12 +72,14 @@ ws = sys.argv[1]
 # Read config (written by host-side canary).
 config_path = os.path.join(ws, "config.json")
 writable_target = None
+write_marker = None
 config_err = None
 if os.path.exists(config_path):
     try:
         with open(config_path) as f:
             config = json.load(f)
         writable_target = config.get("writable_path")
+        write_marker = config.get("write_marker", "should-succeed")
     except (OSError, json.JSONDecodeError) as e:
         config_err = str(e)
 
@@ -116,9 +118,9 @@ else:
         "detail": "writable target path not in config — cannot assess",
     }
 
-# 7. Attempt to write inside the workspace
+# 7. Attempt to write inside the workspace with the canary-supplied marker.
 inside = os.path.join(ws, "inside_test.txt")
-checks["write_inside"] = _try_write_file(inside, "should-succeed")
+checks["write_inside"] = _try_write_file(inside, write_marker)
 
 with open(os.path.join(ws, "result.json"), "w") as f:
     json.dump({"checks": checks}, f)
