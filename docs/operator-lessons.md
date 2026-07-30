@@ -145,3 +145,32 @@ failure, and an observatory whose record never lands has produced nothing.
 
 **When a pull request shows no checks at all, ask who opened it before asking
 what is wrong with the checks.**
+
+## An environment variable silently outranks the credential you configured
+
+**2026-07-30.** `gh secret set` failed with `HTTP 403: Resource not accessible by
+personal access token`, pointing at the token that was being *stored* rather than
+the one doing the storing.
+
+The cause: `gh auth status` showed a keyring OAuth login with the `repo` scope,
+which may write secrets. But `~/.config/secrets/env` also exports `GH_TOKEN`, and
+**`gh` prefers the environment variable over the keyring**. That variable held a
+fine-grained PAT without the Secrets permission. Measured, same command twice:
+
+```
+with GH_TOKEN in the environment:  HTTP 403
+env -u GH_TOKEN:                   rc=0
+```
+
+The remedy is per-command: `env -u GH_TOKEN gh …`.
+
+This is the second instance of the same shape in one day. `jcode run` ignored the
+`JCODE_PROVIDER` / `JCODE_MODEL` variables recorded as its canonical invocation,
+took a different path, and **failed over to a model from the operator's own
+provider** — surfacing only because that model demanded credits. Both times a
+tool consulted a source of configuration the operator was not thinking about, and
+both times the error message named the wrong thing.
+
+**When a credential error names the wrong actor, ask which credential the tool
+actually picked up before adjusting permissions.** Permissions were never the
+problem in either case.
