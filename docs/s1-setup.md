@@ -226,6 +226,10 @@ echo "=== Wrapper ==="
 ls -l "$BASE/worker_exec.sh"
 # -rwxr-xr-x  root  wheel
 
+echo "=== Kill helper ==="
+ls -l "$BASE/worker_kill.sh"
+# -rwxr-xr-x  root  wheel
+
 echo "=== Profile ==="
 ls -l "$BASE/profiles/worker.sb"
 # -rw-r--r--  root  wheel
@@ -234,8 +238,10 @@ echo "=== Canary scripts ==="
 ls -l "$BASE/canaries/"
 # -r--r--r--  root  wheel  _fake_attacker.py
 # -r--r--r--  root  wheel  fs_confinement.py
+# -r--r--r--  root  wheel  ingress_symlink.py
 # -r--r--r--  root  wheel  no_network.py
 # -r--r--r--  root  wheel  pid_limit.py
+# -r--r--r--  root  wheel  symlink_egress.py
 # -r--r--r--  root  wheel  tree_kill.py
 
 echo "=== Boundary check ==="
@@ -253,6 +259,97 @@ find "$BASE" -perm -o+w -ls
 sudo -u _jcode_worker touch "$BASE/canaries/test_write" 2>&1 \
     && echo "FAIL: worker can write to canary dir" \
     || echo "PASS: worker cannot write to canary dir"
+```
+
+---
+
+## Step 5 — Install the tree-kill helper
+
+The backend uses `pkill -9 -u _jcode_worker` via `worker_kill.sh` to
+kill every process owned by the worker user.  Without it `kill_all()`
+cannot work at all, and `tree_kill` and `pid_limit` both fail.
+
+### 5a — Install the script
+
+```bash
+REPO="/path/to/federation-recon"
+BASE="/usr/local/var/jcode-runs"
+
+sudo cp "$REPO/core/worker_kill.sh" "$BASE/worker_kill.sh"
+sudo chown root:wheel "$BASE/worker_kill.sh"
+sudo chmod 0755 "$BASE/worker_kill.sh"
+```
+
+Root ownership is critical: the caller must not be able to rewrite
+what sudoers permits.  If the owner could modify `worker_kill.sh`,
+a compromised owner account could replace it with arbitrary code
+executed as `_jcode_worker` via the NOPASSWD sudoers line.
+
+### 5b — Add the NOPASSWD sudoers line
+
+Add this **exact** line to `/etc/sudoers.d/jcode-worker` (the same
+file from Step 3), replacing `<owner>` with your account name:
+
+```
+<owner>  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_kill.sh ""
+```
+
+For user `ss`, the file should now contain two lines:
+
+```
+ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
+ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_kill.sh ""
+```
+
+Why running **as the worker** rather than as root: a process may
+signal processes of its own uid (POSIX `kill` permission check).
+`pkill -9 -u _jcode_worker` executed as `_jcode_worker` signals
+only worker-owned processes — no root capability is added.  A
+root-owned kill helper would grant the owner root-level kill
+authority over the worker via the NOPASSWD line, which is
+unnecessary.
+
+Then fix permissions if not already done:
+
+```bash
+sudo chown root:wheel /etc/sudoers.d/jcode-worker
+sudo chmod 440 /etc/sudoers.d/jcode-worker
+```
+
+### 5c — Verify
+
+In the style of Step 3 checks:
+
+```bash
+# The permitted no-argument invocation SUCCEEDS.
+# pkill exits 1 when nothing matched, which is success here.
+# Run it from / — sudo hands the helper the caller's working directory,
+# and if the worker cannot read that directory /bin/sh writes a
+# "shell-init: error retrieving current directory" complaint to stderr
+# before the script's own `cd /` can run. The backend passes cwd="/"
+# for exactly this reason, and judges the kill by an empty stderr.
+(cd / && sudo -n -u _jcode_worker /usr/local/var/jcode-runs/worker_kill.sh)
+# Expected: exit 0 or 1 (no worker processes), no stderr, no prompt.
+# If sudo prompts for a password, the sudoers line is missing or wrong.
+
+# The same command WITH any argument is REFUSED.
+sudo -n -u _jcode_worker /usr/local/var/jcode-runs/worker_kill.sh --help
+# Expected: "sudo: a password is required".
+#
+# The trailing "" in the sudoers line is load-bearing and is the reason
+# this is refused. A sudoers command written WITHOUT it permits the
+# command with ANY arguments — measured on this machine before the ""
+# was added: `worker_kill.sh --help` ran, and only the script's own
+# `[ $# -eq 0 ] || exit 1` stopped it. The guard in the script is
+# defence in depth; the sudoers restriction is the control. An earlier
+# revision of this document claimed sudoers refused the argument form
+# when it did not.
+
+# An arbitrary command as _jcode_worker is still REFUSED.
+# This proves the two NOPASSWD entries did not widen into general
+# worker access.
+sudo -n -u _jcode_worker /bin/sh
+# Expected: "sudo: a password is required"
 ```
 
 ---
@@ -280,13 +377,41 @@ Profile: /usr/local/var/jcode-runs/profiles/worker.sb
            fork bomb stopped after N concurrent children in parent (rlimit enforced)
   canary tree_kill: PASS
            escapee PID NNNNN was alive before kill_all and gone after. uid-based kill survived the setsid+double-fork escape attempt.
+  canary symlink_egress: PASS
+           backend refused symlink egress: not a regular file: ...  Zero bytes of planted secret reached host workspace.
+  canary ingress_symlink: PASS
+           backend refused pre-created run directory: ...  Target file content unchanged.
 
-Canary suite: 4/4 capabilities confirmed.
+Canary suite: 6/6 capabilities confirmed.
 
 All canaries complete.  Ready for orders (S2+).
 ```
 
-`4/4 capabilities confirmed` means pass.  Anything else is fail.
+`6/6 capabilities confirmed` means pass.  Anything else is fail.
+
+### Canary inventory
+
+Each canary proves one capability of the isolation boundary:
+
+| Canary | What it proves |
+|---|---|
+| `no_network` | The sandbox profile blocks TCP and DNS. |
+| `fs_confinement` | The sandbox profile blocks reads of secrets, home, keychains, private-tmp, and writes outside the workspace. |
+| `pid_limit` | `ulimit -u` (RLIMIT_NPROC) enforced in the wrapper stops a fork bomb. |
+| `tree_kill` | `pkill -9 -u _jcode_worker` terminates a daemonised grandchild that escaped the original process group (setsid+double-fork). |
+| `symlink_egress` | The egress path rejects symlinks — `O_NOFOLLOW` + `S_ISREG` prevents confused-deputy exfiltration. |
+| `ingress_symlink` | The ingress path rejects pre-existing run directories — `os.mkdir` without `exist_ok` and `O_EXCL|O_NOFOLLOW` on write prevent writing through a worker-planted symlink. |
+
+### File inventory
+
+Files installed under `/usr/local/var/jcode-runs/`:
+
+| Path | Mode | Owner | Purpose |
+|---|---|---|---|
+| `worker_exec.sh` | `0755` | `root:wheel` | Gateway wrapper (the only command sudoers permits as `_jcode_worker`) |
+| `worker_kill.sh` | `0755` | `root:wheel` | Tree-kill helper (runs `pkill -9 -u _jcode_worker` via sudo) |
+| `profiles/worker.sb` | `0644` | `root:wheel` | Apple Seatbelt sandbox profile |
+| `canaries/*.py` | `0444` | `root:wheel` | Payload scripts executed inside the sandbox (not the canary orchestrators — those run from the repo)
 
 ### Refusal demo
 

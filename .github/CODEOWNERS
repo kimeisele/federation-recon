@@ -32,3 +32,9 @@
 /scripts/                           @federation-operator
 /schemas/                           @federation-operator
 /.github/                           @federation-operator
+
+# The execution and rights boundary — /core/ carries the sandbox profile,
+# the sudo-invoked wrappers and the capability policy.  A PR changing
+# them can widen the boundary with green CI, so a second credential
+# must approve.
+/core/                              @federation-operator

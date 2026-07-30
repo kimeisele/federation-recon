@@ -112,6 +112,32 @@ def _read_fd_all(fd, max_bytes):
     return bytes(data)
 
 
+def _write_file_secure(dst, data):
+    """Write *data* to *dst* with symlink-attack defences.
+
+    Creates *dst* with O_EXCL | O_NOFOLLOW — refuses to follow an
+    existing symlink or to overwrite an existing entry.  fstat+verifies
+    S_ISREG on the newly created file before writing.
+
+    Raises PermissionError on any violation.
+    """
+    fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            os.close(fd)
+            raise PermissionError(
+                f"destination is not a regular file after creation: {dst}"
+            )
+        os.write(fd, data)
+    except PermissionError:
+        os.close(fd)
+        raise
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def _copy_file_secure(src, dst, max_bytes=None):
     """Copy *src* to *dst* with symlink-attack defences.
 
@@ -119,7 +145,9 @@ def _copy_file_secure(src, dst, max_bytes=None):
     with nlink == 1.  Opened with O_NOFOLLOW; re-verified via fstat.
 
     When *max_bytes* is set, the copy is capped at that value and a
-    PermissionError is raised if the source exceeds it.
+    PermissionError is raised if the source exceeds it.  The cap is
+    checked BEFORE reading (by fstat) and AFTER reading (by length),
+    defending against file growth between the two calls.
 
     Raises PermissionError on any violation.  Silent skip is not acceptable.
     """
@@ -137,8 +165,16 @@ def _copy_file_secure(src, dst, max_bytes=None):
         # is not acceptable — max_bytes=None means no cap, not a hidden 64 KiB.
         data = _read_fd_all(fd, max_bytes)
 
-        with open(dst, "wb") as out:
-            out.write(data)
+        # Post-read cap check: a file that grew between fstat and read would
+        # pass the pre-read check but exceed the cap.  Reject it rather than
+        # silently writing past the limit.
+        if max_bytes is not None and len(data) > max_bytes:
+            raise PermissionError(
+                f"file grew between stat and read: read {len(data)} bytes "
+                f"but cap is {max_bytes}: {src}"
+            )
+
+        _write_file_secure(dst, data)
     finally:
         os.close(fd)
 
@@ -291,24 +327,37 @@ def run(canary_name, workspace, run_id=None, teardown=True):
     policy = _load_policy()
     lim = policy["limits"]
 
-    # Per-run directory under the root-owned base.  Mode 0777 so the
-    # worker can read and write its own workspace.  The sandbox profile
-    # — not Unix permissions — is the confinement boundary for what
-    # runs inside.  The base directory (0771 root:wheel) prevents
-    # non-wheel users from creating or listing entries under it.
+    # Per-run directory under the root-owned base.  Created EXCLUSIVELY:
+    # a pre-existing directory is an attack (the worker could have
+    # planted symlinks inside it).  Mode 0o700 during staging so no
+    # other process can see or modify files while they are being copied.
+    # Changed to 0o777 after staging so the sandbox can read/write.
+    # The base directory (0771 root:wheel) prevents non-wheel users
+    # from creating or listing entries under it.
     if run_id is None:
         run_id = os.path.basename(workspace)
     inner_ws = os.path.join(_RUNS_DIR, run_id)
-    os.makedirs(inner_ws, exist_ok=True)
-    os.chmod(inner_ws, 0o777)
+    try:
+        os.mkdir(inner_ws, 0o700)
+    except FileExistsError:
+        raise PermissionError(
+            f"run directory already exists: {inner_ws} — "
+            "refusing to reuse; a pre-existing directory may contain "
+            "symlinks planted by the worker"
+        )
 
-    # Copy caller's workspace files into the inner workspace that the
-    # sandbox will confine.  The canary script itself is NOT written
-    # here — it runs from the root-owned canary dir.
+    # Stage all ingress files while the directory is still owner-only.
+    # This prevents a confused-deputy attack where the worker pre-creates
+    # a symlink under inner_ws that points to an owner-writable file.
     for fn in os.listdir(workspace):
         src = os.path.join(workspace, fn)
         dst = os.path.join(inner_ws, fn)
         _copy_ingress(src, dst)
+
+    # Hand the workspace over to the worker.  The sandbox profile —
+    # not Unix permissions — is the confinement boundary for what
+    # runs inside.
+    os.chmod(inner_ws, 0o777)
 
     # The wrapper takes run_id and canary_name.  It resolves the canary
     # script from the root-owned canary directory; the caller cannot
@@ -403,3 +452,94 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         "kill_ok": kill_ok,
         "egress_skipped": egress_skipped,
     }
+
+
+# ── Regression test: egress growth race ────────────────────────────────────
+
+def test_egress_growth_race():
+    """Regression test: file that grows between fstat and read.
+
+    Creates a small file, hooks _secure_open_read to extend the file
+    BETWEEN the fstat and the return (simulating growth), then calls
+    _copy_file_secure with a byte cap.  Asserts PermissionError is
+    raised (the post-read cap check) and the destination was never
+    created.
+
+    This is deterministic because the file is extended synchronously
+    before the read — no race window, no timing dependency.
+
+    Returns (passed, message).
+    """
+    import importlib as _importlib
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    tmp = _tempfile.mkdtemp(prefix="growth_race_")
+    try:
+        src = os.path.join(tmp, "source.bin")
+        dst = os.path.join(tmp, "dest.bin")
+        cap = 500
+
+        # Write initial content under the cap: 100 bytes.
+        with open(src, "wb") as f:
+            f.write(b"x" * 100)
+
+        # Hook _secure_open_read to extend the file after fstat
+        # but before returning the fd/fst pair.
+        _orig_secure_open = _secure_open_read
+
+        def _hooked_secure_open(path):
+            fd, fst = _orig_secure_open(path)
+            # File is now open and stat'd.  Extend it well past the
+            # cap so the read returns more data than max_bytes.
+            # os.write on the same fd would update the fd's position,
+            # so extend via a separate open call.
+            _fd2 = os.open(path, os.O_WRONLY | os.O_APPEND)
+            try:
+                os.write(_fd2, b"y" * 1000)
+            finally:
+                os.close(_fd2)
+            return fd, fst
+
+        import sys as _sys
+        _mod = _sys.modules[__name__]
+        _mod._secure_open_read = _hooked_secure_open
+
+        try:
+            _copy_file_secure(src, dst, max_bytes=cap)
+            # No exception — post-read check is missing.
+            _mod._secure_open_read = _orig_secure_open
+            return False, (
+                f"_copy_file_secure did NOT raise on a file that grew "
+                f"past the {cap}-byte cap — post-read cap check may "
+                "be missing"
+            )
+        except PermissionError:
+            # Expected: the post-read check caught the oversized read.
+            _mod._secure_open_read = _orig_secure_open
+        except Exception as exc:
+            _mod._secure_open_read = _orig_secure_open
+            return False, (
+                f"_copy_file_secure raised {type(exc).__name__}: {exc} "
+                "instead of PermissionError"
+            )
+
+        # Verify the destination was NOT created (O_EXCL would have
+        # prevented creation only if the write path was never reached,
+        # but the PermissionError should have been raised before any
+        # write).
+        if os.path.exists(dst):
+            return False, (
+                f"destination file {dst} was created despite "
+                "PermissionError — O_EXCL/O_NOFOLLOW defence may "
+                "not have prevented the write"
+            )
+
+        return True, (
+            f"_copy_file_secure correctly raised PermissionError on "
+            f"file that grew past the {cap}-byte cap; destination was "
+            "not created"
+        )
+
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)
