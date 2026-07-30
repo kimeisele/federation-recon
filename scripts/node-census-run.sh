@@ -44,6 +44,14 @@ PROCEDURE_VERSION="v1"
 STALE_DAYS="${RECON_STALE_DAYS:-60}"
 SELF_REPO="kimeisele/federation-recon"
 
+# Single source of truth for the adopted observed set.
+# Reuses the same grep parsing pattern as manifest-gate.sh (scripts/lib/manifest-gate.sh).
+# Chosen as the single reference so the manifest parsers stay in sync — the gate
+# checks pin→manifest membership with the same regex, and the census reads the
+# adopted set for recording scope from the same document. A hard-coded list here
+# would drift from the manifest exactly as the census drifted from it before (#82).
+MANIFEST_FILE="$REPO_ROOT/docs/repository-manifest.md"
+
 # Output directories
 mkdir -p "$REPO_ROOT/pins/$PIN_NAMESPACE" "$REPO_ROOT/evidence"
 mkdir -p "$REPO_ROOT/findings" "$REPO_ROOT/coverage"
@@ -70,7 +78,9 @@ declare -A NODE_DESCRIPTOR   # slug → true|false
 declare -A NODE_CHARTER      # slug → true|false
 declare -A NODE_LAST_COMMIT  # slug → ISO date
 
-NODE_SLUGS=()  # ordered list of discovered node slugs
+NODE_SLUGS=()        # ordered list of ALL discovered node slugs (unbounded)
+ADOPTED_SLUGS=()     # subset of NODE_SLUGS present in the manifest adopted observed set
+CANDIDATE_SLUGS=()   # discovered slugs NOT in the adopted set — written to candidates record
 RUN_TIMESTAMP=""
 RUN_RESULT="success"
 PARTIAL_FAILURES=0
@@ -121,6 +131,98 @@ for item in arr:
   log "  Self-observation: added ${SELF_REPO} (FR-CON-011)"
 }
 
+# ---- Adopted set from manifest (reuses manifest-gate.sh's grep pattern) --
+
+# parse_manifest_adopted_slugs <manifest_file>
+# Prints the sorted list of repository slugs in the manifest's adopted observed set.
+# Returns 0 on success, 1 if the manifest is missing, unparseable, or empty.
+# Uses the identical grep/sed pattern as check_pin_manifest_membership in
+# scripts/lib/manifest-gate.sh to keep the two parsers in deterministic sync.
+parse_manifest_adopted_slugs() {
+  local manifest_file="$1"
+
+  if [ ! -f "$manifest_file" ]; then
+    log "  Manifest file not found: $manifest_file"
+    return 1
+  fi
+
+  # Extract repository slugs from the adopted-observed-set table.
+  # Table rows have the shape: | `kimeisele/<slug>` | ... | yes |
+  # Parse the first backtick-delimited column, strip the kimeisele/ prefix.
+  # Same pattern as manifest-gate.sh: grep for | `kimeisele/ lines,
+  # then sed extracts the slug between backticks.
+  local slugs
+  slugs=$(
+    grep -E '^\| `kimeisele/' "$manifest_file" \
+    | sed -n 's/^| `kimeisele\/\([^`]*\)` .*/\1/p' \
+    | sort -u
+  )
+
+  if [ -z "$slugs" ]; then
+    log "  Could not parse any adopted repository from manifest: $manifest_file"
+    return 1
+  fi
+
+  printf '%s\n' "$slugs"
+}
+
+# ---- Candidates record for non-adopted discoveries -----------------------
+
+# write_candidates_record
+# Writes digest/census-candidates.json listing every discovered slug that is
+# NOT in the manifest's adopted observed set.
+#
+# Location choice: digest/census-candidates.json is a sibling of per-node
+# coverage records under coverage/.  The pin→manifest gate (manifest-gate.sh)
+# only inspects pins/*.json and pins/*/*.json, so this path is invisible to it.
+# Putting it in coverage/ keeps it alongside the per-node coverage artefacts
+# without risking a false-positive gate failure.
+#
+# The record is sorted deterministically by slug, uses the frozen RUN_TIMESTAMP
+# for its observation_date (identical in live and reproduce mode), and contains
+# no live mutable data (no pushed_at, no commit SHAs) — satisfying the
+# FR-CON-012 reproduce-fixpoint constraint.
+write_candidates_record() {
+  log "=== Writing candidates record: ${#CANDIDATE_SLUGS[@]} non-adopted slugs ==="
+
+  # Sort candidates deterministically by slug
+  local sorted_slugs=()
+  while IFS= read -r slug; do
+    sorted_slugs+=("$slug")
+  done < <(printf '%s\n' "${CANDIDATE_SLUGS[@]}" | sort)
+
+  # Build candidates array JSON
+  local candidates_json=""
+  local first=true
+  for slug in "${sorted_slugs[@]}"; do
+    if $first; then
+      first=false
+    else
+      candidates_json+=","
+    fi
+    candidates_json+=$'\n'"    {"
+    candidates_json+=$'\n'"      \"slug\": $(json_val "$slug"),"
+    candidates_json+=$'\n'"      \"discovery_source\": \"topic-search\","
+    candidates_json+=$'\n'"      \"observation_date\": $(json_val "$RUN_TIMESTAMP")"
+    candidates_json+=$'\n'"    }"
+  done
+
+  local json
+  json=$(cat <<ENDJSON
+{
+  "run_timestamp": $(json_val "$RUN_TIMESTAMP"),
+  "procedure_id": $(json_val "$PROCEDURE_ID"),
+  "procedure_version": $(json_val "$PROCEDURE_VERSION"),
+  "candidates": [${candidates_json}
+  ]
+}
+ENDJSON
+  )
+
+  write_json "digest/census-candidates.json" "$json"
+  log "  Candidates record written to digest/census-candidates.json"
+}
+
 # ---- Phase 2: Resolve & Pin each node --------------------------------
 
 resolve_pins() {
@@ -144,7 +246,7 @@ for n in state.get('nodes',[]):
 " 2>/dev/null || true)
   fi
 
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local repo="kimeisele/${slug}"
     local sha="" ref="${REPO_REF[$repo]:-main}"
 
@@ -199,7 +301,7 @@ save_run_state() {
   log "=== Saving run state for reproducibility ==="
   local nodes_json="["
   local first=true
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local repo="kimeisele/${slug}"
     local updated="${REPO_UPDATED[$repo]:-}"
     $first || nodes_json+=","
@@ -208,13 +310,27 @@ save_run_state() {
   done
   nodes_json+="]"
 
+  # Candidates must be persisted, not just loaded. The reproduce path already
+  # reads state["candidates"]; without this writer it read an empty list and the
+  # candidates record collapsed from seven entries to one. Slug only — no
+  # mutable fields — so the record reproduces byte-identically.
+  local candidates_json="["
+  local cfirst=true
+  for slug in "${CANDIDATE_SLUGS[@]}"; do
+    $cfirst || candidates_json+=","
+    cfirst=false
+    candidates_json+="$(json_val "$slug")"
+  done
+  candidates_json+="]"
+
   local state_json
   state_json=$(cat <<ENDJSON
 {
   "run_timestamp": $(json_val "$RUN_TIMESTAMP"),
   "procedure_id": $(json_val "$PROCEDURE_ID"),
   "procedure_version": $(json_val "$PROCEDURE_VERSION"),
-  "nodes": $nodes_json
+  "nodes": $nodes_json,
+  "candidates": $candidates_json
 }
 ENDJSON
 )
@@ -227,7 +343,7 @@ ENDJSON
 collect_evidence() {
   log "=== Phase 3: Collect flat evidence per node ==="
 
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local repo="kimeisele/${slug}"
     local sha="${REPO_SHA[$repo]:-}"
     local pin_file="${PIN_FILES[$slug]:-}"
@@ -354,7 +470,7 @@ except: print('')
 generate_findings() {
   log "=== Phase 4: Generate Findings per node ==="
 
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local repo="kimeisele/${slug}"
     local sha="${REPO_SHA[$repo]:-}"
 
@@ -455,7 +571,7 @@ record_coverage() {
   local caps_missing=""
   command -v jq &>/dev/null || caps_missing="jq"
 
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local pin_file="${PIN_FILES[$slug]:-}"
     [ -z "$pin_file" ] && continue
 
@@ -482,7 +598,7 @@ perform_self_observation() {
     self_issues+="partial_node_failures:${PARTIAL_FAILURES};"
   fi
 
-  local total_nodes=${#NODE_SLUGS[@]}
+  local total_nodes=${#ADOPTED_SLUGS[@]}
   local pinned_nodes=0
   for slug in "${!PIN_FILES[@]}"; do pinned_nodes=$(( pinned_nodes + 1 )); done
 
@@ -536,7 +652,7 @@ generate_census_digest() {
   local rank_score
   declare -A RANK_SCORE
 
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     local status="${NODE_STATUS[$slug]:-error}"
     local descriptor="${NODE_DESCRIPTOR[$slug]:-false}"
 
@@ -558,7 +674,7 @@ generate_census_digest() {
   local sorted_slugs=()
   while IFS=' ' read -r score s; do
     sorted_slugs+=("$s")
-  done < <(for slug in "${NODE_SLUGS[@]}"; do
+  done < <(for slug in "${ADOPTED_SLUGS[@]}"; do
     printf '%s %s\n' "${RANK_SCORE[$slug]}" "$slug"
   done | sort -t' ' -k1,1n -k2,2)
 
@@ -656,7 +772,7 @@ ENDAI
   count_dir() { { ls -1 "$1"/*.json 2>/dev/null || true; } | wc -l | tr -d ' '; }
 
   local stale_count=0 ok_count=0 error_count=0
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     case "${NODE_STATUS[$slug]:-error}" in
       stale) stale_count=$(( stale_count + 1 )) ;;
       observed) ok_count=$(( ok_count + 1 )) ;;
@@ -677,7 +793,7 @@ ENDAI
   "evidence": ${pc_ev},
   "findings": ${pc_find},
   "coverage_records": ${pc_cov},
-  "observed_nodes": ${#NODE_SLUGS[@]},
+  "observed_nodes": ${#ADOPTED_SLUGS[@]},
   "stale_nodes": ${stale_count},
   "ok_nodes": ${ok_count},
   "error_nodes": ${error_count},
@@ -737,6 +853,9 @@ validate_outputs() {
 
   for f in coverage/*.json; do
     [ -f "$f" ] || continue
+    # digest/census-candidates.json is a different structure (candidates list,
+    # not a per-node coverage record). It has its own schema; skip it here.
+    [[ "$(basename "$f")" == "census-candidates.json" ]] && continue
     if ! validate_json_schema "$f" "schemas/coverage-record.schema.json"; then
       warn "Schema error: $f"
       errors=$(( errors + 1 ))
@@ -779,7 +898,9 @@ print_summary() {
   log "  Procedure: ${PROCEDURE_ID} / ${PROCEDURE_VERSION}"
   log "  Timestamp: ${RUN_TIMESTAMP}"
   log "  Result: ${RUN_RESULT}"
-  log "  Nodes discovered: ${#NODE_SLUGS[@]} (${#PIN_FILES[@]} pinned)"
+  log "  Nodes discovered: ${#NODE_SLUGS[@]}"
+  log "  Adopted and recorded: ${#ADOPTED_SLUGS[@]} (${#PIN_FILES[@]} pinned)"
+  log "  Candidates (non-adopted): ${#CANDIDATE_SLUGS[@]}"
   log "  Evidence: $(ls -1 evidence/*.json 2>/dev/null | wc -l | tr -d ' ') files"
   log "  Findings: $(ls -1 findings/*.json 2>/dev/null | wc -l | tr -d ' ') files"
   log "  Coverage: $(ls -1 coverage/*.json 2>/dev/null | wc -l | tr -d ' ') files"
@@ -787,7 +908,7 @@ print_summary() {
   log ""
 
   local stale_count=0 ok_count=0 err_count=0
-  for slug in "${NODE_SLUGS[@]}"; do
+  for slug in "${ADOPTED_SLUGS[@]}"; do
     case "${NODE_STATUS[$slug]:-error}" in
       stale) stale_count=$(( stale_count + 1 )) ;;
       observed) ok_count=$(( ok_count + 1 )) ;;
@@ -819,9 +940,16 @@ main() {
     # claim observed_at reproduce byte-identically instead of re-stamping.
     frozen_ts="$(python3 -c "import json; print(json.load(open('digest/census-run-state.json')).get('run_timestamp',''))" 2>/dev/null || true)"
     [ -n "${frozen_ts:-}" ] && RUN_TIMESTAMP="$frozen_ts"
-    # Freeze ALL derived timestamps (coverage/finding/drift) to the same value.
-    export RECON_FROZEN_TS="$RUN_TIMESTAMP"
   fi
+
+  # Freeze ALL derived timestamps (coverage/finding/drift) to the run timestamp,
+  # in BOTH modes. Previously only reproduce froze them, so a live run stamped
+  # each finding with the wall clock at the moment it was created while reproduce
+  # flattened them all to the run timestamp. Any run lasting longer than a second
+  # then failed the fixpoint — measured at 28 s of drift once the census grew a
+  # manifest parse. All artifacts of one observation carry that observation's
+  # time; that is what an observation timestamp means.
+  export RECON_FROZEN_TS="$RUN_TIMESTAMP"
 
   log "=== Federation Node Census v1 ==="
   log "Timestamp: ${RUN_TIMESTAMP}"
@@ -858,6 +986,79 @@ main() {
   fi
   budget_checkpoint "discovery"
 
+  # ---- Compute adopted set from manifest (#82) -------------------------
+  # Discovery was unbounded (all topic-search results + self). Now we bound
+  # recording: only slugs in the manifest's adopted observed set proceed to
+  # pinning, evidence, findings, coverage, and digest. Non-adopted
+  # discoveries go to the candidates record instead of being silently dropped.
+  ADOPTED_SLUGS=()
+  CANDIDATE_SLUGS=()
+
+  if $reproduce; then
+    # Reproduce mode: all pin-derived slugs are adopted by definition — they
+    # came from committed pin files that already passed the pin→manifest gate.
+    # Skip the manifest parse-and-validate dance; just use NODE_SLUGS as-is.
+    ADOPTED_SLUGS=("${NODE_SLUGS[@]}")
+    # Candidates cannot be rediscovered here — no topic search runs in reproduce
+    # mode — so they are read back from the run state the live run persisted.
+    # Emptying them instead made the candidates record collapse from seven
+    # entries to one, which is a silent loss of an observation.
+    CANDIDATE_SLUGS=()
+    if [ -f "digest/census-run-state.json" ]; then
+      mapfile -t CANDIDATE_SLUGS < <(python3 -c "
+import json
+try:
+    st = json.load(open('digest/census-run-state.json'))
+except Exception:
+    raise SystemExit(0)
+for s in st.get('candidates', []):
+    print(s)
+" 2>/dev/null || true)
+    fi
+    log "  Reproduce mode: ${#ADOPTED_SLUGS[@]} pin-derived slugs adopted, ${#CANDIDATE_SLUGS[@]} candidates from saved state"
+  else
+    # Live mode: parse the manifest and classify discoveries.
+    local manifest_slugs
+    manifest_slugs=$(parse_manifest_adopted_slugs "$MANIFEST_FILE") || {
+      die "Could not parse any adopted repository from ${MANIFEST_FILE} —" \
+        "census cannot determine which nodes it is authorised to record." \
+        "Refusing to run with an empty authorisation set."
+    }
+
+    # Build lookup table
+    declare -A IS_ADOPTED
+    while IFS= read -r slug; do
+      [ -n "$slug" ] && IS_ADOPTED["$slug"]=1
+    done < <(printf '%s\n' "$manifest_slugs")
+
+    # Classify each discovered slug
+    for slug in "${NODE_SLUGS[@]}"; do
+      if [ "${IS_ADOPTED[$slug]:-}" = "1" ]; then
+        ADOPTED_SLUGS+=("$slug")
+      else
+        CANDIDATE_SLUGS+=("$slug")
+      fi
+    done
+
+    if [ "${#ADOPTED_SLUGS[@]}" -eq 0 ]; then
+      die "Adopted set is empty — ${MANIFEST_FILE} contains no adopted repositories." \
+        "Census cannot record any nodes. An empty census would look like a" \
+        "successful run that observed a federation of zero nodes, which is a" \
+        "silent failure. Fix the manifest before running the census."
+    fi
+
+    log "  Manifest scope: ${#ADOPTED_SLUGS[@]} adopted, ${#CANDIDATE_SLUGS[@]} candidates (${#NODE_SLUGS[@]} discovered)"
+  fi
+
+  # Canonical order for BOTH modes. Sorting only the live branch left reproduce
+  # on pin-directory order, so the same seven nodes still produced two
+  # sequences. Discovery order — and directory order — are accidents and must
+  # never reach an artifact.
+  mapfile -t ADOPTED_SLUGS < <(printf '%s\n' "${ADOPTED_SLUGS[@]}" | LC_ALL=C sort)
+  if [ "${#CANDIDATE_SLUGS[@]}" -gt 0 ]; then
+    mapfile -t CANDIDATE_SLUGS < <(printf '%s\n' "${CANDIDATE_SLUGS[@]}" | LC_ALL=C sort)
+  fi
+
   # Phase 2: Resolve & pin
   resolve_pins "$reproduce"
   budget_checkpoint "pins"
@@ -874,6 +1075,11 @@ main() {
   # Phase 5: Coverage
   record_coverage
   budget_checkpoint "coverage"
+
+  # Candidates record: non-adopted discoveries are visible here rather than
+  # silently dropped. (#82) Written after coverage so the log states both
+  # counts (adopted-and-recorded vs candidates) together.
+  write_candidates_record
 
   # Phase 6: Self-observation
   perform_self_observation
