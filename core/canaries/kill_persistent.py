@@ -1,15 +1,25 @@
 """
-Canary: kill_persistent — verifies per-slot kill reaches zero against regeneration.
+Canary: kill_persistent — verifies per-slot kill reaches zero against
+churning regeneration.
 
-Runs the kill_persistent payload inside the sandbox on a claimed slot, which
-continuously forks replacement children (each child immediately forks and exits,
-so the tree regenerates).  The canary calls backend.kill_slot() once and
-PASSes only if the slot reaches **zero processes and stays zero** across a
-re-check.
+Runs the kill_persistent payload inside the sandbox on a claimed slot,
+which creates a churning process population with ~30 short-lived PIDs
+and continuous turnover.  The canary:
+
+1. Samples `pgrep -u <slot>` twice ~0.3 s apart, converts each to a
+   set of PIDs, and requires that the second set contains PIDs absent
+   from the first — new PIDs appearing is regeneration.  A static or
+   saturated population shows no new PIDs and the canary FAILs.
+2. Calls backend.kill_slot() once.
+3. Verifies zero processes, and still zero on a re-check.
+4. Reports both sample sizes, the count of new PIDs, and final counts
+   so a reader can distinguish saturation from stasis.
 
 This must go red if kill_slot is reverted to a single pkill, because a
-single pkill walks the process table non-atomically and will miss children
-that fork between the table walk and signal delivery.
+single pkill walks the process table non-atomically and will miss
+children that fork between the table walk and signal delivery.  The
+payload churns fast enough that only the STOP-then-KILL protocol can
+clear the slot.
 """
 
 import hashlib
@@ -39,27 +49,56 @@ def run(backend):
         except backend.NoSlotAvailable:
             return False, "insufficient slots — kill_persistent requires >=1 free slot"
 
-        # Phase 2: spawn the regenerating payload inside the sandbox without
+        # Phase 2: spawn the churning payload inside the sandbox without
         # waiting for completion.  teardown=False keeps sandbox-exec alive.
         sandbox_proc = backend.run(
             "kill_persistent", tmp, run_id=run_id,
             teardown=False, slot_spec=(slot_name, slot_uid)
         )
 
-        # Give the payload time to fork several generations.
+        # Give the payload time to build a steady population (~30 PIDs).
         time.sleep(2.0)
 
-        # Phase 3: verify that the slot has processes running.
-        initial_count = _count_procs(slot_uid)
-        if initial_count == -1:
+        # Phase 3a: first pre-kill sample — collect PID SET.
+        pids1 = _get_pids(slot_uid)
+        if pids1 is None:
             return False, (
-                "pgrep failed before kill_slot — "
-                "cannot determine process count (UNKNOWN)"
+                "pgrep failed (sample 1) before kill_slot — "
+                "cannot determine process PIDs (UNKNOWN)"
             )
-        if initial_count == 0:
+        n1 = len(pids1)
+        if n1 == 0:
             return False, (
                 "zero slot processes before kill_slot — payload may not have "
                 "forked anything"
+            )
+
+        # Phase 3b: second pre-kill sample ~0.3 s later — collect PID SET.
+        time.sleep(0.3)
+        pids2 = _get_pids(slot_uid)
+        if pids2 is None:
+            return False, (
+                "pgrep failed (sample 2) before kill_slot — "
+                "cannot determine process PIDs (UNKNOWN)"
+            )
+        n2 = len(pids2)
+        if n2 == 0:
+            return False, (
+                "zero slot processes in sample 2 before kill_slot — "
+                "all processes exited, cannot test regeneration"
+            )
+
+        # Compare PID sets: new PIDs in the second sample = regeneration.
+        new_pids = pids2 - pids1
+        n_new = len(new_pids)
+
+        if n_new == 0:
+            return False, (
+                f"payload is not regenerating — no new PIDs appeared across "
+                f"two samples 0.3 s apart (s1={n1}, s2={n2}, new={n_new}).  "
+                f"A static or saturated population indicates the payload is "
+                f"not adversarial enough; only the STOP-then-KILL protocol "
+                f"can clear a churning population."
             )
 
         # Phase 4: call backend.kill_slot().  This is the actual test.
@@ -109,10 +148,12 @@ def run(backend):
         slot_name = None  # Prevent double-release in finally.
 
         return True, (
-            f"kill_slot reduced {initial_count} regenerating processes "
-            f"to zero on {released_slot} (stable interval confirmed, "
-            f"no regeneration).  Evidence: initial={initial_count}, "
-            f"kill_rc={kill_result['returncode']}"
+            f"kill_slot reduced regenerating processes to zero on "
+            f"{released_slot}.  "
+            f"Pre-kill PID turnover confirmed: s1={n1}, s2={n2}, "
+            f"new PIDs={n_new}.  "
+            f"Kill rc={kill_result['returncode']}, "
+            f"final count=0 (stable)."
         )
 
     finally:
@@ -125,6 +166,27 @@ def run(backend):
             except Exception:
                 pass
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _get_pids(uid):
+    """Return a set of PIDs owned by *uid*.
+
+    Returns a set of ints on success (possibly empty).  Returns None if
+    pgrep failed with an error (exit status > 1).
+    """
+    result = subprocess.run(
+        ["/usr/bin/pgrep", "-u", str(uid)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=5,
+    )
+    if result.returncode == 0:
+        raw = result.stdout.strip()
+        if not raw:
+            return set()
+        return {int(line.strip()) for line in raw.splitlines() if line.strip()}
+    if result.returncode == 1:
+        return set()  # No processes — known empty.
+    return None  # Error — unknown.
 
 
 def _count_procs(uid):

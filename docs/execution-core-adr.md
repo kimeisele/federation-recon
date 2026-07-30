@@ -221,7 +221,29 @@ Aufbau: `sudo -u worker env -i sandbox-exec -f profile.sb /usr/bin/python3 job.p
 | `RLIMIT_CPU` | greift, Prozess getötet |
 | `RLIMIT_AS` (Speicher) | **`ValueError` — auf macOS nicht setzbar** |
 
-**Behauptbare Fähigkeiten:** `no_network`, `fs_confinement`, `pid_limit`, `tree_kill` — jeweils nach bestandenem Canary.
+**Behauptbare Fähigkeiten:** `no_network`, `fs_confinement`, `pid_limit`,
+`tree_kill`, `kill_persistent`, `symlink_egress`, `ingress_symlink`,
+`pool_integrity` — jeweils nach bestandenem Canary.
+
+Seit S1 ist jede Fähigkeit ein **Paar** aus Verweigerung und Erhaltung, nicht
+eine Verweigerungseigenschaft allein. Ein Loch besteht jeden Erhaltungstest,
+eine Leiche besteht jeden Verweigerungstest — dieses Projekt hat eine Leiche
+ausgeliefert: eine Härtung legte Eingabedateien als `0600` an, der Worker konnte
+seine eigene Konfiguration nicht mehr lesen, die Sandbox war funktionsunfähig,
+und alle sieben Canaries blieben grün. Dieselbe Änderung als Mutation gegen den
+heutigen Stand macht zwei Canaries rot und verweigert die Bereitschaftsmeldung.
+
+**Gemessene Grenze bei `tree_kill`.** Der Canary belegt die Fähigkeit: der Slot
+erreicht null Prozesse und bleibt dort, gegen einen Baum, der nachweislich
+regeneriert (gemessen: 11 von 14 PIDs binnen 0,3 s ausgetauscht). Was **nicht**
+gemessen ist, ist die Notwendigkeit des STOP-dann-KILL-Protokolls: ein einzelnes
+`pkill -9` räumt denselben Baum ebenso vollständig ab, und zwei direkte
+Experimente zur Unterscheidung sind an der Instrumentierung gescheitert, nicht
+an der Sache. Das Protokoll bleibt, weil es strikt stärker ist und nichts
+kostet, und weil das Argument dafür — `pkill` durchläuft die Prozesstabelle
+nicht atomar, ein früh besuchter Prozess kann einen Ersatz forken, der nie
+besucht wird — theoretisch tragfähig ist. Es bleibt **begründet, nicht belegt**.
+Wer es später entfernt, entfernt eine Annahme, keinen Messwert.
 
 **Nicht behauptbar:**
 
