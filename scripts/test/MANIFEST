@@ -22,6 +22,7 @@ heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
 manifest-gate.bats
+pin-gate.bats
 seatbelt-unit.bats
 state-gate.bats
 suite-inventory.bats

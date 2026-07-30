@@ -23,6 +23,14 @@
 #      records what was supposed to run, so a deleted test file leaves the
 #      remaining ones green.
 #
+#   6. Pin validation gate: verifies every pin is correct — membership in the
+#      manifest's adopted set, reachability from the requested ref, monotonic
+#      movement (no backwards steps), and bounded change in the pin set. The
+#      reproduce fixpoint answers "are artifacts reproducible from these pins?",
+#      not "are these pins correct?" — this section answers the second question.
+#      Network-dependent predicates (reachability, monotonicity) return UNKNOWN
+#      and fail the run when gh is unavailable.
+#
 # Full end-to-end --reproduce determinism (which requires network + gh to fetch
 # pinned repository contents) is intentionally NOT run here so the PR gate stays
 # fast and offline. See scripts/verify-determinism.sh for that deeper check.
@@ -44,7 +52,7 @@ unset GLOBIGNORE BASH_ENV 2>/dev/null || true
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/5] strict artifact validation =="
+echo "== [1/6] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -60,7 +68,7 @@ fi
 source "$(dirname "$0")/lib/manifest-gate.sh"
 
 echo
-echo "== [2/5] pin → manifest membership =="
+echo "== [2/6] pin → manifest membership =="
 if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
   echo "  OK"
 else
@@ -68,7 +76,7 @@ else
 fi
 
 echo
-echo "== [3/5] composed digest idempotency =="
+echo "== [3/6] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
@@ -97,7 +105,7 @@ rm -rf "$tmp"
 source "$(dirname "$0")/lib/consultation-gate.sh"
 
 echo
-echo "== [4/5] consultation artifact gate =="
+echo "== [4/6] consultation artifact gate =="
 # PR number: env var (CI) takes priority, else try to extract from branch name.
 pr="${CONSULTATION_PR_NUMBER:-}"
 if [ -z "$pr" ]; then
@@ -114,10 +122,32 @@ fi
 source "$(dirname "$0")/lib/suite-inventory.sh"
 
 echo
-echo "== [5/5] test suite inventory =="
+echo "== [5/6] test suite inventory =="
 if check_suite_inventory "scripts/test/MANIFEST" "scripts/test"; then
   echo "  OK"
 else
+  fail=1
+fi
+
+# ---- Pin validation gate ----------------------------------------------------
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/pin-gate.sh"
+
+# When no previous_pins_dir is given, pin-gate.sh reads the previous pin
+# version from git history, comparing against BASE_REF (default origin/main).
+# In GitHub Actions CI, GITHUB_BASE_REF carries the PR target branch name.
+BASE_REF="${BASE_REF:-${GITHUB_BASE_REF:-origin/main}}"
+export BASE_REF
+
+echo
+echo "== [6/6] pin validation gate =="
+if check_pin_validity "pins/*/*.json" "docs/repository-manifest.md"; then
+  echo "  OK"
+else
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    echo "  UNKNOWN — network-dependent predicates could not run (gh unavailable)"
+  fi
   fail=1
 fi
 

@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CONSULTATION_PR_NUMBER: ${{ github.event.pull_request.number }}
+      # The pin validation gate compares each pinned commit against its ref on
+      # the observed repository, which needs an authenticated gh. Without this
+      # the gate correctly reported UNKNOWN for every pin and failed the run —
+      # the right behaviour and the wrong cause. The observed repositories are
+      # public, so the repository-scoped token suffices to read them.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
