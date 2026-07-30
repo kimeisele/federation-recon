@@ -10,9 +10,40 @@ no session context.
 
 | Reviewer | Provider | Invocation |
 |---|---|---|
-| Fable 5 | Anthropic | `JCODE_PROVIDER=claude JCODE_MODEL=claude-fable-5 jcode run` |
-| Sol 5.6 | OpenAI | `JCODE_PROVIDER=openai JCODE_MODEL=gpt-5.6-sol jcode run` |
-| Kimi K3 | Moonshot | `JCODE_PROVIDER=moonshotai JCODE_MODEL=kimi-k3 jcode run` |
+| Fable 5 | Anthropic | `jcode run -p claude -m claude-fable-5` |
+| Sol 5.6 | OpenAI | `jcode run -p openai -m gpt-5.6-sol` |
+| Kimi K3 | Moonshot | direct API — see below. **Do not use `jcode run` for Kimi.** |
+
+**The `JCODE_PROVIDER=` / `JCODE_MODEL=` form recorded here until 2026-07-30 did
+not work.** Those variables are not read by `jcode run`, which takes `-p` / `-m`.
+The Kimi entry additionally named the provider id `moonshotai`; the correct id is
+`moonshot-ai`, and `jcode run -p moonshot-ai` then hangs — measured at 17
+minutes, 0.0% CPU, zero network connections, zero bytes of output.
+
+Worse: the broken invocation **failed over to Anthropic Fable 5** and surfaced
+only because that model demanded credits. With credits available it would have
+returned a plausible answer that would have been filed as a Kimi judgment — from
+the same provider as the operator, defeating the entire requirement.
+
+So the rule below is not about flags:
+
+> **A tool with silent provider failover cannot be the control that guarantees
+> provider independence.** Its success proves nothing about who answered.
+
+Call the provider's endpoint directly, and record the `model` field from the
+response together with the endpoint. That is evidence; a command that exited 0 is
+not. For Kimi:
+
+```bash
+set -a; . ~/.config/secrets/env; set +a     # MOONSHOT_API_KEY lives here
+curl -s https://api.moonshot.ai/v1/chat/completions \
+  -H "Authorization: Bearer $MOONSHOT_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"kimi-k3","messages":[{"role":"user","content":"..."}]}'
+```
+
+`kimi-k3` accepts only `temperature: 1` — sending any other value returns HTTP
+400. Models available on that endpoint as of 2026-07-30: `kimi-k2.6`,
+`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k3`.
 
 ## When to call whom
 
