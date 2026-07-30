@@ -6,6 +6,14 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:  # manual trigger
 
+# Only one census may run at a time. A scheduled run and a manual dispatch used
+# to be able to overlap, each pushing its own branch and opening its own pull
+# request, leaving two observations of the same day racing each other to merge.
+# A manual dispatch now queues behind a running scheduled census.
+concurrency:
+  group: node-census
+  cancel-in-progress: false
+
 permissions:
   contents: write         # needed to push the observation branch
   pull-requests: write    # the observation arrives as a pull request, not a push
@@ -76,6 +84,10 @@ jobs:
         if: success() || failure()  # a partial observation is still evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          # Optional. Absent, the step still opens the pull request but warns
+          # loudly that it will receive no checks — a visible degradation rather
+          # than a silent one.
+          CENSUS_PR_TOKEN: ${{ secrets.CENSUS_PR_TOKEN }}
         run: |
           git config user.name "federation-recon[bot]"
           git config user.email "recon-bot@kimeisele.github.io"
@@ -93,6 +105,31 @@ jobs:
           git checkout -b "$BRANCH"
           git commit -m "federation recon composed digest ${DATE}"
           git push origin "$BRANCH"
+
+          # The branch is pushed with GITHUB_TOKEN, but the pull request is opened
+          # under a SEPARATE identity — and that distinction is the whole point.
+          #
+          # GitHub deliberately does not trigger workflows from events created by
+          # GITHUB_TOKEN, to prevent a workflow from triggering itself. So every
+          # observation opened this way received ZERO checks, while the branch
+          # ruleset requires two to pass. Five observations accumulated, none
+          # mergeable, and the cause looked like a policy decision rather than
+          # the token-identity accident it was.
+          #
+          # CENSUS_PR_TOKEN carries `pull_requests: write` and NOTHING ELSE — in
+          # particular no `contents` scope. It cannot push a branch, so a leak of
+          # it cannot place crafted artifacts in the repository; it can only open
+          # a pull request over a branch that GITHUB_TOKEN already wrote. That
+          # asymmetry matters because the reproduce-fixpoint check proves the
+          # artifacts follow from the pins, which an attacker controlling both
+          # sides could satisfy trivially.
+          if [ -n "${CENSUS_PR_TOKEN:-}" ]; then
+            export GH_TOKEN="$CENSUS_PR_TOKEN"
+          else
+            echo "::warning::CENSUS_PR_TOKEN is not set — opening the pull request with GITHUB_TOKEN."
+            echo "::warning::Workflows are NOT triggered by GITHUB_TOKEN events, so this observation"
+            echo "::warning::will receive no checks and cannot satisfy the required-checks ruleset."
+          fi
 
           gh pr create \
             --base "${GITHUB_REF_NAME:-main}" \

@@ -120,3 +120,28 @@ The guard `scripts/test/consultation-diff-hygiene.bats` (registered in
 MANIFEST) checks for this defect.  If it fails, regenerate with the exclusion
 pathspec above.
 
+
+## An observation that cannot be checked cannot be merged
+
+**2026-07-30.** Five daily observations accumulated as open pull requests, none
+mergeable, for two reasons that both looked like policy and were not.
+
+The census opened its pull request with `${{ github.token }}`. GitHub does not
+trigger workflows from events created by `GITHUB_TOKEN` — a deliberate guard
+against a workflow triggering itself. So the observations received **zero**
+checks while the branch ruleset required two, and were permanently `BLOCKED`.
+Nothing was misconfigured in the ruleset; the identity of the token silently
+decided that no check would ever run.
+
+Separately, a live run's output was never a fixpoint: all three procedures froze
+derived timestamps only in `--reproduce`, so a live run stamped each artifact
+with the wall clock at the moment it was written while reproduce flattened them
+to the run timestamp. An observation could not reproduce itself, so it could not
+have passed the fixpoint check even if the check had run.
+
+Two independent structural blocks, both invisible as long as nobody asked *why*
+the queue was growing. The queue looked like a backlog. It was a delivery
+failure, and an observatory whose record never lands has produced nothing.
+
+**When a pull request shows no checks at all, ask who opened it before asking
+what is wrong with the checks.**
