@@ -1,0 +1,11 @@
+{
+  "consumption_id": "consumption-02b0362366bd",
+  "referencing_repository": "kimeisele/hermes-sankhya-25",
+  "referencing_file_path": "AGENTS.md",
+  "line_number": 103,
+  "referenced_finding_id": null,
+  "reference_type": "repo_reference",
+  "repository_pin": "pins/v2-consumption/hermes-sankhya-25.json",
+  "observed_at": "2026-07-30T08:16:11Z",
+  "cycle": 2
+}
