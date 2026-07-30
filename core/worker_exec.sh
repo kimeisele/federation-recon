@@ -2,17 +2,21 @@
 set -e
 
 # worker_exec.sh — root-owned gateway into the seatbelt sandbox.
-# The sudoers line permits ONLY this script; no other command may run
-# as _jcode_worker.  The caller supplies a validated run-id and canary
-# name; workspace, profile, and canary directory are hard-coded below.
+# The sudoers line permits ONLY this script as the slot uid.  The caller
+# supplies a validated run-id and canary name; workspace, profile, and
+# canary directory are hard-coded below.
+#
+# Invoked via "sudo -u <slot_name> .../worker_exec.sh <run_id> <canary_name>".
+# The slot uid derives its identity from the uid switch, not from a
+# command-line argument.
 
 [ $# -eq 2 ] || {
     echo "worker_exec.sh: expected exactly 2 arguments, got $#" >&2
     exit 1
 }
 
-# sudo startet uns mit dem cwd des Aufrufers. Der Worker darf es nicht
-# lesen, was jeden getcwd-Aufruf scheitern laesst. Sofort wegwechseln.
+# sudo started us with the caller's cwd.  The worker must not read it,
+# which would cause every getcwd call to fail.  Switch away immediately.
 cd / || exit 1
 
 RUN_ID="$1"
@@ -65,12 +69,15 @@ CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
     exit 1
 }
 
-# Resource limits are applied HERE, not by the caller: sudo has already
-# switched to the worker uid, so RLIMIT_NPROC counts the worker's processes
-# rather than the owner's. Applied before exec, inherited by everything below.
-# Fail-closed: if a limit cannot be applied, the wrapper exits non-zero before
-# exec.  Silently continuing without an enforced limit while claiming it is
-# the defect this infrastructure exists to prevent.
+# Resource limits are applied HERE, after the uid switch, so RLIMIT_NPROC
+# counts the slot's processes (per-run) rather than the owner's.
+# Applied before exec, inherited by everything below.
+# Fail-closed: if a limit cannot be applied, the wrapper exits non-zero
+# before exec.
+#
+# Note: RLIMIT_NPROC is per-uid on macOS.  With per-run uids (slot pool)
+# this limit is now per-RUN, which is what bounds the kill protocol's
+# convergence — with a shared uid it bounded nothing.
 ulimit -u 64  2>/dev/null || {
     echo "worker_exec.sh: FAILED to set RLIMIT_NPROC (ulimit -u 64)" >&2
     exit 1
@@ -87,8 +94,8 @@ ulimit -f 10240  2>/dev/null || {
 # env -i guarantees the owner's environment never crosses the boundary.
 # The workspace path is passed as a positional argument so the canary
 # script knows where to write results (it lives outside the workspace).
-# Python haelt das cwd im Modulsuchpfad. Liegt es ausserhalb des
-# Workspace, scheitert jeder Import mit PermissionError.
+# Python holds the cwd in the module search path.  If it is outside the
+# workspace, every import fails with PermissionError.
 cd "$WORKSPACE" || exit 1
 
 exec /usr/bin/env -i PATH=/usr/bin:/bin \

@@ -1,6 +1,7 @@
 {
   "backend": "macos-seatbelt",
   "claimed_capabilities": [
+    "pool_integrity",
     "no_network",
     "fs_confinement",
     "pid_limit",

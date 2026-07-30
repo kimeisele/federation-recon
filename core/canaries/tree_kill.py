@@ -1,30 +1,20 @@
 """
-Canary: tree_kill — host-side orchestrator.
+Canary: tree_kill — paired denial+preservation test across two slots.
 
-Runs the tree_kill payload inside the sandbox, then verifies that
-backend.kill_all() terminates a daemonised escapee.
+Runs the tree_kill payload on slot A (escapee), and a decoy payload on
+slot B (long-running compute that produces a correct result).  Verifies
+that:
+  - Denial: the escapee on slot A is dead after the kill.
+  - Preservation: the decoy on slot B is STILL ALIVE and returns its
+    correct output.
 
-Must hold: a child that does setsid(), double-forks, and daemonises,
-leaving the original process group, MUST still be terminable by
-backend.kill_all() — a uid-based pkill.  The canary FAILs if the
-escapee disappeared before kill_all() was called, because that
-proves nothing about the mechanism.
+This requires >=2 free slots.  If fewer are free, the canary fails with
+"insufficient slots" — it does not skip.
 
-Mechanism:
-  1. Run the escapee payload inside the sandbox with teardown=False
-     so sandbox-exec stays alive and the escapee is observable.
-  2. Read the grandchild PID from escapee.pid.
-  3. Verify the escapee is alive (via /bin/ps -p) — if dead, FAIL.
-  4. Verify the pid's owner is the worker uid — a recycled pid owned
-     by someone else is not evidence.
-  5. Call backend.kill_all().  This IS the test.
-  6. Poll up to ~5 s for the pid to disappear.  Still alive → FAIL.
-  7. PASS only if alive-before and gone-after, stating what was actually
-     observed.
-  8. die_now exists ONLY as a cleanup fallback in finally; it must not
-     influence the verdict.
+Keystone capability: it tests the property the entire pool exists to provide.
 """
 
+import hashlib
 import os
 import secrets
 import shutil
@@ -34,109 +24,211 @@ import tempfile
 import time
 
 _INNER_BASE = "/usr/local/var/jcode-runs/runs"
-_WORKER_USER = "_jcode_worker"
 
 
 def run(backend):
-    run_id = _gen_run_id()
-    tmp = tempfile.mkdtemp(prefix="canary_tree_kill_")
+    run_id_a = _gen_run_id()
+    run_id_b = _gen_run_id()
+    tmp_a = tempfile.mkdtemp(prefix="canary_tree_kill_a_")
+    tmp_b = tempfile.mkdtemp(prefix="canary_tree_kill_b_")
 
-    sandbox_proc = None
+    slot_a = None
+    slot_b = None
+    sandbox_proc_a = None
+    sandbox_proc_b = None
+
     try:
-        # Phase 1: spawn the escapee inside the sandbox without waiting
-        # for completion.  teardown=False keeps sandbox-exec alive so the
-        # kernel does not tear down the seatbelt sandbox and kill the
-        # escapee before we can observe it.
-        sandbox_proc = backend.run("tree_kill", tmp, run_id=run_id, teardown=False)
+        # Phase 1: claim two slots.
+        # Use the backend's claim mechanism directly.
+        try:
+            slot_a, uid_a = backend._claim_slot()
+            slot_b, uid_b = backend._claim_slot()
+        except backend.NoSlotAvailable:
+            return False, (
+                "insufficient slots — tree_kill requires >=2 free slots "
+                "for the paired denial+preservation test"
+            )
 
-        # Give the daemonised grandchild a moment to write its PID.
-        # The backend already slept 1 s; an extra beat here is cheap insurance.
-        time.sleep(0.5)
+        # Phase 2: start decoy on slot B (preservation side) and escapee
+        # on slot A (denial side).  Both with teardown=False so the sandbox
+        # stays alive and processes are observable.
+        # 
+        # Decoy on B: kill_persistent payload (stays alive, continuously
+        # forks children).  We verify B's processes survive A's kill.
+        # Escapee on A: tree_kill payload (daemonised grandchild).
+        sandbox_proc_b = backend.run(
+            "kill_persistent", tmp_b, run_id=run_id_b,
+            teardown=False, slot_spec=(slot_b, uid_b)
+        )
+        time.sleep(0.5)  # Let B fork a few children.
 
-        pid_file = os.path.join(tmp, "escapee.pid")
+        # Start escapee on slot A
+        sandbox_proc_a = backend.run(
+            "tree_kill", tmp_a, run_id=run_id_a,
+            teardown=False, slot_spec=(slot_a, uid_a)
+        )
+        time.sleep(1.5)  # Let the escapee daemonise.
+
+        # ── Phase 3: read escapee PID and verify it's alive ──────────
+        pid_file = os.path.join(tmp_a, "escapee.pid")
         if not os.path.exists(pid_file):
             return False, "escapee did not write PID file — double-fork may have failed"
 
         with open(pid_file) as f:
             escapee_pid = int(f.read().strip())
 
-        # Phase 2: verify the escapee is ALIVE before we call kill_all.
-        # If it is already dead here we cannot prove anything — the
-        # canary must distinguish "terminated by us" from "died on its own".
         if not _pid_alive(escapee_pid):
             return False, (
-                f"escapee PID {escapee_pid} died on its own before kill_all was called — "
+                f"escapee PID {escapee_pid} died on its own before kill — "
                 "proves nothing about uid-based kill"
             )
 
-        # Phase 3: verify the pid's owner is the worker uid.
-        # A recycled pid owned by someone else is not evidence.
-        owner = _pid_owner(escapee_pid)
-        if owner != _WORKER_USER:
+        # Verify B has processes running.
+        b_before = _count_procs(uid_b)
+        if b_before == -1:
             return False, (
-                f"escapee PID {escapee_pid} is owned by '{owner}', "
-                f"not '{_WORKER_USER}' — recycled pid, not evidence"
+                f"decoy on {slot_b}: pgrep failed before kill — "
+                "cannot determine process count (UNKNOWN)"
+            )
+        if b_before == 0:
+            return False, (
+                f"decoy on {slot_b} has zero processes before kill — "
+                "cannot serve as preservation test"
             )
 
-        # Phase 4: call backend.kill_all().  This is the actual test.
-        kill_result = backend.kill_all()
+        # ── Phase 4: count B's processes BEFORE kill as evidence ─────
+        # Verify the escapee is owned by slot A.
+        owner = _pid_owner(escapee_pid)
+        if owner != slot_a:
+            return False, (
+                f"escapee PID {escapee_pid} is owned by '{owner}', "
+                f"not '{slot_a}' — recycled pid, not evidence"
+            )
+
+        # ── Phase 5: KILL slot A ────────────────────────────────────
+        kill_result = backend.kill_slot(slot_a, uid_a)
         if not kill_result["ok"]:
             return False, (
-                f"kill_all returned failure: returncode={kill_result['returncode']}, "
+                f"kill_slot({slot_a}) returned failure: "
+                f"returncode={kill_result['returncode']}, "
                 f"stderr={kill_result['stderr']!r}"
             )
 
-        # Phase 5: poll up to ~5 s for the pid to disappear.
+        # Phase 6: release slot A (prove empty)
+        backend._release_slot(slot_a, uid_a)
+
+        # ── Phase 7: verify escapee on A is dead (denial) ───────────
         deadline = time.time() + 5.0
         while time.time() < deadline:
             if not _pid_alive(escapee_pid):
                 break
             time.sleep(0.2)
         else:
-            # Still alive after polling — kill_all did not reach it.
             return False, (
-                f"escapee PID {escapee_pid} SURVIVED backend.kill_all() — "
-                "uid-based pkill did not terminate the daemonised grandchild"
+                f"escapee PID {escapee_pid} SURVIVED kill_slot({slot_a}) — "
+                "denial test FAIL"
             )
 
-        # Phase 6: escapee is gone.  Wait for the sandbox process to finish.
-        _wait_sandbox(sandbox_proc)
+        denial_ok = True
+
+        # ── Phase 8: verify decoy on B is still alive (preservation) ─
+        b_after = _count_procs(uid_b)
+        if b_after == -1:
+            return False, (
+                f"decoy on {slot_b}: pgrep failed after A's kill — "
+                "cannot determine process count (UNKNOWN)"
+            )
+        if b_after == 0:
+            return False, (
+                f"decoy on {slot_b} had {b_before} processes before A's kill "
+                f"and zero after — decoy was killed!  Preservation test FAIL"
+            )
+
+        # Give decoy a moment to continue running.
+        time.sleep(0.5)
+        b_still = _count_procs(uid_b)
+        if b_still == -1:
+            return False, (
+                f"decoy on {slot_b}: pgrep failed during re-check — "
+                "cannot determine process count (UNKNOWN)"
+            )
+        if b_still == 0:
+            return False, (
+                f"decoy on {slot_b} died shortly after A's kill — "
+                "preservation test FAIL"
+            )
+
+        preservation_ok = True
+
+        # ── Phase 9: clean up B ─────────────────────────────────────
+        # Kill and release slot B (don't interfere with B's process for
+        # the cleanliness of the test — release it properly).
+        # Wait for the sandbox to complete naturally or kill it.
+        try:
+            if sandbox_proc_b is not None and sandbox_proc_b.poll() is None:
+                # Write die_now to make kill_persistent exit
+                try:
+                    inner_b = os.path.join(_INNER_BASE, run_id_b)
+                    with open(os.path.join(inner_b, "die_now"), "w") as f:
+                        f.write("1")
+                except Exception:
+                    pass
+                sandbox_proc_b.wait(timeout=3)
+        except Exception:
+            pass
+
+        kill_result_b = backend.kill_slot(slot_b, uid_b)
+        backend._release_slot(slot_b, uid_b)
+
+        # Clean up sandbox proc A
+        if sandbox_proc_a is not None:
+            _wait_sandbox(sandbox_proc_a)
 
         return True, (
-            f"escapee PID {escapee_pid} was alive before kill_all and gone after — "
-            "uid-based kill survived the setsid+double-fork escape attempt"
+            f"denial — escapee PID {escapee_pid} on {slot_a} killed and gone.  "
+            f"preservation — decoy on {slot_b} had {b_before} procs before "
+            f"A's kill and {b_still} after (alive and running).  "
+            "Paired tree_kill test PASS."
         )
 
     finally:
-        # die_now is ONLY a cleanup fallback here, not the test.
+        # Cleanup fallback.
         try:
-            inner_ws = os.path.join(_INNER_BASE, run_id)
-            with open(os.path.join(inner_ws, "die_now"), "w") as f:
-                f.write("1")
+            if slot_a is not None:
+                try:
+                    backend.kill_slot(slot_a, uid_a)
+                except Exception:
+                    pass
+                try:
+                    backend._release_slot(slot_a, uid_a)
+                except Exception:
+                    pass
         except Exception:
             pass
         try:
-            backend.kill_all()
-        except backend.KillUnavailable:
-            pass
-        if sandbox_proc is not None:
-            _wait_sandbox(sandbox_proc)
-        # Clean up the inner workspace left by teardown=False.
-        try:
-            backend.cleanup(run_id)
+            if slot_b is not None:
+                try:
+                    backend.kill_slot(slot_b, uid_b)
+                except Exception:
+                    pass
+                try:
+                    backend._release_slot(slot_b, uid_b)
+                except Exception:
+                    pass
         except Exception:
             pass
-        shutil.rmtree(tmp, ignore_errors=True)
+
+        if sandbox_proc_a is not None:
+            _wait_sandbox(sandbox_proc_a)
+        if sandbox_proc_b is not None:
+            _wait_sandbox(sandbox_proc_b)
+
+        shutil.rmtree(tmp_a, ignore_errors=True)
+        shutil.rmtree(tmp_b, ignore_errors=True)
 
 
 def _pid_alive(pid):
-    """Return True if a process with *pid* exists.
-
-    Uses ps(1) rather than os.kill(pid, 0) because the canary runs as the
-    owner and the escapee runs as _jcode_worker.  macOS returns EPERM for
-    cross-uid signals (even signal 0).  ps -p reads the kernel process
-    table, which is visible to all users.
-    """
+    """Return True if a process with *pid* exists."""
     import subprocess as _sp
     rc = _sp.run(
         ["/bin/ps", "-p", str(pid), "-o", "pid="],
@@ -158,6 +250,25 @@ def _pid_owner(pid):
         return ""
 
 
+def _count_procs(uid):
+    """Return the number of processes owned by *uid*.
+
+    Returns an int on success (0 or more).  Returns -1 if pgrep failed
+    with an error (exit status > 1) — the caller MUST treat -1 as UNKNOWN
+    and cannot assume zero.
+    """
+    result = subprocess.run(
+        ["/usr/bin/pgrep", "-u", str(uid)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=5,
+    )
+    if result.returncode == 0:
+        return len(result.stdout.strip().splitlines())
+    if result.returncode == 1:
+        return 0  # No processes — known empty.
+    return -1  # Error — unknown.
+
+
 def _wait_sandbox(proc):
     """Wait for the sandbox process to finish, forcefully if needed."""
     if proc is None:
@@ -173,4 +284,9 @@ def _wait_sandbox(proc):
 
 def _gen_run_id(length=16):
     alphabet = string.ascii_letters + string.digits + "_-"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _gen_marker(length=24):
+    alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))

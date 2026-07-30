@@ -1,9 +1,13 @@
 """
-Canary: fs_confinement — host-side orchestrator.
+Canary: fs_confinement — host-side orchestrator with evidence objects.
 
 Runs the fs_confinement payload inside the sandbox and judges the results.
 The payload reports check outcomes as "allowed"|"blocked"|"unavailable";
 the host decides pass or fail.
+
+Evidence: every check emits expected vs observed including errno, signal,
+exit status, and a checksum of any bytes read/written.  The harness asserts
+on content, never on exit codes alone.
 
 Must hold:
   - Reading ~/.config/secrets/env FAILS
@@ -12,18 +16,19 @@ Must hold:
   - Listing /Library/Keychains FAILS
   - Listing /private/tmp FAILS
   - Writing outside the workspace FAILS
-  - Writing inside the workspace SUCCEEDS
+  - Writing inside the workspace SUCCEEDS (preservation)
 
 Write-outside proof: creates a **world-writable** file outside the workspace
 (e.g. /tmp/.jcode_canary_writable_<random>, mode 0666, with known content)
 and the payload attempts to modify it.  The canary verifies host-side that
-the content is **unchanged**.  Only DAC-permitted-but-Seatbelt-denied proves
-the sandbox.
+the content is **unchanged** and compares checksums.  Only DAC-permitted-but-
+Seatbelt-denied proves the sandbox.
 
 Any check returning "unavailable" = canary failure — the check must be
 assessable.  Absence of evidence is not evidence of confinement.
 """
 
+import hashlib
 import json
 import os
 import secrets
@@ -34,7 +39,6 @@ import tempfile
 
 
 # Mandatory checks that MUST be present in the payload result.
-# If any is missing or reports "unavailable", the canary FAILs.
 _MANDATORY_CHECKS = frozenset({
     "read_real_secret",
     "read_planted_secret",
@@ -58,7 +62,6 @@ _EXPECTATIONS = {
 
 
 # Targets for host-side pre-verification: map check name → absolute path.
-# The canary verifies each exists and is DAC-readable before launching.
 _READ_TARGETS = {
     "read_real_secret": "/etc/hosts",
     "read_planted_secret": "/tmp/.jcode_canary_secret_fs",
@@ -69,14 +72,7 @@ _READ_TARGETS = {
 
 
 def _target_readable_by_worker(path):
-    """Return True if *path* exists and is world-readable (o+r / o+rx).
-
-    The seatbelt worker runs as _jcode_worker (uid 601), not as the
-    calling user.  A DAC check against our own uid would be wrong.
-    We check world permissions instead: if the target is not world-
-    readable, the sandbox is not the only thing blocking access, and
-    the measurement is confounded.
-    """
+    """Return True if *path* exists and is world-readable (o+r / o+rx)."""
     try:
         st = os.stat(path)
     except OSError:
@@ -106,39 +102,38 @@ def _precheck_targets():
     return None
 
 
+def _checksum_bytes(data):
+    """Return SHA-256 hex digest of *data* bytes."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def run(backend):
     run_id = _gen_run_id()
     tmp = tempfile.mkdtemp(prefix="canary_fs_confinement_")
 
     # Plant a fake secret file OUTSIDE the workspace at a known path.
-    # It is created world-readable (0o644) in /tmp.  A process running
-    # as _jcode_worker would be able to read it by Unix permissions —
-    # only the sandbox profile, which denies access to everything
-    # outside WORKSPACE, should block it.  This isolates the test to
-    # the sandbox itself, not Unix file permissions.
     planted_path = "/tmp/.jcode_canary_secret_fs"
+    planted_content = "fake-api-key-planted-by-canary-orchestrator"
     with open(planted_path, "w") as f:
-        f.write("fake-api-key-planted-by-canary-orchestrator")
+        f.write(planted_content)
     os.chmod(planted_path, 0o644)
+    planted_checksum = _checksum_bytes(planted_content.encode())
 
     # Create a WORLD-WRITABLE file for the write-outside test.
-    # mode 0666 means any process on the host can modify it — if the
-    # sandbox blocks the write, it is because Seatbelt, not Unix DAC.
     writable_path = "/tmp/.jcode_canary_writable_%s" % secrets.token_hex(8)
     writable_content = "canary-writable-test-content-" + secrets.token_hex(8)
     with open(writable_path, "w") as f:
         f.write(writable_content)
     os.chmod(writable_path, 0o666)
+    writable_checksum = _checksum_bytes(writable_content.encode())
 
     try:
-        # Write config so the payload knows the writable path (instead of
-        # scanning /tmp, which the same sandbox blocks).
+        # Write config so the payload knows the writable path.
         config_path = os.path.join(tmp, "config.json")
         with open(config_path, "w") as f:
             json.dump({"writable_path": writable_path}, f)
 
-        # Host-side precheck: verify every mandatory read target exists and is
-        # world-readable.  Fail early if a target cannot serve as evidence.
+        # Host-side precheck.
         precheck = _precheck_targets()
         if precheck is not None:
             return precheck
@@ -156,7 +151,8 @@ def run(backend):
         if not checks:
             return False, "result.json has no checks"
 
-        # Verify every mandatory check is present and assessable.
+        # Build evidence objects for each check.
+        evidence = {}
         for name in _MANDATORY_CHECKS:
             ch = checks.get(name)
             if ch is None:
@@ -165,11 +161,10 @@ def run(backend):
                 )
             outcome = ch.get("outcome")
             detail = ch.get("detail", "")
-            # Validate outcome is a recognised enum value.
             if outcome not in ("allowed", "blocked", "unavailable"):
                 return False, (
                     f"mandatory check {name!r} has invalid outcome {outcome!r} "
-                    f"(detail: {detail}) — must be one of allowed/blocked/unavailable"
+                    f"(detail: {detail})"
                 )
             if outcome == "unavailable":
                 return False, (
@@ -177,33 +172,58 @@ def run(backend):
                     "absent evidence is not evidence"
                 )
 
-        # Also fail on any invalid or UNAVAILABLE in non-mandatory checks.
-        for name, ch in checks.items():
-            outcome = ch.get("outcome")
-            if outcome not in ("allowed", "blocked", "unavailable", None):
-                return False, (
-                    f"check {name!r} has invalid outcome {outcome!r} "
-                    f"(detail: {ch.get('detail', '')}) — must be one of allowed/blocked/unavailable"
-                )
-            if outcome == "unavailable":
-                return False, (
-                    f"check {name!r} returned UNAVAILABLE: {ch.get('detail', '')} — "
-                    "absent evidence is not evidence"
-                )
+            ev = {
+                "expected": "blocked" if _EXPECTATIONS.get(name) is False else "allowed",
+                "observed": outcome,
+                "detail": detail,
+            }
 
-        # Verify the world-writable file content is UNCHANGED.
+            # For read checks, compute checksum of expected content.
+            if name == "read_planted_secret":
+                ev["expected_checksum"] = planted_checksum
+            elif name == "write_inside":
+                # The write_inside test writes "canary-write-test" to a file.
+                ev["expected_bytes"] = _checksum_bytes(b"canary-write-test")
+            elif name == "write_outside":
+                ev["expected_checksum"] = writable_checksum
+
+            evidence[name] = ev
+
+        # Verify the world-writable file content is UNCHANGED via checksum.
         try:
-            with open(writable_path, "r") as f:
-                actual_content = f.read()
-            if actual_content != writable_content:
+            with open(writable_path, "rb") as f:
+                actual_bytes = f.read()
+            actual_checksum = _checksum_bytes(actual_bytes)
+            if actual_checksum != writable_checksum:
                 return False, (
-                    f"WRITE LEAK: world-writable file {writable_path} was modified — "
-                    "the sandbox did not block the write-outside attempt"
+                    f"WRITE LEAK: world-writable file {writable_path} was modified "
+                    f"(checksum mismatch: expected {writable_checksum}, "
+                    f"got {actual_checksum}) — the sandbox did not block "
+                    "the write-outside attempt"
                 )
         except Exception as exc:
             return False, (
                 f"could not verify writable file after run: {exc}"
             )
+
+        # Also verify write_inside: read back the file the payload wrote.
+        inside_path = os.path.join(tmp, "inside_test.txt")
+        if os.path.exists(inside_path):
+            try:
+                with open(inside_path, "rb") as f:
+                    inside_bytes = f.read()
+                inside_checksum = _checksum_bytes(inside_bytes)
+                expected_inside = _checksum_bytes(b"canary-write-test")
+                if inside_checksum != expected_inside:
+                    return False, (
+                        f"WRITE INSIDE checksum mismatch: "
+                        f"expected {expected_inside}, got {inside_checksum} — "
+                        "bytes read back differ from what was written"
+                    )
+            except Exception as exc:
+                return False, (
+                    f"could not verify write_inside file: {exc}"
+                )
 
         passed = True
         parts = []

@@ -2,7 +2,8 @@
 macOS seatbelt backend for the Execution Core.
 
 Runs a command inside an Apple Seatbelt sandbox using sandbox-exec(1).
-Tree kill uses pkill -9 -u to survive setsid+double-fork escapees.
+Per-run uid pool replaces the singleton lock: slots _jcode_w01.._jcode_w08,
+uid 611..618.  Concurrency up to the pool size is **permitted**.
 
 Design invariant: the owner's environment never crosses the isolation
 boundary.  env -i guarantees an empty initial environment.
@@ -15,6 +16,7 @@ File transfer discipline (defence against confused-deputy symlink attacks):
   - Refusal is visible via raised PermissionError.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -28,26 +30,24 @@ import time
 _SANDBOX_BASE = "/usr/local/var/jcode-runs"
 _CANARY_DIR = os.path.join(_SANDBOX_BASE, "canaries")
 _RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
+_SLOTS_DIR = os.path.join(_SANDBOX_BASE, "slots")
 _PROFILE_PATH = os.path.join(_SANDBOX_BASE, "profiles", "worker.sb")
-_WORKER_USER = "_jcode_worker"
 _WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
+_KILL_SELF_PATH = os.path.join(_SANDBOX_BASE, "worker_kill_self.sh")
 
 # Egress allowlist — only these filenames may be copied out of the sandbox.
 _EGRESS_ALLOWLIST = frozenset({"result.json", "escapee.pid"})
 # Maximum bytes for any egress file (64 KiB).
 _EGRESS_MAX_BYTES = 65536
 
-# Path to the root-owned kill helper.
-_KILL_HELPER_PATH = os.path.join(_SANDBOX_BASE, "worker_kill.sh")
-
-# Lockfile for exclusive run access (see run() docstring).
-# Uses a dotted name so _sweep_stale_runs() skips it automatically.
-# Placed under _RUNS_DIR (root:wheel, drwxr-xr-x) — NOT /tmp — because a
-# lock in a world-writable directory hands the worker control over it.
-_LOCKFILE_PATH = os.path.join(_RUNS_DIR, ".run_lock")
+# Pool definition: 8 slots, uid 611..618.
+_SLOT_NAMES = ["_jcode_w01", "_jcode_w02", "_jcode_w03", "_jcode_w04",
+               "_jcode_w05", "_jcode_w06", "_jcode_w07", "_jcode_w08"]
+_SLOT_UIDS = [611, 612, 613, 614, 615, 616, 617, 618]
+_SLOT_MAP = dict(zip(_SLOT_NAMES, _SLOT_UIDS))
+_SLOT_REVERSE_MAP = dict(zip(_SLOT_UIDS, _SLOT_NAMES))
 
 _policy = None
-_swept = False
 
 
 def _load_policy():
@@ -57,6 +57,18 @@ def _load_policy():
         with open(os.path.join(_CORE, "policy.json")) as f:
             _policy = json.load(f)
     return _policy
+
+
+# ── Slot-poisoning exception ───────────────────────────────────────────────
+
+class NoSlotAvailable(Exception):
+    """Raised when every slot in the pool is claimed or quarantined.
+
+    This is the **admission path** failure: no run starts, no state exists,
+    the caller sees a clean refusal.  Moving failures from the kill path to
+    the admission path is by design — exhaustion on admission is safe.
+    """
+    pass
 
 
 # ── Secure file transfer helpers ────────────────────────────────────────────
@@ -139,7 +151,7 @@ def _write_file_secure(dst, data):
                 f"destination is not a regular file after creation: {dst}"
             )
         os.write(fd, data)
-        # fchmod to world-readable so the worker (uid 601) can read its own
+        # fchmod to world-readable so the worker (uid 611..618) can read its own
         # config.  The run directory is still 0700 at this point so nothing
         # is exposed before staging completes.  An input the worker cannot
         # read is not an input.
@@ -224,184 +236,464 @@ def _copy_ingress(src, dst):
     _copy_file_secure(src, dst)
 
 
-# ── Kill-unavailable exception ────────────────────────────────────────────
+# ── Pool status ────────────────────────────────────────────────────────────
 
-class KillUnavailable(Exception):
-    """Raised when the kill helper cannot be executed at all.
+def pool_status():
+    """Return a dict mapping slot name → status string.
 
-    Missing file, sudo refusal, or any other condition that prevents
-    the helper from running qualifies.  A kill path that cannot report
-    its own failure is the defect this exception exists to prevent.
+    Status is one of "free", "claimed", or "quarantined".
     """
-    pass
+    if not os.path.isdir(_SLOTS_DIR):
+        return {name: "free" for name in _SLOT_NAMES}
+
+    existing = set()
+    quarantined = set()
+    try:
+        for entry in os.listdir(_SLOTS_DIR):
+            if "." in entry:
+                # Quarantined entries: <slot>.quarantined.<timestamp>
+                base = entry.split(".")[0]
+                quarantined.add(base)
+            else:
+                existing.add(entry)
+    except OSError:
+        pass
+
+    status = {}
+    for name in _SLOT_NAMES:
+        if name in quarantined:
+            status[name] = "quarantined"
+        elif name in existing:
+            status[name] = "claimed"
+        else:
+            status[name] = "free"
+    return status
 
 
-# ── Tree kill ──────────────────────────────────────────────────────────────
+# ── Slot allocation ────────────────────────────────────────────────────────
 
-def kill_all():
-    """Kill every process owned by the worker user with stable-interval looping.
+def _claim_slot():
+    """Claim a free slot from the pool.
 
-    A single pkill walks the process table non-atomically.  A parent
-    considered early can fork a replacement before it is signalled, and
-    the child is never visited.  This loop defeats that race: signal,
-    then re-enumerate uid-601 processes, until the identity is empty for
-    a **stable interval** (two consecutive checks ~250 ms apart with zero
-    processes), or a deadline (~10 s) passes.
+    Allocates by exclusive os.mkdir under _SLOTS_DIR.  After claiming,
+    asserts pgrep -u <uid> reports no processes (closes slot-reuse ABA).
 
-    Uses the root-owned worker_kill.sh helper via sudo -n -u _jcode_worker.
-    Running AS the worker is sufficient: a process may signal processes of
-    its own uid.  No root privilege is needed.
+    Returns (slot_name, slot_uid).
 
-    Returns a structured dict:
-        ok          — True when uid-601 reached zero within deadline
-        returncode  — exit code from the last helper invocation
-        stderr      — stderr captured from the last helper invocation
-        killed_any  — True if any helper invocation reported rc 0
-        surviving   — count of uid-601 processes after deadline (0 on success)
-
-    Raises KillUnavailable if the helper cannot be executed at all.
+    Raises NoSlotAvailable if every slot is taken or quarantined.
     """
-    if not os.path.exists(_KILL_HELPER_PATH):
-        raise KillUnavailable(
-            f"kill helper not found: {_KILL_HELPER_PATH}"
+    # Ensure slots directory exists (root-owned, created during setup).
+    if not os.path.isdir(_SLOTS_DIR):
+        raise NoSlotAvailable(
+            f"slots directory not found: {_SLOTS_DIR} — "
+            "run s1 setup to create it"
         )
 
-    cmd = ["sudo", "-n", "-u", _WORKER_USER, _KILL_HELPER_PATH]
-    deadline = time.time() + 10.0
-    killed_any = False
-    last_rc = None
-    last_stderr = ""
-    consecutive_zero = 0
+    status = pool_status()
+    for name in _SLOT_NAMES:
+        if status[name] != "free":
+            continue
+        uid = _SLOT_MAP[name]
+        claimed = _claim_one(name, uid)
+        if claimed:
+            return name, uid
 
+    raise NoSlotAvailable(
+        "all 8 slots are claimed or quarantined — pool exhausted"
+    )
+
+
+def _claim_one(slot_name, slot_uid):
+    """Try to claim *slot_name* (uid *slot_uid*).
+
+    Returns True if the slot was successfully claimed.
+    """
+    claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+    try:
+        os.mkdir(claim_dir, 0o700)
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+
+    # After claiming, assert the slot has no surviving processes.
+    try:
+        result = subprocess.run(
+            ["/usr/bin/pgrep", "-u", str(slot_uid)],
+            capture_output=True, text=True, timeout=5,
+        )
+        # pgrep exit 0 = found processes, exit 1 = none found.
+        # Any other exit means error.
+        if result.returncode == 0:
+            # Processes found — previous run left survivors.
+            # Kill them and re-verify with a stable double-check.
+            pids = result.stdout.strip()
+            try:
+                kill_slot(slot_name, slot_uid)
+            except Exception as exc:
+                _quarantine(slot_name,
+                            f"kill_slot exception at claim time: {exc}")
+                return False
+            # Stable double-check: poll until zero, then confirm after pause.
+            try:
+                deadline = time.time() + 10.0
+                while time.time() < deadline:
+                    recheck = subprocess.run(
+                        ["/usr/bin/pgrep", "-u", str(slot_uid)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if recheck.returncode == 0:
+                        time.sleep(0.25)
+                        continue
+                    elif recheck.returncode == 1:
+                        break
+                    else:
+                        _quarantine(slot_name,
+                                    f"pgrep exit {recheck.returncode} at claim time "
+                                    f"after kill: {recheck.stderr.strip()}")
+                        return False
+                else:
+                    _quarantine(slot_name,
+                                "processes still present at claim time after kill")
+                    return False
+
+                # First zero observed — confirm stable after pause.
+                time.sleep(0.5)
+                confirm = subprocess.run(
+                    ["/usr/bin/pgrep", "-u", str(slot_uid)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if confirm.returncode != 1:
+                    _quarantine(slot_name,
+                                "processes reappeared at claim time after kill")
+                    return False
+            except Exception as exc:
+                _quarantine(slot_name,
+                            f"exception during claim-time re-verify: {exc}")
+                return False
+
+            # Cleaned successfully.  Log for observability.
+            print(
+                f"[seatbelt] slot {slot_name} needed cleaning at claim time: "
+                f"killed {pids}",
+                file=sys.stderr,
+            )
+        elif result.returncode not in (0, 1):
+            _quarantine(slot_name,
+                        f"pgrep exit {result.returncode} at claim time: "
+                        f"{result.stderr.strip()}")
+            return False
+    except subprocess.TimeoutExpired:
+        _quarantine(slot_name, "pgrep timed out at claim time")
+        return False
+    except FileNotFoundError:
+        _quarantine(slot_name, "pgrep not found at claim time")
+        return False
+
+    # Write owner pid + timestamp for human diagnosis only.
+    # Nothing may make a decision from this file.
+    try:
+        owner_path = os.path.join(claim_dir, "owner")
+        with open(owner_path, "w") as f:
+            f.write(f"pid={os.getpid()} timestamp={time.time()}")
+    except OSError:
+        pass
+
+    return True
+
+
+def _claim_set_run_id(slot_name, run_id):
+    """Record the active run_id in the claim directory for reconcile().
+
+    This creates a bidirectional mapping (slot ↔ run_id) so reconcile()
+    can determine which run directories are legitimate (correspond to
+    a currently claimed slot) vs orphaned.
+
+    This file IS used for decisions by reconcile().  It is a cross-reference
+    between the runs/ and slots/ namespaces, not a liveness inference.
+    """
+    claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+    if not os.path.isdir(claim_dir):
+        return
+    try:
+        rid_path = os.path.join(claim_dir, "run_id")
+        with open(rid_path, "w") as f:
+            f.write(run_id)
+    except OSError:
+        pass
+
+
+def _claim_get_run_id(slot_name):
+    """Return the run_id recorded for *slot_name*, or None."""
+    rid_path = os.path.join(_SLOTS_DIR, slot_name, "run_id")
+    try:
+        with open(rid_path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+# ── Quarantine ─────────────────────────────────────────────────────────────
+
+def _quarantine(slot_name, reason):
+    """Mark *slot_name* as quarantined.
+
+    Renames slots/<slot> to slots/<slot>.quarantined.<timestamp> if a
+    claim directory exists, writes the reason into it.  The slot is not
+    reused and no code path may auto-clear it.
+    """
+    claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+    ts = int(time.time())
+    q_dir = os.path.join(_SLOTS_DIR, f"{slot_name}.quarantined.{ts}")
+    try:
+        os.rename(claim_dir, q_dir)
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(q_dir, "reason"), "w") as f:
+            f.write(reason)
+    except OSError:
+        pass
+    print(
+        f"[seatbelt] SLOT QUARANTINED: {slot_name} — {reason}",
+        file=sys.stderr,
+    )
+
+
+# ── Slot release ───────────────────────────────────────────────────────────
+
+def _release_slot(slot_name, slot_uid, deadline_seconds=10):
+    """Release *slot_name* after proving it is empty.
+
+    Calls kill_slot first, then polls pgrep -u <uid> until empty, up to
+    ~10 s.  pgrep exit 0 (found) and 1 (none) are the only non-fatal
+    outcomes.  Any other exit status, and any exception, means UNKNOWN →
+    quarantine.
+
+    Only a slot proven empty is released by removing its claim directory.
+    """
+    kill_slot(slot_name, slot_uid)
+    deadline = time.time() + deadline_seconds
     while time.time() < deadline:
-        # ── Signal ────────────────────────────────────────────────────
         try:
             result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                cwd="/",
-            )
-        except FileNotFoundError:
-            raise KillUnavailable("sudo not found — cannot run kill helper")
-        except subprocess.TimeoutExpired:
-            raise KillUnavailable("kill helper timed out after 10 seconds")
-
-        rc = result.returncode
-        stderr = result.stderr or ""
-        last_rc = rc
-        last_stderr = stderr
-
-        if rc == 0:
-            killed_any = True
-
-        # ── Re-enumerate ──────────────────────────────────────────────
-        # Count uid-601 processes via pgrep.
-        try:
-            pgrep_result = subprocess.run(
-                ["/usr/bin/pgrep", "-u", _WORKER_USER],
+                ["/usr/bin/pgrep", "-u", str(slot_uid)],
                 capture_output=True, text=True, timeout=5,
             )
-        except Exception:
-            # pgrep itself failed — we cannot know how many processes remain.
-            # Fail closed rather than assuming zero.
-            return {
-                "ok": False,
-                "returncode": last_rc,
-                "stderr": last_stderr + "pgrep threw an exception — cannot count survivors",
-                "killed_any": killed_any,
-                "surviving": -1,
-            }
+        except Exception as exc:
+            _quarantine(slot_name, f"exception during release pgrep: {exc}")
+            return
 
-        if pgrep_result.returncode == 0:
-            surviving = len(pgrep_result.stdout.strip().splitlines())
-        elif pgrep_result.returncode == 1:
-            # Exit status 1 means "no processes matched" (pgrep convention).
-            surviving = 0
-        else:
-            # Exit status >1 means an error occurred — we do not know whether
-            # any processes remain.  Fail closed.
-            return {
-                "ok": False,
-                "returncode": last_rc,
-                "stderr": last_stderr + (
-                    f"pgrep exited with status {pgrep_result.returncode}: "
-                    f"{pgrep_result.stderr.strip()} — cannot count survivors"
-                ),
-                "killed_any": killed_any,
-                "surviving": -1,
-            }
-
-        if surviving == 0:
-            consecutive_zero += 1
-            if consecutive_zero >= 2:
-                # Stable interval: two consecutive empty checks.
-                return {
-                    "ok": True,
-                    "returncode": last_rc,
-                    "stderr": last_stderr,
-                    "killed_any": killed_any,
-                    "surviving": 0,
-                }
-        else:
-            consecutive_zero = 0
-
-        time.sleep(0.25)
-
-    # Deadline reached — fail closed.
-    return {
-        "ok": False,
-        "returncode": last_rc,
-        "stderr": last_stderr,
-        "killed_any": killed_any,
-        "surviving": surviving,
-    }
-
-
-# ── Run ────────────────────────────────────────────────────────────────────
-
-def cleanup(run_id):
-    """Remove the inner workspace directory for *run_id*.
-
-    Safe to call on non-existent directories or after prior removal.
-    Raises OSError (not ignore_errors=True) when the directory cannot
-    be removed — a surviving process holding it open is a real failure
-    that must not be swallowed.
-    """
-    path = os.path.join(_RUNS_DIR, run_id)
-    if os.path.exists(path):
-        shutil.rmtree(path)
-
-
-def _sweep_stale_runs():
-    """Remove all directories under _RUNS_DIR that are not currently locked.
-
-    Called once at startup (via _swept guard in run()).  Skips entries
-    starting with '.' — the lockfile (.run_lock) lives under _RUNS_DIR
-    and must not be removed.
-
-    Returns the number of stale directories cleaned.  Reports (to stderr)
-    directories that could not be removed.
-    """
-    if not os.path.isdir(_RUNS_DIR):
-        return 0
-    stale = 0
-    for entry in os.listdir(_RUNS_DIR):
-        if entry.startswith("."):
-            continue  # Skip lockfile and other dotfiles.
-        path = os.path.join(_RUNS_DIR, entry)
-        if os.path.isdir(path):
+        if result.returncode == 0:
+            # Processes still found — wait and retry.
+            time.sleep(0.25)
+            continue
+        elif result.returncode == 1:
+            # First observation of empty — wait ~0.5 s and confirm again.
+            # This catches processes that regenerate microseconds after pgrep,
+            # matching the same "reaches zero AND stays zero" property that
+            # kill_persistent applies.
+            time.sleep(0.5)
             try:
-                shutil.rmtree(path)
-                stale += 1
+                recheck = subprocess.run(
+                    ["/usr/bin/pgrep", "-u", str(slot_uid)],
+                    capture_output=True, text=True, timeout=5,
+                )
+            except Exception as exc:
+                _quarantine(slot_name,
+                            f"exception during release re-check: {exc}")
+                return
+            if recheck.returncode == 0:
+                # Processes reappeared — keep polling until deadline.
+                continue
+            elif recheck.returncode != 1:
+                # Unknown outcome on re-check → quarantine.
+                _quarantine(slot_name,
+                            f"pgrep exit {recheck.returncode} during release "
+                            f"re-check: {recheck.stderr.strip()}")
+                return
+
+            # Confirmed stable zero.  Remove the claim directory.
+            claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+            try:
+                shutil.rmtree(claim_dir)
+            except FileNotFoundError:
+                pass
             except Exception as exc:
                 print(
-                    f"[seatbelt] could not remove stale run directory "
-                    f"{path}: {exc}",
+                    f"[seatbelt] could not remove claim directory "
+                    f"{claim_dir}: {exc}",
                     file=sys.stderr,
                 )
-    return stale
+            return
+        else:
+            # Any other exit means UNKNOWN → quarantine.
+            _quarantine(slot_name,
+                        f"pgrep exit {result.returncode} during release: "
+                        f"{result.stderr.strip()}")
+            return
+
+    # Deadline reached with processes still present → quarantine.
+    _quarantine(slot_name, f"processes still present after {deadline_seconds}s deadline")
+
+
+# ── Kill protocol via per-slot kill-self wrapper ───────────────────────────
+
+def kill_slot(slot_name, slot_uid):
+    """Kill every process owned by *slot_uid* via the kill-self wrapper.
+
+    Invokes worker_kill_self.sh AS the slot uid (no uid string crosses the
+    sudo boundary).  The wrapper derives its target from id -u.
+
+    Returns a structured dict:
+        ok          — True when the helper reported success
+        returncode  — exit code from the helper invocation
+        stderr      — stderr captured from the helper invocation
+    """
+    if not os.path.exists(_KILL_SELF_PATH):
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stderr": f"kill-self helper not found: {_KILL_SELF_PATH}",
+        }
+
+    cmd = ["sudo", "-n", "-u", slot_name, _KILL_SELF_PATH]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=15,
+            cwd="/",
+        )
+    except FileNotFoundError:
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stderr": "sudo not found — cannot run kill-self helper",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stderr": "kill-self helper timed out after 15 seconds",
+        }
+
+    rc = result.returncode
+    stderr = result.stderr or ""
+
+    if rc == 0:
+        return {"ok": True, "returncode": rc, "stderr": stderr}
+    else:
+        return {"ok": False, "returncode": rc, "stderr": stderr}
+
+
+# ── Reconcile ──────────────────────────────────────────────────────────────
+
+def reconcile():
+    """Reconcile runs directory with slot state.
+
+    For every directory under runs/, if its run id does not correspond to a
+    currently claimed slot, remove it.
+
+    For every claim directory under slots/, if no live run holds it, and the
+    slot is proven empty, release it.  Quarantined slots are never touched.
+
+    Run at launcher startup and after every run.
+
+    Returns dict with counts: {removed_runs, released_slots, errors}.
+    Errors are reported, never swallowed.
+    """
+    result = {"removed_runs": 0, "released_slots": 0, "errors": 0}
+
+    # ── Collect currently claimed slot names and their run_ids ──────
+    claimed_slots = set()
+    claimed_run_ids = set()
+    if os.path.isdir(_SLOTS_DIR):
+        try:
+            for entry in os.listdir(_SLOTS_DIR):
+                if "." not in entry:
+                    claimed_slots.add(entry)
+                    rid = _claim_get_run_id(entry)
+                    if rid:
+                        claimed_run_ids.add(rid)
+        except OSError as exc:
+            print(f"[seatbelt] reconcile: cannot list slots dir: {exc}",
+                  file=sys.stderr)
+            result["errors"] += 1
+
+    # ── Remove run dirs whose run_id does not correspond to a claimed slot ─
+    if os.path.isdir(_RUNS_DIR):
+        try:
+            for entry in os.listdir(_RUNS_DIR):
+                if entry.startswith("."):
+                    continue
+                path = os.path.join(_RUNS_DIR, entry)
+                if not os.path.isdir(path):
+                    continue
+                # Only remove if the run_id is NOT tracked by a claimed slot.
+                if entry in claimed_run_ids:
+                    continue
+                try:
+                    shutil.rmtree(path)
+                    result["removed_runs"] += 1
+                except Exception as exc:
+                    print(
+                        f"[seatbelt] reconcile: could not remove run "
+                        f"directory {path}: {exc}",
+                        file=sys.stderr,
+                    )
+                    result["errors"] += 1
+        except OSError as exc:
+            print(f"[seatbelt] reconcile: cannot list runs dir: {exc}",
+                  file=sys.stderr)
+            result["errors"] += 1
+
+    # ── Release orphaned claim directories ──────────────────────────
+    for slot_name in list(claimed_slots):
+        if slot_name not in _SLOT_MAP:
+            # Unknown slot name — should not happen, but handle gracefully.
+            claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+            try:
+                shutil.rmtree(claim_dir)
+                result["released_slots"] += 1
+            except Exception as exc:
+                print(
+                    f"[seatbelt] reconcile: could not remove unknown claim "
+                    f"{claim_dir}: {exc}",
+                    file=sys.stderr,
+                )
+                result["errors"] += 1
+            continue
+
+        uid = _SLOT_MAP[slot_name]
+        # Check if the slot is proven empty.
+        try:
+            pgrep_result = subprocess.run(
+                ["/usr/bin/pgrep", "-u", str(uid)],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception as exc:
+            print(
+                f"[seatbelt] reconcile: pgrep failed for {slot_name}: {exc}",
+                file=sys.stderr,
+            )
+            result["errors"] += 1
+            continue
+
+        if pgrep_result.returncode == 1:
+            # No processes — slot is empty, release it.
+            claim_dir = os.path.join(_SLOTS_DIR, slot_name)
+            try:
+                shutil.rmtree(claim_dir)
+                result["released_slots"] += 1
+            except Exception as exc:
+                print(
+                    f"[seatbelt] reconcile: could not release claim "
+                    f"{claim_dir}: {exc}",
+                    file=sys.stderr,
+                )
+                result["errors"] += 1
+
+    return result
 
 
 # ── Run ────────────────────────────────────────────────────────────────────
@@ -409,9 +701,7 @@ def _sweep_stale_runs():
 def _verify_runs_dir_secure():
     """Verify _RUNS_DIR is not group- or world-writable.
 
-    A lock in a writable directory is not a lock — the worker (or any
-    local process) can delete or replace it.  Raises PermissionError if
-    the directory's permissions are too permissive.
+    Raises PermissionError if the directory's permissions are too permissive.
     """
     try:
         st = os.stat(_RUNS_DIR)
@@ -424,31 +714,12 @@ def _verify_runs_dir_secure():
         raise PermissionError(
             f"runs directory {_RUNS_DIR} has permissions "
             f"{oct(stat.S_IMODE(mode))} — refusing to run because a "
-            "writable lock directory defeats exclusive-run enforcement"
+            "writable runs directory defeats isolation"
         )
 
 
-def _sweep_at_startup():
-    """Call _sweep_stale_runs exactly once per process.
-
-    Uses a module-level guard flag.  Reports the count and any failures
-    to stderr.
-    """
-    global _swept
-    if _swept:
-        return
-    _swept = True
-    stale = _sweep_stale_runs()
-    if stale:
-        print(
-            f"[seatbelt] cleaned {stale} stale run "
-            f"{'directory' if stale == 1 else 'directories'}",
-            file=sys.stderr,
-        )
-
-
-def run(canary_name, workspace, run_id=None, teardown=True):
-    """Run the named canary inside the seatbelt sandbox.
+def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
+    """Run the named canary inside the seatbelt sandbox using a pool slot.
 
     *canary_name* identifies a pre-installed script under
     /usr/local/var/jcode-runs/canaries/.  The wrapper resolves it to a
@@ -469,22 +740,21 @@ def run(canary_name, workspace, run_id=None, teardown=True):
     the tree_kill and kill_persistent canaries, which must observe the
     escapee while the sandbox is still running (macOS seatbelt kills child
     processes when sandbox-exec exits).  The caller is responsible for
-    waiting on the returned Popen and for calling kill_all().
+    waiting on the returned Popen and for calling kill_slot().
 
-    **Concurrency note**: kill_all() is uid-wide — pkill -9 -u _jcode_worker
-    terminates every process under that uid.  Two concurrent runs would let
-    either terminate the other, and a malicious payload could trigger its
-    own timeout to kill an innocent concurrent run.  Therefore we acquire an
-    **exclusive lock** (O_CREAT|O_EXCL) before launching.  A second
-    concurrent run() raises PermissionError.  The lock is released in a
-    finally block.
+    *slot_spec*: optional (slot_name, slot_uid) tuple.  If omitted, a slot
+    is claimed from the pool.  When provided, the caller is responsible for
+    releasing the slot (e.g., tree_kill canary that manages two slots).
 
-    The script executes as the unprivileged _WORKER_USER with an empty
+    Concurrency: up to pool size is **permitted** — no lock, no refusal
+    beyond pool exhaustion.
+
+    The script executes as the unprivileged slot uid with an empty
     environment, confined by the SBPL profile.  rlimits are applied in the
-    pre-exec hook before sudo hands off to the wrapper.
+    wrapper after the uid switch.
 
     The wrapper (core/worker_exec.sh) is the ONLY command sudoers permits
-    as _jcode_worker.  It hard-codes the profile path and canary directory;
+    as the slot uid.  It hard-codes the profile path and canary directory;
     the caller cannot substitute either.
 
     Returns:
@@ -493,107 +763,36 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         term_signal     — signal number, or None if exited normally
         wall_clock_ms   — elapsed wall-clock time (int, milliseconds)
         timed_out       — True if the wall-clock watchdog fired
+        slot_name       — the slot used for this run
+        slot_uid        — the slot uid
 
       teardown=False → subprocess.Popen for the running sandbox.
     """
-    # ── Verify runs directory is secure (not group/world writable) ────
-    # A lock in a writable directory is not a lock.  Check before
-    # attempting to acquire the exclusive lock.
+    # ── Slot allocation ─────────────────────────────────────────────
+    if slot_spec is not None:
+        slot_name, slot_uid = slot_spec
+    else:
+        slot_name, slot_uid = _claim_slot()
+
+    # ── Verify runs directory is secure ──────────────────────────────
     _verify_runs_dir_secure()
 
-    # ── Validate run_id FIRST — before any path operation ─────────────
-    # This is a security boundary: an attacker-controlled run_id can
-    # escape the runs tree via path separators or newline injection.
+    # ── Validate run_id FIRST ────────────────────────────────────────
     if run_id is None:
         run_id = os.path.basename(workspace)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", run_id):
+        if slot_spec is None:
+            _release_slot(slot_name, slot_uid)
         raise ValueError(
             f"run_id must match [A-Za-z0-9_-]{{1,64}}, got {run_id!r}"
         )
 
-    # ── Exclusive lock ───────────────────────────────────────────────
-    # O_CREAT|O_EXCL ensures only one run() at a time.  A second
-    # concurrent call raises PermissionError.  This is necessary because
-    # kill_all() is uid-wide and cannot distinguish concurrent runs.
-    # Stale lockfile recovery: if the lockfile exists but the PID that
-    # created it is no longer alive, remove it and try again.
-    # Uses os.kill(pid, 0) which works cross-process (unlike waitpid
-    # which only works on child PIDs).
-    lock_fd = None
-    for _attempt in range(2):
-        try:
-            lock_fd = os.open(
-                _LOCKFILE_PATH,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o644,
-            )
-            os.write(lock_fd, str(os.getpid()).encode())
-            # ── One-time startup sweep, UNDER THE LOCK ────────────────
-            # This must not run before the lock is held. The sweep removes
-            # every non-dotted directory under _RUNS_DIR, including the
-            # live workspace of a run in progress in another process. A
-            # second launcher would then destroy the first one's workspace
-            # and only afterwards discover it cannot have the lock. Holding
-            # the lock means no other run is in progress, so everything the
-            # sweep finds really is stale.
-            _sweep_at_startup()
-            break
-        except FileExistsError:
-            if _attempt == 0:
-                # Check if the lockfile is stale.
-                try:
-                    with open(_LOCKFILE_PATH) as lf:
-                        pid_str = lf.read().strip()
-                    if pid_str:
-                        lock_pid = int(pid_str)
-                        if lock_pid == os.getpid():
-                            # We already hold the lock — should not happen.
-                            raise PermissionError(
-                                "lockfile contains our own PID — possible bug"
-                            )
-                        # Test if the PID is alive via signal 0.
-                        # ProcessLookupError (ESRCH) means dead.
-                        try:
-                            os.kill(lock_pid, 0)
-                            # Process still alive — lock is valid.
-                        except ProcessLookupError:
-                            # PID does not exist — stale lockfile.
-                            os.remove(_LOCKFILE_PATH)
-                            continue
-                        except OSError:
-                            # EPERM means process exists but we cannot
-                            # signal it — lock is valid, do not remove.
-                            pass
-                except (ValueError, OSError):
-                    try:
-                        os.remove(_LOCKFILE_PATH)
-                        continue
-                    except OSError:
-                        pass
-            raise PermissionError(
-                "a run is already in progress (lockfile exists: "
-                f"{_LOCKFILE_PATH}) — refused because kill_all() is uid-wide "
-                "and cannot safely handle concurrent runs"
-            )
-        except OSError as exc:
-            raise PermissionError(
-                f"could not acquire exclusive run lock: {exc}"
-            )
-
     policy = _load_policy()
     lim = policy["limits"]
 
-    # Per-run directory under the root-owned base.  Created EXCLUSIVELY:
-    # a pre-existing directory is an attack (the worker could have
-    # planted symlinks inside it).  Mode 0o700 during staging so no
-    # other process can see or modify files while they are being copied.
-    # Changed to 0o777 after staging so the sandbox can read/write.
-    # The base directory (0771 root:wheel) prevents non-wheel users
-    # from creating or listing entries under it.
+    # ── Per-run directory ────────────────────────────────────────────
     inner_ws = os.path.join(_RUNS_DIR, run_id)
 
-    # The outer try/finally ensures the exclusive lock is ALWAYS released,
-    # even if mkdir or the main work raises.
     try:
         try:
             os.mkdir(inner_ws, 0o700)
@@ -604,24 +803,21 @@ def run(canary_name, workspace, run_id=None, teardown=True):
                 "symlinks planted by the worker"
             )
 
+        # Record run_id in the claim directory for reconcile() mapping.
+        _claim_set_run_id(slot_name, run_id)
+
         # Stage all ingress files while the directory is still owner-only.
-        # This prevents a confused-deputy attack where the worker pre-creates
-        # a symlink under inner_ws that points to an owner-writable file.
         for fn in os.listdir(workspace):
             src = os.path.join(workspace, fn)
             dst = os.path.join(inner_ws, fn)
             _copy_ingress(src, dst)
 
-        # Hand the workspace over to the worker.  The sandbox profile —
-        # not Unix permissions — is the confinement boundary for what
-        # runs inside.
+        # Hand the workspace over to the worker.
         os.chmod(inner_ws, 0o777)
 
-        # The wrapper takes run_id and canary_name.  It resolves the canary
-        # script from the root-owned canary directory; the caller cannot
-        # influence the path beyond choosing a valid name.
+        # The wrapper takes run_id and canary_name.
         cmd = [
-            "sudo", "-u", _WORKER_USER,
+            "sudo", "-u", slot_name,
             _WRAPPER_PATH,
             run_id,
             canary_name,
@@ -630,12 +826,9 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         def _preexec():
             import resource
 
-            # RLIMIT_AS is intentionally NOT set — it raises ValueError on macOS
-            # RLIMIT_NPROC is NOT set here either: on macOS it counts processes per
-            # REAL UID, and preexec still runs as the owner, who has hundreds. The
-            # worker's process limit is applied inside worker_exec.sh, after sudo
-            # has switched uid — measured: setting it here makes sudo fail to fork.
-            # (ENOTSUP).  This is why mem_limit lives in unclaimable_capabilities.
+            # RLIMIT_AS is intentionally NOT set — it raises ValueError on macOS.
+            # NPROC is applied inside worker_exec.sh after the uid switch,
+            # not in preexec, because preexec still runs as the owner.
             for name, rlim_const, value in [
                 ("rlimit_cpu",   resource.RLIMIT_CPU,   lim["rlimit_cpu_seconds"]),
                 ("rlimit_fsize", resource.RLIMIT_FSIZE, lim["rlimit_fsize_bytes"]),
@@ -648,34 +841,24 @@ def run(canary_name, workspace, run_id=None, teardown=True):
         wall_start = time.monotonic()
         proc = subprocess.Popen(cmd, preexec_fn=_preexec, cwd="/")
 
-        # ── teardown=False: return early so the tree_kill canary can observe ──
-        # the escapee while the sandbox is still running.  macOS seatbelt kills
-        # child processes when sandbox-exec exits; if we wait for completion
-        # the escapee is already dead and we cannot prove kill_all works.
+        # ── teardown=False: return early ─────────────────────────────
         if not teardown:
-            # Let the payload daemonise and write escapee.pid.
             time.sleep(1.0)
-            # Copy any result files back so the caller can read escapee.pid.
             for fn in os.listdir(inner_ws):
                 src = os.path.join(inner_ws, fn)
                 dst = os.path.join(workspace, fn)
                 _copy_egress(src, dst)
             return proc
 
-        # ── Wall-clock watchdog ────────────────────────────────────────────
+        # ── Wall-clock watchdog ──────────────────────────────────────
         timed_out = False
         kill_ok = True
         try:
             proc.wait(timeout=lim["wall_clock_seconds"])
         except subprocess.TimeoutExpired:
             timed_out = True
-            try:
-                kill_result = kill_all()
-                kill_ok = kill_result["ok"]
-            except KillUnavailable as exc:
-                kill_ok = False
-            # Give the kill a moment to propagate, then force-clean the sudo
-            # wrapper (which runs as root and is not reached by pkill -u worker).
+            kill_result = kill_slot(slot_name, slot_uid)
+            kill_ok = kill_result["ok"]
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -684,9 +867,7 @@ def run(canary_name, workspace, run_id=None, teardown=True):
 
         wall_end = time.monotonic()
 
-        # Copy any result files the sandboxed script wrote back to the
-        # caller's workspace (e.g. result.json, escapee.pid).
-        # Files not in the allowlist are silently skipped and recorded.
+        # Copy result files back.
         egress_skipped = []
         for fn in os.listdir(inner_ws):
             src = os.path.join(inner_ws, fn)
@@ -706,31 +887,40 @@ def run(canary_name, workspace, run_id=None, teardown=True):
             "timed_out": timed_out,
             "kill_ok": kill_ok,
             "egress_skipped": egress_skipped,
+            "slot_name": slot_name,
+            "slot_uid": slot_uid,
         }
 
     finally:
-        # ── Cleanup in outer finally — happens on EVERY exit path ────
-        # This includes exceptions (PermissionError from mkdir, OSError
-        # from ingress copy, etc.), teardown=False return, TimeoutExpired,
-        # and normal completion.
+        # ── Cleanup ──────────────────────────────────────────────────
+        # Remove the inner workspace.
         try:
             if os.path.isdir(inner_ws):
                 shutil.rmtree(inner_ws)
         except Exception:
-            # rmtree failure is a backend issue (e.g. ENOTEMPTY from a
-            # surviving process).  Do not swallow with ignore_errors=True.
             pass
 
-        # Release the exclusive lock.
-        if lock_fd is not None:
-            try:
-                os.close(lock_fd)
-            except Exception:
-                pass
-            try:
-                os.remove(_LOCKFILE_PATH)
-            except Exception:
-                pass
+        # Release the slot only if we auto-claimed it AND teardown=True
+        # (the sandbox has finished).  When teardown=False the caller
+        # provides slot_spec and manages the slot lifecycle.
+        if slot_spec is None and teardown:
+            _release_slot(slot_name, slot_uid)
+
+
+# ── Evidence helpers ──────────────────────────────────────────────────────
+
+def checksum_bytes(data):
+    """Return SHA-256 hex digest of *data* bytes."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def checksum_file(path):
+    """Return SHA-256 hex digest of file at *path*, or None on error."""
+    try:
+        with open(path, "rb") as f:
+            return checksum_bytes(f.read())
+    except Exception:
+        return None
 
 
 # ── Regression test: egress growth race ────────────────────────────────────
@@ -771,8 +961,6 @@ def test_egress_growth_race():
             fd, fst = _orig_secure_open(path)
             # File is now open and stat'd.  Extend it well past the
             # cap so the read returns more data than max_bytes.
-            # os.write on the same fd would update the fd's position,
-            # so extend via a separate open call.
             _fd2 = os.open(path, os.O_WRONLY | os.O_APPEND)
             try:
                 os.write(_fd2, b"y" * 1000)
@@ -786,7 +974,6 @@ def test_egress_growth_race():
 
         try:
             _copy_file_secure(src, dst, max_bytes=cap)
-            # No exception — post-read check is missing.
             _mod._secure_open_read = _orig_secure_open
             return False, (
                 f"_copy_file_secure did NOT raise on a file that grew "
@@ -794,7 +981,6 @@ def test_egress_growth_race():
                 "be missing"
             )
         except PermissionError:
-            # Expected: the post-read check caught the oversized read.
             _mod._secure_open_read = _orig_secure_open
         except Exception as exc:
             _mod._secure_open_read = _orig_secure_open
@@ -803,10 +989,6 @@ def test_egress_growth_race():
                 "instead of PermissionError"
             )
 
-        # Verify the destination was NOT created (O_EXCL would have
-        # prevented creation only if the write path was never reached,
-        # but the PermissionError should have been raised before any
-        # write).
         if os.path.exists(dst):
             return False, (
                 f"destination file {dst} was created despite "

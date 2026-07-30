@@ -58,7 +58,10 @@ def run(backend):
     phase2_detail = None
 
     marker = _gen_marker()
-    secret_path = "/tmp/.jcode_canary_secret_ingress"
+    secret_path = os.path.join(
+        tempfile.gettempdir(),
+        f".jcode_canary_secret_ingress_{secrets.token_hex(8)}"
+    )
 
     # Plant a secret file outside the workspace.
     with open(secret_path, "w") as f:
