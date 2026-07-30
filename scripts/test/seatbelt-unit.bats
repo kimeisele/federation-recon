@@ -133,65 +133,142 @@ print('VALIDATION OK: clean run_id accepted')
 }
 
 # ---------------------------------------------------------------------------
-# Lock file location — not in /tmp (Finding B, round 6)
+# Directory permission enforcement — slots dir must not be writable (F3 fix)
 # ---------------------------------------------------------------------------
 
-@test "seatbelt-unit: lockfile path is under _RUNS_DIR, not /tmp" {
+@test "seatbelt-unit: refuses to run when slots dir is group-writable" {
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/core')
-from backends.macos_seatbelt import _LOCKFILE_PATH, _RUNS_DIR
+import tempfile, os, stat, shutil
 
-assert not _LOCKFILE_PATH.startswith('/tmp'), \
-    f'lockfile must not be in /tmp, got {_LOCKFILE_PATH}'
-assert _LOCKFILE_PATH.startswith(_RUNS_DIR), \
-    f'lockfile must be under _RUNS_DIR ({_RUNS_DIR}), got {_LOCKFILE_PATH}'
-assert '.run_lock' in _LOCKFILE_PATH, \
-    f'lockfile must use a dotted name, got {_LOCKFILE_PATH}'
-print(f'OK: lockfile path {_LOCKFILE_PATH} is under _RUNS_DIR ({_RUNS_DIR})')
+tmp = tempfile.mkdtemp(prefix='slotperm_')
+try:
+    import backends.macos_seatbelt as mod
+
+    runs_dir = os.path.join(tmp, 'runs')
+    slots_dir = os.path.join(tmp, 'slots')
+    os.mkdir(runs_dir, 0o755)
+    os.mkdir(slots_dir, 0o755)
+    os.chmod(slots_dir, 0o770)  # force group-writable (bypass umask)
+
+    orig_runs, orig_slots = mod._RUNS_DIR, mod._SLOTS_DIR
+    mod._RUNS_DIR = runs_dir
+    mod._SLOTS_DIR = slots_dir
+
+    try:
+        mod._verify_runs_dir_secure()
+        print('ERROR: did not raise on group-writable slots dir')
+        sys.exit(1)
+    except PermissionError as e:
+        msg = str(e)
+        print(f'OK: PermissionError raised: {msg[:80]}')
+    except Exception as e:
+        print(f'ERROR: wrong exception {type(e).__name__}: {e}')
+        sys.exit(1)
+    finally:
+        mod._RUNS_DIR = orig_runs
+        mod._SLOTS_DIR = orig_slots
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
 "
   echo "$output"
   [ "$status" -eq 0 ]
 }
 
-@test "seatbelt-unit: sweep does not delete lockfile" {
+@test "seatbelt-unit: refuses to run when runs dir is world-writable" {
   run python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/core')
-import backends.macos_seatbelt as mod
+import tempfile, os, stat, shutil
+
+tmp = tempfile.mkdtemp(prefix='slotperm_')
+try:
+    import backends.macos_seatbelt as mod
+
+    runs_dir = os.path.join(tmp, 'runs')
+    slots_dir = os.path.join(tmp, 'slots')
+    os.mkdir(runs_dir, 0o755)
+    os.chmod(runs_dir, 0o707)  # force world-writable (bypass umask)
+    os.mkdir(slots_dir, 0o755)
+
+    orig_runs, orig_slots = mod._RUNS_DIR, mod._SLOTS_DIR
+    mod._RUNS_DIR = runs_dir
+    mod._SLOTS_DIR = slots_dir
+
+    try:
+        mod._verify_runs_dir_secure()
+        print('ERROR: did not raise on world-writable runs dir')
+        sys.exit(1)
+    except PermissionError as e:
+        msg = str(e)
+        print(f'OK: PermissionError raised: {msg[:80]}')
+    except Exception as e:
+        print(f'ERROR: wrong exception {type(e).__name__}: {e}')
+        sys.exit(1)
+    finally:
+        mod._RUNS_DIR = orig_runs
+        mod._SLOTS_DIR = orig_slots
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+"
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Quarantine — rmtree fallback when os.rename fails (F4 fix)
+# ---------------------------------------------------------------------------
+
+@test "seatbelt-unit: _quarantine falls back to rmtree when rename fails" {
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/core')
 import tempfile, os, shutil
 
-tmpdir = tempfile.mkdtemp(prefix='sweeplock_')
+tmp = tempfile.mkdtemp(prefix='quarantine_')
 try:
-    # Create a mock lockfile (dotted name).
-    lockfile = os.path.join(tmpdir, '.run_lock')
-    with open(lockfile, 'w') as f:
-        f.write('12345')
+    import backends.macos_seatbelt as mod
 
-    # Create a stale run directory for sweep to clean.
-    stale_dir = os.path.join(tmpdir, 'stale_run_001')
-    os.mkdir(stale_dir)
+    slots_dir = os.path.join(tmp, 'slots')
+    os.mkdir(slots_dir)
 
-    # Monkey-patch _RUNS_DIR to point at our temp dir.
-    orig_runs = mod._RUNS_DIR
-    mod._RUNS_DIR = tmpdir
+    orig_slots = mod._SLOTS_DIR
+    mod._SLOTS_DIR = slots_dir
 
-    count = mod._sweep_stale_runs()
+    # Create a claim directory.
+    slot_name = '_jcode_w01'
+    claim_dir = os.path.join(slots_dir, slot_name)
+    os.mkdir(claim_dir)
+    assert os.path.isdir(claim_dir), 'claim dir should exist'
 
-    mod._RUNS_DIR = orig_runs
+    # Monkey-patch os.rename on the module to simulate rename failure.
+    orig_rename = mod.os.rename
+    def _fail_rename(src, dst):
+        raise OSError(1, 'simulated rename failure')
+    mod.os.rename = _fail_rename
 
-    assert os.path.exists(lockfile), (
-        f'sweep deleted lockfile {lockfile}!'
-    )
-    assert not os.path.exists(stale_dir), (
-        f'sweep did not remove stale directory {stale_dir}'
-    )
-    assert count == 1, (
-        f'expected 1 stale directory cleaned, got {count}'
-    )
-    print(f'OK: sweep removed {count} stale dir(s), lockfile preserved')
+    try:
+        mod._quarantine(slot_name, 'test reason')
+
+        # Claim dir must be gone (rmtree fallback).
+        if os.path.isdir(claim_dir):
+            print(f'ERROR: claim dir still exists after _quarantine fallback')
+            sys.exit(1)
+
+        # No quarantined directory should have been created (rename never
+        # completed).
+        for entry in os.listdir(slots_dir):
+            if 'quarantined' in entry:
+                print(f'ERROR: quarantined dir {entry} created despite rename failure')
+                sys.exit(1)
+
+        print('OK: _quarantine removed claim dir via rmtree fallback')
+    finally:
+        mod.os.rename = orig_rename
+        mod._SLOTS_DIR = orig_slots
 finally:
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
 "
   echo "$output"
   [ "$status" -eq 0 ]
@@ -248,44 +325,49 @@ print('surviving:', surviving)
 }
 
 # ---------------------------------------------------------------------------
-# kill_all: pgrep failure is caught (review #6, item 3)
+# kill_slot: non-zero helper exit is reported as ok=False
 # ---------------------------------------------------------------------------
 
-@test "seatbelt-unit: kill_all pgrep exit 2 via mock-subprocess" {
+@test "seatbelt-unit: kill_slot returns ok=False when helper exits with status 2" {
   run python3 -c "
 import sys, os
 sys.path.insert(0, '$REPO_ROOT/core')
-
+import tempfile, shutil
 import subprocess as _sp
-import backends.macos_seatbelt as _mod
 
-if not os.path.exists(_mod._KILL_HELPER_PATH):
-    print('SKIP: kill helper not found')
-    sys.exit(0)
+import backends.macos_seatbelt as mod
 
-call_log = []
-
-def _mock_run(cmd, *a, **kw):
-    call_log.append(cmd)
-    # First call (kill helper) — return success (killed nothing).
-    if len(call_log) == 1:
-        return _sp.CompletedProcess(cmd, 0, '', '')
-    # Second call (pgrep) — return exit 2 (error).
-    return _sp.CompletedProcess(cmd, 2, '', 'pgrep: error getting process list')
-
-orig_run = _mod.subprocess.run
-_mod.subprocess.run = _mock_run
-
+# Create a temporary kill-self helper so _KILL_SELF_PATH exists.
+tmp = tempfile.mkdtemp(prefix='killslot_')
 try:
-    result = _mod.kill_all()
-    if result['ok']:
-        print(f'FAIL: kill_all returned ok=True despite pgrep exit 2')
-        print(f'result: {result}')
-        sys.exit(1)
-    print(f'OK: kill_all returned ok=False as expected')
-    print(f'surviving={result.get(\"surviving\")}, stderr includes={result.get(\"stderr\",\"\")[-40:]}')
+    helper_path = os.path.join(tmp, 'worker_kill_self.sh')
+    with open(helper_path, 'w') as f:
+        f.write('#!/bin/sh\necho mock\n')
+    os.chmod(helper_path, 0o755)
+
+    orig_helper = mod._KILL_SELF_PATH
+    mod._KILL_SELF_PATH = helper_path
+
+    def _mock_run(cmd, *a, **kw):
+        # Return non-zero exit (simulating helper failure).
+        return _sp.CompletedProcess(cmd, 2, '', 'mock error: pgrep failed')
+
+    orig_run = mod.subprocess.run
+    mod.subprocess.run = _mock_run
+
+    try:
+        result = mod.kill_slot('_jcode_w01', 611)
+        if result.get('ok'):
+            print(f'ERROR: kill_slot returned ok=True despite helper exit 2')
+            print(f'result: {result}')
+            sys.exit(1)
+        print(f'OK: kill_slot returned ok=False as expected')
+        print(f'returncode={result.get(\"returncode\")}, stderr={result.get(\"stderr\",\"\")[-40:]}')
+    finally:
+        mod.subprocess.run = orig_run
+        mod._KILL_SELF_PATH = orig_helper
 finally:
-    _mod.subprocess.run = orig_run
+    shutil.rmtree(tmp, ignore_errors=True)
 "
   echo "$output"
   [ "$status" -eq 0 ]
