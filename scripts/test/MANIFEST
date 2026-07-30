@@ -18,6 +18,7 @@ count-procedure.bats
 cross-node-artifacts.bats
 dispatch-bridge.bats
 execution-slice-1a.bats
+gate-cleanup.bats
 heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
