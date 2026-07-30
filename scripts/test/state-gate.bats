@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# state-gate.bats — Tests for the scheduled run state gate (#79).
+# state-gate.bats — Tests for the scheduled run state gate (#79, #92).
 #
 # Every test asserts a return code. A test that only greps output is not
 # accepted.
@@ -106,4 +106,74 @@ setup() {
     bash "$REPO_ROOT/scripts/state-gate.sh" --enforce
   [ "$status" -eq 2 ]
   [[ "$output" == *"no scheduled runs on record"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Library: STALE – green run that is too old
+# ---------------------------------------------------------------------------
+
+@test "state-gate: stale-green returns 3 with STATE: STALE and run ID" {
+  run check_scheduled_run_state "$FIXTURE_DIR/stale-green.json" "node-census.yml"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"STATE: STALE"* ]]
+  [[ "$output" == *"30211552411"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Library: STALE – red run that is too old
+# ---------------------------------------------------------------------------
+
+@test "state-gate: stale-red returns 3 with STATE: STALE and mentions failure" {
+  run check_scheduled_run_state "$FIXTURE_DIR/stale-red.json" "node-census.yml"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"STATE: STALE"* ]]
+  [[ "$output" == *"failure"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Library: inside threshold — green run still current
+# ---------------------------------------------------------------------------
+
+@test "state-gate: green with high threshold returns 0 with GREEN" {
+  STATE_GATE_STALE_THRESHOLD_HOURS=200 \
+    run check_scheduled_run_state "$FIXTURE_DIR/green-history.json" "node-census.yml"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"STATE: GREEN"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Library: 26-hour-old green run — inside default 30 h threshold
+# ---------------------------------------------------------------------------
+
+@test "state-gate: 26-hour-old green run returns 0 with GREEN (inside tolerance)" {
+  # Generate a fixture with a green run timestamped ~26h ago.
+  local tmp
+  tmp="$(mktemp)"
+  python3 -c "
+import json, datetime
+now = datetime.datetime.now(datetime.timezone.utc)
+ts_26h = (now - datetime.timedelta(hours=26)).strftime('%Y-%m-%dT%H:%M:%SZ')
+json.dump([{
+    'conclusion': 'success',
+    'createdAt': ts_26h,
+    'databaseId': 99999999999,
+    'event': 'schedule',
+    'status': 'completed'
+}], open('$tmp', 'w'))
+"
+  run check_scheduled_run_state "$tmp" "node-census.yml"
+  rm -f "$tmp"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"STATE: GREEN"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Wrapper: stale fixture in enforce mode
+# ---------------------------------------------------------------------------
+
+@test "state-gate: wrapper with stale-green fixture and --enforce exits 3" {
+  run env STATE_GATE_FIXTURE="$FIXTURE_DIR/stale-green.json" \
+    bash "$REPO_ROOT/scripts/state-gate.sh" --enforce
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"STATE: STALE"* ]]
 }

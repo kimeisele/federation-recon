@@ -3,13 +3,19 @@
 #
 # Fetches scheduled workflow history via gh, then delegates to the library.
 # In LOGGING MODE (default), prints the verdict and exits 0 regardless.
-# With --enforce, exits with the library's return code.
+# With --enforce, exits with the library's return code (1 RED, 2 UNKNOWN,
+# 3 STALE are all failures).
+#
+# Use --enforce in CI or cron so that a stale schedule (exit 3) makes a
+# downstream step visible. Without --enforce this is a reporting tool and
+# staleness stays silent.
 #
 # Usage:
 #   bash scripts/state-gate.sh [--workflow <file>] [--enforce]
 #
 # Environment:
-#   STATE_GATE_FIXTURE — path to a JSON fixture file; bypasses gh entirely.
+#   STATE_GATE_FIXTURE               — path to a JSON fixture file; bypasses gh
+#   STATE_GATE_STALE_THRESHOLD_HOURS — overrides the 30 h staleness default
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
