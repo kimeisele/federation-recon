@@ -9,6 +9,70 @@
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. A library must not change its caller's failure semantics. See #75.
 
+# ---- Domain constants ---------------------------------------------------
+
+# Maximum length for a string read from an observed repository and embedded
+# in an artifact. 256 chars is proportionate: the longest legitimate value
+# measured is 197 chars.  Values exceeding this are truncated with a visible
+# marker so a reader can distinguish "short assertion" from "shortened one".
+OBSERVED_STRING_MAX_LENGTH=256
+
+# truncate_observed <value> [max_len]
+#   Truncate VALUE to MAX_LEN (default $OBSERVED_STRING_MAX_LENGTH).
+#   If truncation occurs, appends a visible marker: …[truncated N chars].
+#   Silent truncation is NOT acceptable — a reader must be able to tell a
+#   short assertion from a shortened one.
+#   The total produced string is at most MAX_LEN, satisfying schema maxLength
+#   constraints.  An assertion guards against regression.
+truncate_observed() {
+  local val="$1"
+  local max_len="${2:-$OBSERVED_STRING_MAX_LENGTH}"
+  local val_len="${#val}"
+
+  if [ "$val_len" -le "$max_len" ]; then
+    printf '%s' "$val"
+    return
+  fi
+
+  # Marker components — measure dynamically because the digit count of
+  # N varies, and total must be ≤ max_len.
+  local marker_prefix="…[truncated "
+  local marker_suffix=" chars]"
+  local pfx_len="${#marker_prefix}"
+  local sfx_len="${#marker_suffix}"
+
+  # Find the largest keep_len such that:
+  #   keep_len + pfx_len + digit_count(N) + sfx_len ≤ max_len
+  # where N = val_len - keep_len.
+  # The loop runs at most ~25 iterations even for pathological input
+  # because digit count grows logarithmically.
+  local keep_len n digits total_len
+  for (( keep_len = max_len; keep_len > 0; keep_len-- )); do
+    n=$(( val_len - keep_len ))
+    digits="${#n}"
+    total_len=$(( keep_len + pfx_len + digits + sfx_len ))
+    if [ "$total_len" -le "$max_len" ]; then
+      break
+    fi
+  done
+
+  # If keep_len reached 0 and still no valid length, the marker itself
+  # exceeds max_len — a misconfiguration, not a truncation scenario.
+  if [ "$keep_len" -eq 0 ]; then
+    die "truncate_observed BUG: marker alone (${pfx_len}+${sfx_len}+digits) exceeds max_len $max_len"
+  fi
+
+  local result="${val:0:keep_len}${marker_prefix}${n}${marker_suffix}"
+
+  # Assert: the produced string must satisfy the limit.
+  # If this fires, there is a bug in the truncation logic above.
+  if [ "${#result}" -gt "$max_len" ]; then
+    die "truncate_observed BUG: result is ${#result} chars but max is $max_len — producer would emit an invalid artifact"
+  fi
+
+  printf '%s' "$result"
+}
+
 # ---- Logging -----------------------------------------------------------
 
 log()   { echo "[recon] $*" >&2; }
@@ -230,6 +294,10 @@ try:
                     if not isinstance(val, list) or len(val) < prop_schema['minItems']:
                         print(f'MINITEMS violation: {prop_name} has {len(val) if isinstance(val,list) else 0} items, need {prop_schema[\"minItems\"]}', file=sys.stderr)
                         sys.exit(1)
+                if 'maxLength' in prop_schema and isinstance(val, str) and len(val) > prop_schema['maxLength']:
+                    over = len(val) - prop_schema['maxLength']
+                    print(f'MAXLENGTH violation: {prop_name} has {len(val)} chars, max is {prop_schema[\"maxLength\"]} (over by {over})', file=sys.stderr)
+                    sys.exit(1)
     print('VALID')
     sys.exit(0)
 except json.JSONDecodeError as e:

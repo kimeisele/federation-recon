@@ -385,6 +385,7 @@ try:
     print(r)
 except: print('')
 " 2>/dev/null || echo "")
+      role="$(truncate_observed "$role")"
       NODE_ROLE["$slug"]="$role"
 
       local ev_role
@@ -406,6 +407,7 @@ try:
     print(t)
 except: print('')
 " 2>/dev/null || echo "")
+      tier="$(truncate_observed "$tier")"
       NODE_TIER["$slug"]="$tier"
 
       local ev_tier
@@ -424,6 +426,7 @@ try:
     print(d.get('display_name',''))
 except: print('')
 " 2>/dev/null || echo "")
+      display_name="$(truncate_observed "$display_name")"
       NODE_DISPLAY_NAME["$slug"]="$display_name"
 
       log "    .well-known/agent-federation.json: role=${role:-<none>}, tier=${tier:-<none>}"
