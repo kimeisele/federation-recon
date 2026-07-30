@@ -6,8 +6,8 @@ Receives the workspace path as sys.argv[1].
 
 Daemonises via setsid + double-fork.  The resulting grandchild writes
 its PID to <workspace>/escapee.pid, then sleeps ~120 s.  The grandchild
-does NOT poll die_now — it must be killed, not asked.  The canary calls
-backend.kill_all() to terminate it; that is the test.
+must be killed, not asked to exit.  The canary calls
+backend.kill_slot() to terminate it; that is the test.
 
 Parent and middle process stay alive (sleeping) so sandbox-exec does not
 exit — if it exits, the kernel tears down the seatbelt sandbox and kills
@@ -54,7 +54,7 @@ if pid > 0:
     sys.exit(0)
 
 # Phase 4 — grandchild: write pid, then sleep.
-# Must NOT poll die_now — the test is whether kill_all() reaches it.
+# Must NOT self-exit — the test is whether kill_slot() reaches it.
 try:
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))

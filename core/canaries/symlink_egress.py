@@ -41,42 +41,58 @@ def run(backend):
         # Run the payload inside the sandbox.  The payload creates
         # result.json as a symlink pointing at planted_path.  The
         # backend's egress copy should REJECT it (PermissionError
-        # from O_NOFOLLOW + S_ISREG check).  We catch the exception
-        # because the rejection is the expected outcome.
+        # from O_NOFOLLOW + S_ISREG check, collected into the
+        # egress_refusals result dict).
+        #
+        # An exception from run() is still a failure — it means
+        # something went wrong before or during execution, and
+        # proves nothing about egress security.
         try:
-            backend.run("symlink_egress", tmp, run_id=run_id)
-        except PermissionError as exc:
-            # Expected: the backend refused the symlink egress.
-            # Record but do not fail on this alone — we must also
-            # verify no data leaked.
-            #
-            # Only PermissionError counts, and only when its message names
-            # the regular-file check.  Accepting any exception would let an
-            # unrelated failure — a missing canary script, a sudo error, a
-            # typo in the wrapper — masquerade as a successful defence.
-            # This canary must fail if the mechanism it names is absent.
-            if "not a regular file" not in str(exc):
-                return False, (
-                    f"backend raised PermissionError but not for the symlink: "
-                    f"{exc!r} — the O_NOFOLLOW/S_ISREG defence was not what refused"
-                )
-            egress_refused = str(exc)
+            result = backend.run("symlink_egress", tmp, run_id=run_id)
         except Exception as exc:
             return False, (
                 f"backend failed with {type(exc).__name__}: {exc} — "
                 "this is not a symlink refusal and proves nothing about egress"
             )
-        else:
-            # No exception — the backend may have silently skipped
-            # or, worse, copied the symlink content.  We record
-            # that no refusal was raised; the content check below
-            # will catch a leak.
-            egress_refused = None
 
-        # Assert on content: the marker string must appear in NO
-        # file under the host workspace.  If the backend followed
-        # the symlink and copied the secret, its content (including
-        # the marker) would be in result.json (or any other file).
+        # ── Check egress_refusals ────────────────────────────────────
+        # Require an entry for result.json whose reason contains
+        # "not a regular file" — the O_NOFOLLOW/S_ISREG check must
+        # be what refused the symlink egress.
+        refusals = result.get("egress_refusals", [])
+        if not refusals:
+            # No refusals at all: the symlink was not rejected, so
+            # the absence of leaked content is unexplained.
+            pass  # handled below alongside the content check
+        else:
+            # Find the refusal for result.json.
+            found = None
+            for entry in refusals:
+                if entry.get("filename") == "result.json":
+                    found = entry
+                    break
+
+            if found is None:
+                # result.json was not refused — other files may have
+                # been, but the symlink test target was not.  Still a
+                # failure, but check content too before reporting.
+                pass  # handled below
+            else:
+                reason = found.get("reason", "")
+                if "not a regular file" not in reason:
+                    return False, (
+                        f"result.json was refused but not for the symlink: "
+                        f"{reason!r} — the O_NOFOLLOW/S_ISREG defence "
+                        "was not what refused"
+                    )
+                # Record the refusal reason for evidence.
+                egress_refused = reason
+
+        # ── Assert on content ────────────────────────────────────────
+        # The marker string must appear in NO file under the host
+        # workspace.  If the backend followed the symlink and copied
+        # the secret, its content (including the marker) would be in
+        # result.json (or any other file).
         leaked = _marker_in_workspace(tmp, marker)
         if leaked:
             return False, (
@@ -85,11 +101,21 @@ def run(backend):
                 "was not blocked"
             )
 
-        if egress_refused is None:
+        # ── Both conditions must hold ────────────────────────────────
+        # A refusal naming the regular-file check, AND zero bytes
+        # leaked.  Either alone is insufficient.
+        if not refusals:
             return False, (
-                "backend did not raise on symlink egress but no "
-                "marker found in host workspace — possible silent skip; "
+                "egress_refusals is empty — the symlink was not refused, "
+                "and the absence of a leak is unexplained; "
                 "O_NOFOLLOW defence may not be exercised"
+            )
+
+        if found is None:
+            return False, (
+                "egress_refusals contains entries but none for result.json "
+                f"— the symlink test target was not refused.  "
+                f"Refused files: {[e.get('filename') for e in refusals]}"
             )
 
         return True, (

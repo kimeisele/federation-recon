@@ -329,7 +329,13 @@ def _claim_one(slot_name, slot_uid):
             # Kill them and re-verify with a stable double-check.
             pids = result.stdout.strip()
             try:
-                kill_slot(slot_name, slot_uid)
+                kill_result = kill_slot(slot_name, slot_uid)
+                if not kill_result["ok"]:
+                    _quarantine(slot_name,
+                                f"kill_slot returned failure at claim time: "
+                                f"returncode={kill_result['returncode']}, "
+                                f"stderr={kill_result['stderr']!r}")
+                    return False
             except Exception as exc:
                 _quarantine(slot_name,
                             f"kill_slot exception at claim time: {exc}")
@@ -375,7 +381,8 @@ def _claim_one(slot_name, slot_uid):
             # Cleaned successfully.  Log for observability.
             print(
                 f"[seatbelt] slot {slot_name} needed cleaning at claim time: "
-                f"killed {pids}",
+                f"killed {pids} "
+                f"(returncode={kill_result['returncode']})",
                 file=sys.stderr,
             )
         elif result.returncode not in (0, 1):
@@ -899,7 +906,20 @@ def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
             for fn in os.listdir(inner_ws):
                 src = os.path.join(inner_ws, fn)
                 dst = os.path.join(workspace, fn)
-                _copy_egress(src, dst)
+                try:
+                    _copy_egress(src, dst)
+                except PermissionError as exc:
+                    print(
+                        f"[seatbelt] egress refused (teardown=False): "
+                        f"{fn} — {exc}",
+                        file=sys.stderr,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[seatbelt] egress error (teardown=False): "
+                        f"{fn} — {exc}",
+                        file=sys.stderr,
+                    )
             return proc
 
         # ── Wall-clock watchdog ──────────────────────────────────────
@@ -921,12 +941,24 @@ def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
 
         # Copy result files back.
         egress_skipped = []
+        egress_refusals = []
         for fn in os.listdir(inner_ws):
             src = os.path.join(inner_ws, fn)
             dst = os.path.join(workspace, fn)
-            skip_name = _copy_egress(src, dst)
-            if skip_name is not None:
-                egress_skipped.append(skip_name)
+            try:
+                skip_name = _copy_egress(src, dst)
+                if skip_name is not None:
+                    egress_skipped.append(skip_name)
+            except PermissionError as exc:
+                egress_refusals.append({
+                    "filename": fn,
+                    "reason": str(exc),
+                })
+            except Exception as exc:
+                egress_refusals.append({
+                    "filename": fn,
+                    "reason": str(exc),
+                })
 
         rc = proc.returncode
         exit_status = rc if rc >= 0 else None
@@ -939,6 +971,7 @@ def run(canary_name, workspace, run_id=None, teardown=True, slot_spec=None):
             "timed_out": timed_out,
             "kill_ok": kill_ok,
             "egress_skipped": egress_skipped,
+            "egress_refusals": egress_refusals,
             "slot_name": slot_name,
             "slot_uid": slot_uid,
         }

@@ -23,9 +23,6 @@ import subprocess
 import tempfile
 import time
 
-_INNER_BASE = "/usr/local/var/jcode-runs/runs"
-
-
 def run(backend):
     run_id_a = _gen_run_id()
     run_id_b = _gen_run_id()
@@ -166,13 +163,6 @@ def run(backend):
         # Wait for the sandbox to complete naturally or kill it.
         try:
             if sandbox_proc_b is not None and sandbox_proc_b.poll() is None:
-                # Write die_now to make kill_persistent exit
-                try:
-                    inner_b = os.path.join(_INNER_BASE, run_id_b)
-                    with open(os.path.join(inner_b, "die_now"), "w") as f:
-                        f.write("1")
-                except Exception:
-                    pass
                 sandbox_proc_b.wait(timeout=3)
         except Exception:
             pass
