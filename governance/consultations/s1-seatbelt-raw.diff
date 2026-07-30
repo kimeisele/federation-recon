@@ -1,3 +1,17 @@
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+index 1c85fb9..1468f8f 100644
+--- a/.github/CODEOWNERS
++++ b/.github/CODEOWNERS
+@@ -32,3 +32,9 @@
+ /scripts/                           @federation-operator
+ /schemas/                           @federation-operator
+ /.github/                           @federation-operator
++
++# The execution and rights boundary — /core/ carries the sandbox profile,
++# the sudo-invoked wrappers and the capability policy.  A PR changing
++# them can widen the boundary with green CI, so a second credential
++# must approve.
++/core/                              @federation-operator
 diff --git a/.gitignore b/.gitignore
 index 2260689..d490955 100644
 --- a/.gitignore
@@ -26,10 +40,10 @@ index 0000000..b56d4f7
 +# macos-seatbelt backend — see macos_seatbelt.py
 diff --git a/core/backends/macos_seatbelt.py b/core/backends/macos_seatbelt.py
 new file mode 100644
-index 0000000..0d88dd6
+index 0000000..71daac1
 --- /dev/null
 +++ b/core/backends/macos_seatbelt.py
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,545 @@
 +"""
 +macOS seatbelt backend for the Execution Core.
 +
@@ -144,6 +158,32 @@ index 0000000..0d88dd6
 +    return bytes(data)
 +
 +
++def _write_file_secure(dst, data):
++    """Write *data* to *dst* with symlink-attack defences.
++
++    Creates *dst* with O_EXCL | O_NOFOLLOW — refuses to follow an
++    existing symlink or to overwrite an existing entry.  fstat+verifies
++    S_ISREG on the newly created file before writing.
++
++    Raises PermissionError on any violation.
++    """
++    fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
++    try:
++        fst = os.fstat(fd)
++        if not stat.S_ISREG(fst.st_mode):
++            os.close(fd)
++            raise PermissionError(
++                f"destination is not a regular file after creation: {dst}"
++            )
++        os.write(fd, data)
++    except PermissionError:
++        os.close(fd)
++        raise
++    except Exception:
++        os.close(fd)
++        raise
++
++
 +def _copy_file_secure(src, dst, max_bytes=None):
 +    """Copy *src* to *dst* with symlink-attack defences.
 +
@@ -151,7 +191,9 @@ index 0000000..0d88dd6
 +    with nlink == 1.  Opened with O_NOFOLLOW; re-verified via fstat.
 +
 +    When *max_bytes* is set, the copy is capped at that value and a
-+    PermissionError is raised if the source exceeds it.
++    PermissionError is raised if the source exceeds it.  The cap is
++    checked BEFORE reading (by fstat) and AFTER reading (by length),
++    defending against file growth between the two calls.
 +
 +    Raises PermissionError on any violation.  Silent skip is not acceptable.
 +    """
@@ -169,8 +211,16 @@ index 0000000..0d88dd6
 +        # is not acceptable — max_bytes=None means no cap, not a hidden 64 KiB.
 +        data = _read_fd_all(fd, max_bytes)
 +
-+        with open(dst, "wb") as out:
-+            out.write(data)
++        # Post-read cap check: a file that grew between fstat and read would
++        # pass the pre-read check but exceed the cap.  Reject it rather than
++        # silently writing past the limit.
++        if max_bytes is not None and len(data) > max_bytes:
++            raise PermissionError(
++                f"file grew between stat and read: read {len(data)} bytes "
++                f"but cap is {max_bytes}: {src}"
++            )
++
++        _write_file_secure(dst, data)
 +    finally:
 +        os.close(fd)
 +
@@ -323,24 +373,37 @@ index 0000000..0d88dd6
 +    policy = _load_policy()
 +    lim = policy["limits"]
 +
-+    # Per-run directory under the root-owned base.  Mode 0777 so the
-+    # worker can read and write its own workspace.  The sandbox profile
-+    # — not Unix permissions — is the confinement boundary for what
-+    # runs inside.  The base directory (0771 root:wheel) prevents
-+    # non-wheel users from creating or listing entries under it.
++    # Per-run directory under the root-owned base.  Created EXCLUSIVELY:
++    # a pre-existing directory is an attack (the worker could have
++    # planted symlinks inside it).  Mode 0o700 during staging so no
++    # other process can see or modify files while they are being copied.
++    # Changed to 0o777 after staging so the sandbox can read/write.
++    # The base directory (0771 root:wheel) prevents non-wheel users
++    # from creating or listing entries under it.
 +    if run_id is None:
 +        run_id = os.path.basename(workspace)
 +    inner_ws = os.path.join(_RUNS_DIR, run_id)
-+    os.makedirs(inner_ws, exist_ok=True)
-+    os.chmod(inner_ws, 0o777)
++    try:
++        os.mkdir(inner_ws, 0o700)
++    except FileExistsError:
++        raise PermissionError(
++            f"run directory already exists: {inner_ws} — "
++            "refusing to reuse; a pre-existing directory may contain "
++            "symlinks planted by the worker"
++        )
 +
-+    # Copy caller's workspace files into the inner workspace that the
-+    # sandbox will confine.  The canary script itself is NOT written
-+    # here — it runs from the root-owned canary dir.
++    # Stage all ingress files while the directory is still owner-only.
++    # This prevents a confused-deputy attack where the worker pre-creates
++    # a symlink under inner_ws that points to an owner-writable file.
 +    for fn in os.listdir(workspace):
 +        src = os.path.join(workspace, fn)
 +        dst = os.path.join(inner_ws, fn)
 +        _copy_ingress(src, dst)
++
++    # Hand the workspace over to the worker.  The sandbox profile —
++    # not Unix permissions — is the confinement boundary for what
++    # runs inside.
++    os.chmod(inner_ws, 0o777)
 +
 +    # The wrapper takes run_id and canary_name.  It resolves the canary
 +    # script from the root-owned canary directory; the caller cannot
@@ -435,6 +498,97 @@ index 0000000..0d88dd6
 +        "kill_ok": kill_ok,
 +        "egress_skipped": egress_skipped,
 +    }
++
++
++# ── Regression test: egress growth race ────────────────────────────────────
++
++def test_egress_growth_race():
++    """Regression test: file that grows between fstat and read.
++
++    Creates a small file, hooks _secure_open_read to extend the file
++    BETWEEN the fstat and the return (simulating growth), then calls
++    _copy_file_secure with a byte cap.  Asserts PermissionError is
++    raised (the post-read cap check) and the destination was never
++    created.
++
++    This is deterministic because the file is extended synchronously
++    before the read — no race window, no timing dependency.
++
++    Returns (passed, message).
++    """
++    import importlib as _importlib
++    import shutil as _shutil
++    import tempfile as _tempfile
++
++    tmp = _tempfile.mkdtemp(prefix="growth_race_")
++    try:
++        src = os.path.join(tmp, "source.bin")
++        dst = os.path.join(tmp, "dest.bin")
++        cap = 500
++
++        # Write initial content under the cap: 100 bytes.
++        with open(src, "wb") as f:
++            f.write(b"x" * 100)
++
++        # Hook _secure_open_read to extend the file after fstat
++        # but before returning the fd/fst pair.
++        _orig_secure_open = _secure_open_read
++
++        def _hooked_secure_open(path):
++            fd, fst = _orig_secure_open(path)
++            # File is now open and stat'd.  Extend it well past the
++            # cap so the read returns more data than max_bytes.
++            # os.write on the same fd would update the fd's position,
++            # so extend via a separate open call.
++            _fd2 = os.open(path, os.O_WRONLY | os.O_APPEND)
++            try:
++                os.write(_fd2, b"y" * 1000)
++            finally:
++                os.close(_fd2)
++            return fd, fst
++
++        import sys as _sys
++        _mod = _sys.modules[__name__]
++        _mod._secure_open_read = _hooked_secure_open
++
++        try:
++            _copy_file_secure(src, dst, max_bytes=cap)
++            # No exception — post-read check is missing.
++            _mod._secure_open_read = _orig_secure_open
++            return False, (
++                f"_copy_file_secure did NOT raise on a file that grew "
++                f"past the {cap}-byte cap — post-read cap check may "
++                "be missing"
++            )
++        except PermissionError:
++            # Expected: the post-read check caught the oversized read.
++            _mod._secure_open_read = _orig_secure_open
++        except Exception as exc:
++            _mod._secure_open_read = _orig_secure_open
++            return False, (
++                f"_copy_file_secure raised {type(exc).__name__}: {exc} "
++                "instead of PermissionError"
++            )
++
++        # Verify the destination was NOT created (O_EXCL would have
++        # prevented creation only if the write path was never reached,
++        # but the PermissionError should have been raised before any
++        # write).
++        if os.path.exists(dst):
++            return False, (
++                f"destination file {dst} was created despite "
++                "PermissionError — O_EXCL/O_NOFOLLOW defence may "
++                "not have prevented the write"
++            )
++
++        return True, (
++            f"_copy_file_secure correctly raised PermissionError on "
++            f"file that grew past the {cap}-byte cap; destination was "
++            "not created"
++        )
++
++    finally:
++        _shutil.rmtree(tmp, ignore_errors=True)
 diff --git a/core/canaries/__init__.py b/core/canaries/__init__.py
 new file mode 100644
 index 0000000..a1676e1
@@ -555,6 +709,314 @@ index 0000000..cd9b9dd
 +
 +def _gen_run_id(length=16):
 +    alphabet = string.ascii_letters + string.digits + "_-"
++    return "".join(secrets.choice(alphabet) for _ in range(length))
+diff --git a/core/canaries/ingress_symlink.py b/core/canaries/ingress_symlink.py
+new file mode 100644
+index 0000000..69016bb
+--- /dev/null
++++ b/core/canaries/ingress_symlink.py
+@@ -0,0 +1,302 @@
++"""
++Canary: ingress_symlink — host-side orchestrator.
++
++Negative canary: PASSes only if the supervisor REFUSED to copy ingress
++files into a workspace whose directory was pre-created by an attacker
++with a symlink pointing outside the workspace.
++
++Testing approach — direct mechanism test (not adversarial-worker):
++We cannot spawn a process as _jcode_worker from the canary: the only
++NOPASSWD sudoers entries are the two wrappers (worker_exec.sh and
++worker_kill.sh), and running either as the worker would grant more
++capability than the canary should exercise.  Instead, this canary
++pre-creates the inner workspace directory (with a symlink planted
++inside it) from the host side — simulating what an attacker who had
++already compromised the worker identity would do — then calls
++backend.run() and asserts that:
++
++  Phase 1 (directory guard):
++    1a. The backend REFUSES (raises PermissionError) because os.mkdir
++        with no exist_ok rejects the pre-existing directory.
++    1b. The target file that the symlink pointed to is UNCHANGED —
++        verified by content comparison, not by the canary's own report.
++
++  Phase 2 (destination open guard):
++    2a. A fresh run directory is created by the canary (simulating the
++        supervisor creating a clean directory).  A symlink is planted
++        at the ingress DESTINATION path.  _copy_ingress is called
++        directly and MUST raise OSError (the O_EXCL|O_NOFOLLOW open
++        rejects the existing symlink entry).
++    2b. The symlink target's content is still byte-identical to the
++        pre-call snapshot.
++    2c. The symlink was NOT replaced by a regular file — os.path.islink
++        still true.
++
++This tests both defences in the ingress path: the exclusive-create of
++the run directory (Phase 1) and the O_EXCL|O_NOFOLLOW write-path
++defence (Phase 2), both of which prevent writing through a symlink
++planted by the worker before the supervisor stages ingress files.
++"""
++
++import os
++import secrets
++import shutil
++import string
++import tempfile
++
++_SANDBOX_BASE = "/usr/local/var/jcode-runs"
++_RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
++_WORKER_USER = "_jcode_worker"
++
++
++def run(backend):
++    # Phase 1 — mkdir guard via backend.run()
++    # Phase 2 — destination open guard via _copy_ingress direct call
++    phase1_ok = False
++    phase1_refusal = None
++    phase2_ok = False
++    phase2_detail = None
++
++    marker = _gen_marker()
++    secret_path = "/tmp/.jcode_canary_secret_ingress"
++
++    # Plant a secret file outside the workspace.
++    with open(secret_path, "w") as f:
++        f.write(f"secret-key-planted-by-ingress-canary-{marker}\n")
++    os.chmod(secret_path, 0o644)
++
++    run_id_1 = _gen_run_id()
++    tmp1 = tempfile.mkdtemp(prefix="canary_ingress_symlink_")
++
++    # Phase 2 uses its own run directory (fresh, created by the canary).
++    run_id_2 = _gen_run_id()
++    inner_ws_2 = os.path.join(_RUNS_DIR, run_id_2)
++
++    try:
++        # ── Phase 1 ──────────────────────────────────────────────────
++        # Create a workspace file that the backend will try to ingress.
++        ws_file = os.path.join(tmp1, "marker.txt")
++        with open(ws_file, "w") as f:
++            f.write(f"workspace-marker-{marker}\n")
++
++        # Pre-create the inner workspace directory — simulating what an
++        # attacker who has compromised the worker identity would do.
++        inner_ws_1 = os.path.join(_RUNS_DIR, run_id_1)
++        os.makedirs(inner_ws_1, exist_ok=True)
++
++        # Plant a symlink inside the pre-created directory matching the
++        # name of one of the ingress files.  Point it at the secret file
++        # outside the workspace.
++        symlink_dst_1 = os.path.join(inner_ws_1, "marker.txt")
++        try:
++            os.symlink(secret_path, symlink_dst_1)
++        except FileExistsError:
++            os.remove(symlink_dst_1)
++            os.symlink(secret_path, symlink_dst_1)
++
++        # Snapshot the secret before the backend tries to copy.
++        try:
++            with open(secret_path, "r") as f:
++                secret_before = f.read()
++        except Exception as exc:
++            return False, (
++                f"could not read secret before backend call: {exc}"
++            )
++
++        # Now call backend.run() — the supervisor will try to
++        # os.mkdir(inner_ws, 0o700) exclusively, which MUST fail
++        # because the directory already exists.
++        try:
++            # Use a dummy canary name — the mkdir refusal happens
++            # before any payload is needed.
++            backend.run("no_network", tmp1, run_id=run_id_1)
++            # If we get here, the backend did NOT refuse.
++            return False, (
++                f"Phase 1 FAIL: backend accepted a pre-created run "
++                f"directory ({inner_ws_1}) — the exclusive-create "
++                "defence is missing or bypassed"
++            )
++        except PermissionError as exc:
++            phase1_refusal = str(exc)
++        except FileExistsError as exc:
++            # The backend should have caught this and re-raised as
++            # PermissionError.  If it propagated, the defence is
++            # incomplete.
++            return False, (
++                f"Phase 1 FAIL: backend raised FileExistsError instead "
++                f"of PermissionError: {exc} — the mkdir defence does "
++                "not wrap the exception"
++            )
++        except Exception as exc:
++            return False, (
++                f"Phase 1 FAIL: backend failed with "
++                f"{type(exc).__name__}: {exc} — this is not a symlink "
++                "ingress refusal and proves nothing about the ingress "
++                "defence"
++            )
++
++        # Verify the secret file's content is UNCHANGED.
++        try:
++            with open(secret_path, "r") as f:
++                secret_after = f.read()
++        except Exception as exc:
++            return False, (
++                f"Phase 1 FAIL: could not read secret after backend "
++                f"call: {exc}"
++            )
++
++        if secret_before != secret_after:
++            return False, (
++                f"Phase 1 FAIL: SECRET MODIFIED — content changed "
++                f"after backend refused; the symlink may have been "
++                "followed before the refusal"
++            )
++
++        phase1_ok = True
++
++        # ── Phase 2 ──────────────────────────────────────────────────
++        # This phase tests the destination O_EXCL|O_NOFOLLOW defence
++        # directly, reaching the write path that Phase 1 never exercises
++        # (the mkdir guard fires first).
++        #
++        # Create a clean run directory (simulating a supervisor that
++        # just created it with os.mkdir(..., 0o700) exclusively).
++        try:
++            os.mkdir(inner_ws_2, 0o700)
++        except FileExistsError:
++            return False, (
++                "Phase 2 FAIL: cannot create a fresh run directory "
++                f"({inner_ws_2}) — it already exists"
++            )
++
++        # Create a workspace source file.
++        src_file = os.path.join(tmp1, "phase2_marker.txt")
++        with open(src_file, "w") as f:
++            f.write(f"phase2-marker-{marker}\n")
++
++        # Snapshot the secret content as bytes for byte-identical
++        # comparison.
++        try:
++            with open(secret_path, "rb") as f:
++                p2_secret_before = f.read()
++        except Exception as exc:
++            return False, (
++                f"Phase 2 FAIL: could not read secret before "
++                f"_copy_ingress: {exc}"
++            )
++
++        # Plant a symlink at the INGRESS DESTINATION path inside the
++        # clean run directory, pointing at the secret host file.
++        symlink_dst_2 = os.path.join(inner_ws_2, "phase2_marker.txt")
++        try:
++            os.symlink(secret_path, symlink_dst_2)
++        except FileExistsError:
++            os.remove(symlink_dst_2)
++            os.symlink(secret_path, symlink_dst_2)
++
++        # Now call _copy_ingress directly.  This should fail because
++        # _write_file_secure opens the destination with
++        # O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW — the symlink at dst
++        # should be rejected.
++        try:
++            # backend is the macos_seatbelt module; _copy_ingress is
++            # the private staging function.
++            backend._copy_ingress(src_file, symlink_dst_2)
++            # No exception — the O_EXCL|O_NOFOLLOW defence is missing.
++            return False, (
++                "Phase 2 FAIL: _copy_ingress accepted a destination "
++                "that is a symlink — the O_EXCL|O_NOFOLLOW open "
++                "defence is missing or bypassed"
++            )
++        except PermissionError as exc:
++            # Spec says PermissionError — this is the ideal case.
++            phase2_detail = (
++                f"_copy_ingress refused symlink destination: "
++                f"PermissionError: {exc}"
++            )
++        except FileExistsError as exc:
++            # Actual macOS behaviour: O_EXCL on an existing directory
++            # entry (even a symlink) raises EEXIST first.  Still a
++            # valid refusal from the O_EXCL|O_NOFOLLOW flags.
++            phase2_detail = (
++                f"_copy_ingress refused symlink destination: "
++                f"FileExistsError: {exc}"
++            )
++        except OSError as exc:
++            # Other OSError (ELOOP from O_NOFOLLOW, EACCES, etc.) is
++            # also a valid refusal.
++            phase2_detail = (
++                f"_copy_ingress refused symlink destination: "
++                f"{type(exc).__name__}: {exc}"
++            )
++        except Exception as exc:
++            return False, (
++                f"Phase 2 FAIL: _copy_ingress raised "
++                f"{type(exc).__name__}: {exc} — this is not a symlink "
++                "ingress refusal and proves nothing about the "
++                "O_EXCL|O_NOFOLLOW defence"
++            )
++
++        # Verify the secret file's content is byte-identical to the
++        # pre-call snapshot.
++        try:
++            with open(secret_path, "rb") as f:
++                p2_secret_after = f.read()
++        except Exception as exc:
++            return False, (
++                f"Phase 2 FAIL: could not read secret after "
++                f"_copy_ingress: {exc}"
++            )
++
++        if p2_secret_before != p2_secret_after:
++            return False, (
++                "Phase 2 FAIL: SECRET MODIFIED — symlink target "
++                "content changed after _copy_ingress was called; "
++                "the symlink may have been followed"
++            )
++
++        # Verify the symlink itself was NOT replaced by a regular file.
++        if not os.path.islink(symlink_dst_2):
++            return False, (
++                f"Phase 2 FAIL: symlink was replaced by a regular file "
++                f"({symlink_dst_2}) — the O_EXCL|O_NOFOLLOW defence "
++                "did not prevent the write"
++            )
++
++        phase2_ok = True
++
++        return True, (
++            f"Phase 1 — backend refused pre-created run directory: "
++            f"{phase1_refusal}.  "
++            "Target file content unchanged.  "
++            f"Phase 2 — {phase2_detail}.  "
++            "Symlink target content unchanged; symlink not replaced."
++        )
++
++    finally:
++        try:
++            os.remove(secret_path)
++        except OSError:
++            pass
++        # Clean up Phase 1 inner workspace.
++        try:
++            inner_ws_1 = os.path.join(_RUNS_DIR, run_id_1)
++            shutil.rmtree(inner_ws_1, ignore_errors=True)
++        except Exception:
++            pass
++        # Clean up Phase 2 inner workspace.
++        try:
++            shutil.rmtree(inner_ws_2, ignore_errors=True)
++        except Exception:
++            pass
++        shutil.rmtree(tmp1, ignore_errors=True)
++
++
++def _gen_run_id(length=16):
++    alphabet = string.ascii_letters + string.digits + "_-"
++    return "".join(secrets.choice(alphabet) for _ in range(length))
++
++
++def _gen_marker(length=24):
++    alphabet = string.ascii_letters + string.digits
 +    return "".join(secrets.choice(alphabet) for _ in range(length))
 diff --git a/core/canaries/no_network.py b/core/canaries/no_network.py
 new file mode 100644
@@ -1054,7 +1516,7 @@ index 0000000..adf4869
 +    return "".join(secrets.choice(alphabet) for _ in range(length))
 diff --git a/core/launcher.py b/core/launcher.py
 new file mode 100644
-index 0000000..b748f53
+index 0000000..f51eb46
 --- /dev/null
 +++ b/core/launcher.py
 @@ -0,0 +1,127 @@
@@ -1070,7 +1532,7 @@ index 0000000..b748f53
 +
 +_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 +_POLICY_PATH = os.path.join(_CORE_DIR, "policy.json")
-+_CANARY_ORDER = ["no_network", "fs_confinement", "pid_limit", "tree_kill", "symlink_egress"]
++_CANARY_ORDER = ["no_network", "fs_confinement", "pid_limit", "tree_kill", "symlink_egress", "ingress_symlink"]
 +_policy_cache = None
 +
 +
@@ -1295,6 +1757,25 @@ index 0000000..a5c1d99
 +        {"checks": {name: {"succeeded": ok, "detail": detail} for name, (ok, detail) in checks.items()}},
 +        f,
 +    )
+diff --git a/core/payloads/ingress_symlink.py b/core/payloads/ingress_symlink.py
+new file mode 100644
+index 0000000..acac91e
+--- /dev/null
++++ b/core/payloads/ingress_symlink.py
+@@ -0,0 +1,13 @@
++"""
++Payload: ingress_symlink — never executed.
++
++This payload exists only to satisfy the wrapper's file-existence
++check.  The ingress_symlink canary pre-creates the run directory,
++so backend.run() refuses at the os.mkdir stage before any sandbox
++is launched.  No payload is ever needed.
++"""
++
++import sys
++
++if __name__ == "__main__":
++    sys.exit(0)
 diff --git a/core/payloads/no_network.py b/core/payloads/no_network.py
 new file mode 100644
 index 0000000..22fea55
@@ -1542,10 +2023,10 @@ index 0000000..efd1ae4
 +_sleep_forever(120)
 diff --git a/core/policy.json b/core/policy.json
 new file mode 100644
-index 0000000..bcbd04d
+index 0000000..3cacae7
 --- /dev/null
 +++ b/core/policy.json
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,23 @@
 +{
 +  "backend": "macos-seatbelt",
 +  "claimed_capabilities": [
@@ -1553,7 +2034,8 @@ index 0000000..bcbd04d
 +    "fs_confinement",
 +    "pid_limit",
 +    "tree_kill",
-+    "symlink_egress"
++    "symlink_egress",
++    "ingress_symlink"
 +  ],
 +  "unclaimable_capabilities": {
 +    "mem_limit": "RLIMIT_AS raises ValueError on macOS. A watchdog can detect but not prevent.",
@@ -1725,10 +2207,10 @@ index 0000000..cb6d75b
 +exec /usr/bin/pkill -9 -u _jcode_worker
 diff --git a/docs/s1-setup.md b/docs/s1-setup.md
 new file mode 100644
-index 0000000..d32ed41
+index 0000000..057d200
 --- /dev/null
 +++ b/docs/s1-setup.md
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,441 @@
 +# S1 Setup — macos-seatbelt backend
 +
 +Four privileged steps the **owner** must perform by hand. Once done,
@@ -1957,6 +2439,10 @@ index 0000000..d32ed41
 +ls -l "$BASE/worker_exec.sh"
 +# -rwxr-xr-x  root  wheel
 +
++echo "=== Kill helper ==="
++ls -l "$BASE/worker_kill.sh"
++# -rwxr-xr-x  root  wheel
++
 +echo "=== Profile ==="
 +ls -l "$BASE/profiles/worker.sb"
 +# -rw-r--r--  root  wheel
@@ -1965,8 +2451,10 @@ index 0000000..d32ed41
 +ls -l "$BASE/canaries/"
 +# -r--r--r--  root  wheel  _fake_attacker.py
 +# -r--r--r--  root  wheel  fs_confinement.py
++# -r--r--r--  root  wheel  ingress_symlink.py
 +# -r--r--r--  root  wheel  no_network.py
 +# -r--r--r--  root  wheel  pid_limit.py
++# -r--r--r--  root  wheel  symlink_egress.py
 +# -r--r--r--  root  wheel  tree_kill.py
 +
 +echo "=== Boundary check ==="
@@ -1984,6 +2472,97 @@ index 0000000..d32ed41
 +sudo -u _jcode_worker touch "$BASE/canaries/test_write" 2>&1 \
 +    && echo "FAIL: worker can write to canary dir" \
 +    || echo "PASS: worker cannot write to canary dir"
++```
++
++---
++
++## Step 5 — Install the tree-kill helper
++
++The backend uses `pkill -9 -u _jcode_worker` via `worker_kill.sh` to
++kill every process owned by the worker user.  Without it `kill_all()`
++cannot work at all, and `tree_kill` and `pid_limit` both fail.
++
++### 5a — Install the script
++
++```bash
++REPO="/path/to/federation-recon"
++BASE="/usr/local/var/jcode-runs"
++
++sudo cp "$REPO/core/worker_kill.sh" "$BASE/worker_kill.sh"
++sudo chown root:wheel "$BASE/worker_kill.sh"
++sudo chmod 0755 "$BASE/worker_kill.sh"
++```
++
++Root ownership is critical: the caller must not be able to rewrite
++what sudoers permits.  If the owner could modify `worker_kill.sh`,
++a compromised owner account could replace it with arbitrary code
++executed as `_jcode_worker` via the NOPASSWD sudoers line.
++
++### 5b — Add the NOPASSWD sudoers line
++
++Add this **exact** line to `/etc/sudoers.d/jcode-worker` (the same
++file from Step 3), replacing `<owner>` with your account name:
++
++```
++<owner>  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_kill.sh ""
++```
++
++For user `ss`, the file should now contain two lines:
++
++```
++ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
++ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_kill.sh ""
++```
++
++Why running **as the worker** rather than as root: a process may
++signal processes of its own uid (POSIX `kill` permission check).
++`pkill -9 -u _jcode_worker` executed as `_jcode_worker` signals
++only worker-owned processes — no root capability is added.  A
++root-owned kill helper would grant the owner root-level kill
++authority over the worker via the NOPASSWD line, which is
++unnecessary.
++
++Then fix permissions if not already done:
++
++```bash
++sudo chown root:wheel /etc/sudoers.d/jcode-worker
++sudo chmod 440 /etc/sudoers.d/jcode-worker
++```
++
++### 5c — Verify
++
++In the style of Step 3 checks:
++
++```bash
++# The permitted no-argument invocation SUCCEEDS.
++# pkill exits 1 when nothing matched, which is success here.
++# Run it from / — sudo hands the helper the caller's working directory,
++# and if the worker cannot read that directory /bin/sh writes a
++# "shell-init: error retrieving current directory" complaint to stderr
++# before the script's own `cd /` can run. The backend passes cwd="/"
++# for exactly this reason, and judges the kill by an empty stderr.
++(cd / && sudo -n -u _jcode_worker /usr/local/var/jcode-runs/worker_kill.sh)
++# Expected: exit 0 or 1 (no worker processes), no stderr, no prompt.
++# If sudo prompts for a password, the sudoers line is missing or wrong.
++
++# The same command WITH any argument is REFUSED.
++sudo -n -u _jcode_worker /usr/local/var/jcode-runs/worker_kill.sh --help
++# Expected: "sudo: a password is required".
++#
++# The trailing "" in the sudoers line is load-bearing and is the reason
++# this is refused. A sudoers command written WITHOUT it permits the
++# command with ANY arguments — measured on this machine before the ""
++# was added: `worker_kill.sh --help` ran, and only the script's own
++# `[ $# -eq 0 ] || exit 1` stopped it. The guard in the script is
++# defence in depth; the sudoers restriction is the control. An earlier
++# revision of this document claimed sudoers refused the argument form
++# when it did not.
++
++# An arbitrary command as _jcode_worker is still REFUSED.
++# This proves the two NOPASSWD entries did not widen into general
++# worker access.
++sudo -n -u _jcode_worker /bin/sh
++# Expected: "sudo: a password is required"
 +```
 +
 +---
@@ -2011,13 +2590,41 @@ index 0000000..d32ed41
 +           fork bomb stopped after N concurrent children in parent (rlimit enforced)
 +  canary tree_kill: PASS
 +           escapee PID NNNNN was alive before kill_all and gone after. uid-based kill survived the setsid+double-fork escape attempt.
++  canary symlink_egress: PASS
++           backend refused symlink egress: not a regular file: ...  Zero bytes of planted secret reached host workspace.
++  canary ingress_symlink: PASS
++           backend refused pre-created run directory: ...  Target file content unchanged.
 +
-+Canary suite: 4/4 capabilities confirmed.
++Canary suite: 6/6 capabilities confirmed.
 +
 +All canaries complete.  Ready for orders (S2+).
 +```
 +
-+`4/4 capabilities confirmed` means pass.  Anything else is fail.
++`6/6 capabilities confirmed` means pass.  Anything else is fail.
++
++### Canary inventory
++
++Each canary proves one capability of the isolation boundary:
++
++| Canary | What it proves |
++|---|---|
++| `no_network` | The sandbox profile blocks TCP and DNS. |
++| `fs_confinement` | The sandbox profile blocks reads of secrets, home, keychains, private-tmp, and writes outside the workspace. |
++| `pid_limit` | `ulimit -u` (RLIMIT_NPROC) enforced in the wrapper stops a fork bomb. |
++| `tree_kill` | `pkill -9 -u _jcode_worker` terminates a daemonised grandchild that escaped the original process group (setsid+double-fork). |
++| `symlink_egress` | The egress path rejects symlinks — `O_NOFOLLOW` + `S_ISREG` prevents confused-deputy exfiltration. |
++| `ingress_symlink` | The ingress path rejects pre-existing run directories — `os.mkdir` without `exist_ok` and `O_EXCL|O_NOFOLLOW` on write prevent writing through a worker-planted symlink. |
++
++### File inventory
++
++Files installed under `/usr/local/var/jcode-runs/`:
++
++| Path | Mode | Owner | Purpose |
++|---|---|---|---|
++| `worker_exec.sh` | `0755` | `root:wheel` | Gateway wrapper (the only command sudoers permits as `_jcode_worker`) |
++| `worker_kill.sh` | `0755` | `root:wheel` | Tree-kill helper (runs `pkill -9 -u _jcode_worker` via sudo) |
++| `profiles/worker.sb` | `0644` | `root:wheel` | Apple Seatbelt sandbox profile |
++| `canaries/*.py` | `0444` | `root:wheel` | Payload scripts executed inside the sandbox (not the canary orchestrators — those run from the repo)
 +
 +### Refusal demo
 +
@@ -2045,3 +2652,2105 @@ index 0000000..d32ed41
 +-u` kills by uid — which the escapee cannot shed on macOS (no user
 +namespaces).  The `tree_kill` canary verifies this by spawning exactly
 +such an escapee and confirming it dies.
+diff --git a/governance/consultations/s1-seatbelt-raw.diff b/governance/consultations/s1-seatbelt-raw.diff
+new file mode 100644
+index 0000000..e718420
+--- /dev/null
++++ b/governance/consultations/s1-seatbelt-raw.diff
+@@ -0,0 +1,2047 @@
++diff --git a/.gitignore b/.gitignore
++index 2260689..d490955 100644
++--- a/.gitignore
+++++ b/.gitignore
++@@ -1,6 +1,7 @@
++ .DS_Store
++ *.log
++ .env
+++__pycache__/
++ 
++ # Operator v1.2 runtime state directory (never committed)
++ operator/.runtime/
++diff --git a/core/__init__.py b/core/__init__.py
++new file mode 100644
++index 0000000..c9050ee
++--- /dev/null
+++++ b/core/__init__.py
++@@ -0,0 +1 @@
+++# Execution Core package
++diff --git a/core/backends/__init__.py b/core/backends/__init__.py
++new file mode 100644
++index 0000000..b56d4f7
++--- /dev/null
+++++ b/core/backends/__init__.py
++@@ -0,0 +1 @@
+++# macos-seatbelt backend — see macos_seatbelt.py
++diff --git a/core/backends/macos_seatbelt.py b/core/backends/macos_seatbelt.py
++new file mode 100644
++index 0000000..0d88dd6
++--- /dev/null
+++++ b/core/backends/macos_seatbelt.py
++@@ -0,0 +1,405 @@
+++"""
+++macOS seatbelt backend for the Execution Core.
+++
+++Runs a command inside an Apple Seatbelt sandbox using sandbox-exec(1).
+++Tree kill uses pkill -9 -u to survive setsid+double-fork escapees.
+++
+++Design invariant: the owner's environment never crosses the isolation
+++boundary.  env -i guarantees an empty initial environment.
+++
+++File transfer discipline (defence against confused-deputy symlink attacks):
+++  - Never os.path.isfile() on an untrusted path.  Use os.lstat + S_ISREG.
+++  - Reject symlinks, directories, FIFOs, sockets, devices, hard links.
+++  - Open with O_RDONLY | O_NOFOLLOW, then fstat + re-check S_ISREG.
+++  - Egress: allowlist of {"result.json", "escapee.pid"} only, 64 KiB cap.
+++  - Refusal is visible via raised PermissionError.
+++"""
+++
+++import json
+++import os
+++import shutil
+++import stat
+++import subprocess
+++import time
+++
+++# ── Installed paths — these define the trust boundary ────────────────────────
+++_SANDBOX_BASE = "/usr/local/var/jcode-runs"
+++_CANARY_DIR = os.path.join(_SANDBOX_BASE, "canaries")
+++_RUNS_DIR = os.path.join(_SANDBOX_BASE, "runs")
+++_PROFILE_PATH = os.path.join(_SANDBOX_BASE, "profiles", "worker.sb")
+++_WORKER_USER = "_jcode_worker"
+++_WRAPPER_PATH = os.path.join(_SANDBOX_BASE, "worker_exec.sh")
+++
+++# Egress allowlist — only these filenames may be copied out of the sandbox.
+++_EGRESS_ALLOWLIST = frozenset({"result.json", "escapee.pid"})
+++# Maximum bytes for any egress file (64 KiB).
+++_EGRESS_MAX_BYTES = 65536
+++
+++# Path to the root-owned kill helper.
+++_KILL_HELPER_PATH = os.path.join(_SANDBOX_BASE, "worker_kill.sh")
+++
+++_policy = None
+++
+++
+++def _load_policy():
+++    global _policy
+++    if _policy is None:
+++        _CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+++        with open(os.path.join(_CORE, "policy.json")) as f:
+++            _policy = json.load(f)
+++    return _policy
+++
+++
+++# ── Secure file transfer helpers ────────────────────────────────────────────
+++
+++_ERROR_NOT_REGULAR = "not a regular file: {path}"
+++_ERROR_NLINK = "hard link count > 1: {path} ({nlink})"
+++_ERROR_TRUNCATED = "file truncated after open — possible race: {path}"
+++_ERROR_TOO_LARGE = "file too large: {size} > {limit} bytes: {path}"
+++
+++
+++def _secure_open_read(path):
+++    """Open *path* for reading with symlink-attack defences.
+++
+++    Returns a (fd, stat_result) pair that is guaranteed to describe the
+++    same regular file.  Raises PermissionError if the file is not a
+++    regular file, is a hard link (nlink > 1), or changes type between
+++    lstat and open/fstat.
+++    """
+++    lst = os.lstat(path)
+++    if not stat.S_ISREG(lst.st_mode):
+++        raise PermissionError(_ERROR_NOT_REGULAR.format(path=path))
+++    if lst.st_nlink > 1:
+++        raise PermissionError(_ERROR_NLINK.format(path=path, nlink=lst.st_nlink))
+++
+++    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+++    try:
+++        fst = os.fstat(fd)
+++        if not stat.S_ISREG(fst.st_mode):
+++            raise PermissionError(_ERROR_NOT_REGULAR.format(path=path))
+++        if fst.st_nlink > 1:
+++            raise PermissionError(_ERROR_NLINK.format(path=path, nlink=fst.st_nlink))
+++        # Sanity: the file we opened should be the one we stat'd.
+++        if fst.st_ino != lst.st_ino or fst.st_dev != lst.st_dev:
+++            raise PermissionError(_ERROR_TRUNCATED.format(path=path))
+++    except PermissionError:
+++        os.close(fd)
+++        raise
+++    except Exception:
+++        os.close(fd)
+++        raise
+++
+++    return fd, fst
+++
+++
+++def _read_fd_all(fd, max_bytes):
+++    """Read up to *max_bytes* bytes from fd.  When None, read until EOF."""
+++    data = bytearray()
+++    if max_bytes is None:
+++        while True:
+++            chunk = os.read(fd, 65536)
+++            if not chunk:
+++                break
+++            data.extend(chunk)
+++    else:
+++        remaining = max_bytes + 1
+++        while remaining > 0:
+++            chunk = os.read(fd, min(65536, remaining))
+++            if not chunk:
+++                break
+++            data.extend(chunk)
+++            remaining -= len(chunk)
+++    return bytes(data)
+++
+++
+++def _copy_file_secure(src, dst, max_bytes=None):
+++    """Copy *src* to *dst* with symlink-attack defences.
+++
+++    *src* must be a regular file (not a symlink, device, FIFO, etc.)
+++    with nlink == 1.  Opened with O_NOFOLLOW; re-verified via fstat.
+++
+++    When *max_bytes* is set, the copy is capped at that value and a
+++    PermissionError is raised if the source exceeds it.
+++
+++    Raises PermissionError on any violation.  Silent skip is not acceptable.
+++    """
+++    fd, fst = _secure_open_read(src)
+++    try:
+++        size = fst.st_size
+++        if max_bytes is not None and size > max_bytes:
+++            raise PermissionError(
+++                _ERROR_TOO_LARGE.format(
+++                    path=src, size=size, limit=max_bytes
+++                )
+++            )
+++
+++        # Read the whole file when no cap is given (ingress).  Silent truncation
+++        # is not acceptable — max_bytes=None means no cap, not a hidden 64 KiB.
+++        data = _read_fd_all(fd, max_bytes)
+++
+++        with open(dst, "wb") as out:
+++            out.write(data)
+++    finally:
+++        os.close(fd)
+++
+++
+++def _copy_egress(src, dst):
+++    """Copy *src* (from inner workspace) to *dst* (host workspace).
+++
+++    Restricted to the egress allowlist with a 64 KiB byte cap.
+++
+++    Returns the basename if the file was skipped (not in allowlist),
+++    or None if it was copied or already existed.  Skipped files are
+++    silently not copied — the allowlist is a FILTER, not an assertion.
+++
+++    Raises PermissionError when a file IS in the allowlist but is not
+++    a regular file (symlink, directory, FIFO, device, hard link).
+++    """
+++    basename = os.path.basename(src)
+++    if basename not in _EGRESS_ALLOWLIST:
+++        return basename  # Skip — not a denial.
+++    if os.path.exists(dst):
+++        return None  # Do not overwrite an existing host-side file.
+++    _copy_file_secure(src, dst, max_bytes=_EGRESS_MAX_BYTES)
+++    return None
+++
+++
+++def _copy_ingress(src, dst):
+++    """Copy *src* (from host workspace) to *dst* (inner workspace).
+++
+++    Regular-file-only discipline; no allowlist needed on ingress because
+++    the caller controls the workspace, but we enforce the same defences
+++    against symlink substitution.
+++    """
+++    _copy_file_secure(src, dst)
+++
+++
+++# ── Kill-unavailable exception ────────────────────────────────────────────
+++
+++class KillUnavailable(Exception):
+++    """Raised when the kill helper cannot be executed at all.
+++
+++    Missing file, sudo refusal, or any other condition that prevents
+++    the helper from running qualifies.  A kill path that cannot report
+++    its own failure is the defect this exception exists to prevent.
+++    """
+++    pass
+++
+++
+++# ── Tree kill ──────────────────────────────────────────────────────────────
+++
+++def kill_all():
+++    """Kill every process owned by the worker user.
+++
+++    Uses the root-owned worker_kill.sh helper via sudo -n -u _jcode_worker.
+++    Running AS the worker is sufficient: a process may signal processes of
+++    its own uid.  No root privilege is needed.
+++
+++    Returns a structured dict:
+++        ok          — False when returncode is neither 0 nor 1
+++        returncode  — exit code from the helper
+++        stderr      — stderr captured from the helper
+++        killed_any  — True if pkill reported killing at least one process
+++
+++    Raises KillUnavailable if the helper cannot be executed at all.
+++    """
+++    if not os.path.exists(_KILL_HELPER_PATH):
+++        raise KillUnavailable(
+++            f"kill helper not found: {_KILL_HELPER_PATH}"
+++        )
+++
+++    cmd = ["sudo", "-n", "-u", _WORKER_USER, _KILL_HELPER_PATH]
+++    try:
+++        # cwd="/" is load-bearing, not tidiness. sudo hands the helper the
+++        # caller's working directory, and the worker cannot read the owner's
+++        # repo. /bin/sh then emits "shell-init: error retrieving current
+++        # directory" on startup — before the script's own `cd /` can run.
+++        # That noise lands in stderr, and stderr is how we judge the kill.
+++        result = subprocess.run(
+++            cmd,
+++            capture_output=True,
+++            text=True,
+++            timeout=10,
+++            cwd="/",
+++        )
+++    except FileNotFoundError:
+++        raise KillUnavailable("sudo not found — cannot run kill helper")
+++    except subprocess.TimeoutExpired:
+++        raise KillUnavailable("kill helper timed out after 10 seconds")
+++
+++    rc = result.returncode
+++    stderr = result.stderr or ""
+++
+++    # pkill exits 1 both when nothing matched and when it was refused
+++    # permission to signal what it found — measured, as the owner:
+++    #   pkill: signalling pid 137: Operation not permitted
+++    #   returncode: 1
+++    # Treating rc 1 as success on its own is what hid a kill path that had
+++    # never worked. Any stderr means the helper had something to complain
+++    # about, and a kill that complains has not proven it killed.
+++    return {
+++        "ok": rc in (0, 1) and not stderr.strip(),
+++        "returncode": rc,
+++        "stderr": stderr,
+++        "killed_any": rc == 0,
+++    }
+++
+++
+++# ── Run ────────────────────────────────────────────────────────────────────
+++
+++def run(canary_name, workspace, run_id=None, teardown=True):
+++    """Run the named canary inside the seatbelt sandbox.
+++
+++    *canary_name* identifies a pre-installed script under
+++    /usr/local/var/jcode-runs/canaries/.  The wrapper resolves it to a
+++    root-owned file outside the workspace — nothing is ever executed from
+++    the workspace, and the caller cannot choose a path.
+++
+++    *workspace* is a host-side scratch directory.  Files in it are copied
+++    into the inner sandbox workspace before execution, and result files
+++    (result.json, escapee.pid) are copied back after the sandbox exits.
+++
+++    *run_id* is an optional explicit run identifier matching
+++    [A-Za-z0-9_-]{1,64}.  If omitted, os.path.basename(workspace) is used
+++    — the caller must ensure the basename passes the wrapper's validation.
+++
+++    *teardown* (default True): when False, the sandbox is started but the
+++    method returns the subprocess.Popen immediately — without waiting for
+++    completion or cleaning up the inner workspace.  This exists ONLY for
+++    the tree_kill canary, which must observe the escapee while the sandbox
+++    is still running (macOS seatbelt kills child processes when
+++    sandbox-exec exits).  The caller is responsible for waiting on the
+++    returned Popen and for calling kill_all().
+++
+++    The script executes as the unprivileged _WORKER_USER with an empty
+++    environment, confined by the SBPL profile.  rlimits are applied in the
+++    pre-exec hook before sudo hands off to the wrapper.
+++
+++    The wrapper (core/worker_exec.sh) is the ONLY command sudoers permits
+++    as _jcode_worker.  It hard-codes the profile path and canary directory;
+++    the caller cannot substitute either.
+++
+++    Returns:
+++      teardown=True → a dict:
+++        exit_status     — int exit code, or None if killed by signal
+++        term_signal     — signal number, or None if exited normally
+++        wall_clock_ms   — elapsed wall-clock time (int, milliseconds)
+++        timed_out       — True if the wall-clock watchdog fired
+++
+++      teardown=False → subprocess.Popen for the running sandbox.
+++    """
+++    policy = _load_policy()
+++    lim = policy["limits"]
+++
+++    # Per-run directory under the root-owned base.  Mode 0777 so the
+++    # worker can read and write its own workspace.  The sandbox profile
+++    # — not Unix permissions — is the confinement boundary for what
+++    # runs inside.  The base directory (0771 root:wheel) prevents
+++    # non-wheel users from creating or listing entries under it.
+++    if run_id is None:
+++        run_id = os.path.basename(workspace)
+++    inner_ws = os.path.join(_RUNS_DIR, run_id)
+++    os.makedirs(inner_ws, exist_ok=True)
+++    os.chmod(inner_ws, 0o777)
+++
+++    # Copy caller's workspace files into the inner workspace that the
+++    # sandbox will confine.  The canary script itself is NOT written
+++    # here — it runs from the root-owned canary dir.
+++    for fn in os.listdir(workspace):
+++        src = os.path.join(workspace, fn)
+++        dst = os.path.join(inner_ws, fn)
+++        _copy_ingress(src, dst)
+++
+++    # The wrapper takes run_id and canary_name.  It resolves the canary
+++    # script from the root-owned canary directory; the caller cannot
+++    # influence the path beyond choosing a valid name.
+++    cmd = [
+++        "sudo", "-u", _WORKER_USER,
+++        _WRAPPER_PATH,
+++        run_id,
+++        canary_name,
+++    ]
+++
+++    def _preexec():
+++        import resource
+++
+++        # RLIMIT_AS is intentionally NOT set — it raises ValueError on macOS
+++        # RLIMIT_NPROC is NOT set here either: on macOS it counts processes per
+++        # REAL UID, and preexec still runs as the owner, who has hundreds. The
+++        # worker's process limit is applied inside worker_exec.sh, after sudo
+++        # has switched uid — measured: setting it here makes sudo fail to fork.
+++        # (ENOTSUP).  This is why mem_limit lives in unclaimable_capabilities.
+++        for name, rlim_const, value in [
+++            ("rlimit_cpu",   resource.RLIMIT_CPU,   lim["rlimit_cpu_seconds"]),
+++            ("rlimit_fsize", resource.RLIMIT_FSIZE, lim["rlimit_fsize_bytes"]),
+++        ]:
+++            try:
+++                resource.setrlimit(rlim_const, (value, value))
+++            except Exception:
+++                pass
+++
+++    wall_start = time.monotonic()
+++    proc = subprocess.Popen(cmd, preexec_fn=_preexec, cwd="/")
+++
+++    # ── teardown=False: return early so the tree_kill canary can observe ──
+++    # the escapee while the sandbox is still running.  macOS seatbelt kills
+++    # child processes when sandbox-exec exits; if we wait for completion
+++    # the escapee is already dead and we cannot prove kill_all works.
+++    if not teardown:
+++        # Let the payload daemonise and write escapee.pid.
+++        time.sleep(1.0)
+++        # Copy any result files back so the caller can read escapee.pid.
+++        for fn in os.listdir(inner_ws):
+++            src = os.path.join(inner_ws, fn)
+++            dst = os.path.join(workspace, fn)
+++            _copy_egress(src, dst)
+++        return proc
+++
+++    # ── Wall-clock watchdog ────────────────────────────────────────────
+++    timed_out = False
+++    kill_ok = True
+++    try:
+++        proc.wait(timeout=lim["wall_clock_seconds"])
+++    except subprocess.TimeoutExpired:
+++        timed_out = True
+++        try:
+++            kill_result = kill_all()
+++            kill_ok = kill_result["ok"]
+++        except KillUnavailable as exc:
+++            kill_ok = False
+++        # Give the kill a moment to propagate, then force-clean the sudo
+++        # wrapper (which runs as root and is not reached by pkill -u worker).
+++        try:
+++            proc.wait(timeout=5)
+++        except subprocess.TimeoutExpired:
+++            proc.kill()
+++            proc.wait()
+++
+++    wall_end = time.monotonic()
+++
+++    # Copy any result files the sandboxed script wrote back to the
+++    # caller's workspace (e.g. result.json, escapee.pid).
+++    # Files not in the allowlist are silently skipped and recorded.
+++    egress_skipped = []
+++    for fn in os.listdir(inner_ws):
+++        src = os.path.join(inner_ws, fn)
+++        dst = os.path.join(workspace, fn)
+++        skip_name = _copy_egress(src, dst)
+++        if skip_name is not None:
+++            egress_skipped.append(skip_name)
+++
+++    # Clean up the inner workspace.
+++    shutil.rmtree(inner_ws, ignore_errors=True)
+++
+++    rc = proc.returncode
+++    exit_status = rc if rc >= 0 else None
+++    term_signal = -rc if rc < 0 else None
+++
+++    return {
+++        "exit_status": exit_status,
+++        "term_signal": term_signal,
+++        "wall_clock_ms": int((wall_end - wall_start) * 1000),
+++        "timed_out": timed_out,
+++        "kill_ok": kill_ok,
+++        "egress_skipped": egress_skipped,
+++    }
++diff --git a/core/canaries/__init__.py b/core/canaries/__init__.py
++new file mode 100644
++index 0000000..a1676e1
++--- /dev/null
+++++ b/core/canaries/__init__.py
++@@ -0,0 +1,3 @@
+++# Canary suite — host-side orchestrators, one module per capability.
+++# Payloads (sandbox-side scripts) live in ../payloads/.
+++
++diff --git a/core/canaries/fs_confinement.py b/core/canaries/fs_confinement.py
++new file mode 100644
++index 0000000..cd9b9dd
++--- /dev/null
+++++ b/core/canaries/fs_confinement.py
++@@ -0,0 +1,106 @@
+++"""
+++Canary: fs_confinement — host-side orchestrator.
+++
+++Runs the fs_confinement payload inside the sandbox and judges the results.
+++The payload reports raw check outcomes; the host decides pass or fail.
+++
+++Must hold:
+++  - Reading ~/.config/secrets/env FAILS
+++  - Reading a planted fake secret outside the workspace FAILS
+++  - Listing $HOME FAILS
+++  - Listing /Library/Keychains FAILS
+++  - Listing /private/tmp FAILS
+++  - Writing outside the workspace FAILS
+++  - Writing inside the workspace SUCCEEDS
+++
+++Plants a fake secret file at a known path OUTSIDE the workspace for the
+++positive read check.  The file is created world-readable in /tmp so that
+++only the sandbox (not Unix permissions) can block it.
+++"""
+++
+++import json
+++import os
+++import secrets
+++import shutil
+++import string
+++import tempfile
+++
+++
+++def run(backend):
+++    run_id = _gen_run_id()
+++    tmp = tempfile.mkdtemp(prefix="canary_fs_confinement_")
+++
+++    # Plant a fake secret file OUTSIDE the workspace at a known path.
+++    # It is created world-readable (0o644) in /tmp.  A process running
+++    # as _jcode_worker would be able to read it by Unix permissions —
+++    # only the sandbox profile, which denies access to everything
+++    # outside WORKSPACE, should block it.  This isolates the test to
+++    # the sandbox itself, not Unix file permissions.
+++    planted_path = "/tmp/.jcode_canary_secret_fs"
+++    with open(planted_path, "w") as f:
+++        f.write("fake-api-key-planted-by-canary-orchestrator")
+++    os.chmod(planted_path, 0o644)
+++
+++    try:
+++        backend.run("fs_confinement", tmp, run_id=run_id)
+++
+++        result_path = os.path.join(tmp, "result.json")
+++        if not os.path.exists(result_path):
+++            return False, "no result.json produced"
+++
+++        with open(result_path) as f:
+++            data = json.load(f)
+++
+++        checks = data.get("checks", {})
+++        if not checks:
+++            return False, "result.json has no checks"
+++
+++        # Mandatory expectations for each check
+++        expectations = {
+++            "read_real_secret": False,
+++            "read_planted_secret": False,
+++            "list_home": False,
+++            "list_keychains": False,
+++            "list_private_tmp": False,
+++            "write_outside": False,
+++            "write_inside": True,
+++        }
+++
+++        passed = True
+++        parts = []
+++        for name, must_succeed in expectations.items():
+++            ch = checks.get(name)
+++            if ch is None:
+++                passed = False
+++                parts.append(f"{name}: MISSING")
+++                continue
+++
+++            ok = ch["succeeded"]
+++            detail = ch["detail"]
+++
+++            if must_succeed:
+++                if not ok:
+++                    passed = False
+++                    parts.append(f"{name}: BLOCKED (BAD) ({detail})")
+++                else:
+++                    parts.append(f"{name}: ALLOWED ({detail})")
+++            else:
+++                if ok:
+++                    passed = False
+++                    parts.append(f"{name}: LEAKED (BAD) ({detail})")
+++                else:
+++                    parts.append(f"{name}: BLOCKED ({detail})")
+++
+++        return passed, " | ".join(parts)
+++
+++    finally:
+++        try:
+++            os.remove("/tmp/.jcode_canary_secret_fs")
+++        except OSError:
+++            pass
+++        shutil.rmtree(tmp, ignore_errors=True)
+++
+++
+++def _gen_run_id(length=16):
+++    alphabet = string.ascii_letters + string.digits + "_-"
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
++diff --git a/core/canaries/no_network.py b/core/canaries/no_network.py
++new file mode 100644
++index 0000000..8dac4b8
++--- /dev/null
+++++ b/core/canaries/no_network.py
++@@ -0,0 +1,56 @@
+++"""
+++Canary: no_network — host-side orchestrator.
+++
+++Runs the no_network payload inside the sandbox and judges the results.
+++The payload reports raw check outcomes; the host decides pass or fail.
+++
+++Must hold: every attempted outbound connection and DNS resolution is blocked.
+++Any success = canary failure.
+++"""
+++
+++import json
+++import os
+++import secrets
+++import shutil
+++import string
+++import tempfile
+++
+++
+++def run(backend):
+++    run_id = _gen_run_id()
+++    tmp = tempfile.mkdtemp(prefix="canary_no_network_")
+++
+++    try:
+++        backend.run("no_network", tmp, run_id=run_id)
+++
+++        result_path = os.path.join(tmp, "result.json")
+++        if not os.path.exists(result_path):
+++            return False, "no result.json produced"
+++
+++        with open(result_path) as f:
+++            data = json.load(f)
+++
+++        checks = data.get("checks", {})
+++        if not checks:
+++            return False, "result.json has no checks"
+++
+++        failed = [(name, ch["detail"]) for name, ch in checks.items() if ch["succeeded"]]
+++        if failed:
+++            parts = []
+++            for name, detail in failed:
+++                parts.append(f"{name}: LEAKED (BAD) ({detail})")
+++            for name, ch in checks.items():
+++                if not ch["succeeded"]:
+++                    parts.append(f"{name}: BLOCKED ({ch['detail']})")
+++            return False, " | ".join(parts)
+++
+++        parts = [f"{name}: BLOCKED ({ch['detail']})" for name, ch in checks.items()]
+++        return True, " | ".join(parts)
+++
+++    finally:
+++        shutil.rmtree(tmp, ignore_errors=True)
+++
+++
+++def _gen_run_id(length=16):
+++    alphabet = string.ascii_letters + string.digits + "_-"
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
++diff --git a/core/canaries/pid_limit.py b/core/canaries/pid_limit.py
++new file mode 100644
++index 0000000..2956e27
++--- /dev/null
+++++ b/core/canaries/pid_limit.py
++@@ -0,0 +1,114 @@
+++"""
+++Canary: pid_limit — host-side orchestrator.
+++
+++Runs the pid_limit payload inside the sandbox and judges the result.
+++The payload reports the fork count reached before the rlimit stopped it
+++and the errno.
+++
+++Must hold: the fork bomb is stopped by RLIMIT_NPROC (ulimit -u 64 from
+++worker_exec.sh) with EAGAIN.  The canary FAILs if the payload did not
+++hit the resource limit, produced no result, or left processes alive.
+++"""
+++
+++import errno
+++import json
+++import os
+++import secrets
+++import shutil
+++import string
+++import subprocess
+++import tempfile
+++import time
+++
+++_WORKER_USER = "_jcode_worker"
+++
+++
+++def run(backend):
+++    run_id = _gen_run_id()
+++    tmp = tempfile.mkdtemp(prefix="canary_pid_limit_")
+++
+++    try:
+++        backend.run("pid_limit", tmp, run_id=run_id)
+++
+++        result_path = os.path.join(tmp, "result.json")
+++        if not os.path.exists(result_path):
+++            return False, "no result.json produced"
+++
+++        with open(result_path) as f:
+++            data = json.load(f)
+++
+++        fork_count = data.get("fork_count")
+++        if fork_count is None:
+++            return False, "result.json missing fork_count"
+++
+++        if fork_count == 0:
+++            return False, (
+++                f"fork bomb reported 0 children — "
+++                "payload could not fork at all, proves nothing about rlimit"
+++            )
+++
+++        if fork_count > 100:
+++            return False, (
+++                f"fork bomb reached {fork_count} concurrent children — "
+++                "rlimit may not have applied"
+++            )
+++
+++        # Must have hit a resource error.
+++        if "errno" not in data:
+++            return False, "result.json missing errno — no resource error recorded"
+++
+++        err = data["errno"]
+++        if err != errno.EAGAIN:
+++            return False, (
+++                f"payload stopped with errno {err} ({data.get('strerror', '?')}) — "
+++                f"expected EAGAIN ({errno.EAGAIN}), got a different errno. "
+++                "The fork bomb was not stopped by RLIMIT_NPROC."
+++            )
+++
+++        # After measurement, call kill_all and poll for zero worker processes.
+++        # SIGKILL delivery and reaping are asynchronous; poll up to ~10 s,
+++        # checking every 0.25 s.  Zero is the criterion.
+++        kill_result = backend.kill_all()
+++        if not kill_result["ok"]:
+++            return False, (
+++                f"kill_all failed: returncode={kill_result['returncode']}, "
+++                f"stderr={kill_result['stderr']!r}"
+++            )
+++
+++        deadline = time.time() + 10.0
+++        while time.time() < deadline:
+++            leftover = _count_worker_procs()
+++            if leftover == 0:
+++                break
+++            time.sleep(0.25)
+++        else:
+++            return False, (
+++                f"after kill_all, {leftover} process(es) still running "
+++                f"under uid '{_WORKER_USER}'"
+++            )
+++
+++        return True, (
+++            f"fork bomb stopped after {fork_count} concurrent children "
+++            f"with EAGAIN (rlimit enforced); no leftover processes"
+++        )
+++
+++    finally:
+++        shutil.rmtree(tmp, ignore_errors=True)
+++
+++
+++def _count_worker_procs():
+++    """Return the number of processes owned by the worker user."""
+++    result = subprocess.run(
+++        ["/usr/bin/pgrep", "-u", _WORKER_USER],
+++        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+++        text=True, timeout=5,
+++    )
+++    # pgrep exits 0 when matches found, 1 when none.
+++    if result.returncode == 0:
+++        return len(result.stdout.strip().splitlines())
+++    return 0
+++
+++
+++def _gen_run_id(length=16):
+++    alphabet = string.ascii_letters + string.digits + "_-"
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
++diff --git a/core/canaries/symlink_egress.py b/core/canaries/symlink_egress.py
++new file mode 100644
++index 0000000..493dca3
++--- /dev/null
+++++ b/core/canaries/symlink_egress.py
++@@ -0,0 +1,131 @@
+++"""
+++Canary: symlink_egress — host-side orchestrator.
+++
+++Negative canary: PASSes only if the supervisor REFUSED to copy a
+++symlink out of the inner workspace AND zero bytes of the planted
+++secret reached the host workspace.
+++
+++The payload creates result.json as a symlink pointing at a secret
+++file planted outside the workspace.  A vulnerable backend (using
+++os.path.isfile + shutil.copy, which follow symlinks) would copy the
+++secret into the host workspace — a confused-deputy exfiltration.
+++
+++Must hold: the backend's egress path uses os.lstat + S_ISREG +
+++O_NOFOLLOW, rejects symlinks, and the secret never leaves the inner
+++workspace.
+++"""
+++
+++import os
+++import secrets
+++import shutil
+++import string
+++import tempfile
+++
+++
+++def run(backend):
+++    run_id = _gen_run_id()
+++    tmp = tempfile.mkdtemp(prefix="canary_symlink_egress_")
+++
+++    # Generate a unique marker for this run.
+++    marker = _gen_marker()
+++    planted_path = "/tmp/.jcode_canary_secret_symlink"
+++
+++    # Plant a secret file outside the workspace, world-readable, so
+++    # that only the sandbox (not Unix permissions) would block it.
+++    with open(planted_path, "w") as f:
+++        f.write(f"secret-key-planted-by-canary-orchestrator-{marker}")
+++    os.chmod(planted_path, 0o644)
+++
+++    try:
+++        # Run the payload inside the sandbox.  The payload creates
+++        # result.json as a symlink pointing at planted_path.  The
+++        # backend's egress copy should REJECT it (PermissionError
+++        # from O_NOFOLLOW + S_ISREG check).  We catch the exception
+++        # because the rejection is the expected outcome.
+++        try:
+++            backend.run("symlink_egress", tmp, run_id=run_id)
+++        except PermissionError as exc:
+++            # Expected: the backend refused the symlink egress.
+++            # Record but do not fail on this alone — we must also
+++            # verify no data leaked.
+++            #
+++            # Only PermissionError counts, and only when its message names
+++            # the regular-file check.  Accepting any exception would let an
+++            # unrelated failure — a missing canary script, a sudo error, a
+++            # typo in the wrapper — masquerade as a successful defence.
+++            # This canary must fail if the mechanism it names is absent.
+++            if "not a regular file" not in str(exc):
+++                return False, (
+++                    f"backend raised PermissionError but not for the symlink: "
+++                    f"{exc!r} — the O_NOFOLLOW/S_ISREG defence was not what refused"
+++                )
+++            egress_refused = str(exc)
+++        except Exception as exc:
+++            return False, (
+++                f"backend failed with {type(exc).__name__}: {exc} — "
+++                "this is not a symlink refusal and proves nothing about egress"
+++            )
+++        else:
+++            # No exception — the backend may have silently skipped
+++            # or, worse, copied the symlink content.  We record
+++            # that no refusal was raised; the content check below
+++            # will catch a leak.
+++            egress_refused = None
+++
+++        # Assert on content: the marker string must appear in NO
+++        # file under the host workspace.  If the backend followed
+++        # the symlink and copied the secret, its content (including
+++        # the marker) would be in result.json (or any other file).
+++        leaked = _marker_in_workspace(tmp, marker)
+++        if leaked:
+++            return False, (
+++                f"SECRET LEAKED: planted marker '{marker}' found in "
+++                f"host workspace file '{leaked}' — symlink egress "
+++                "was not blocked"
+++            )
+++
+++        if egress_refused is None:
+++            return False, (
+++                "backend did not raise on symlink egress but no "
+++                "marker found in host workspace — possible silent skip; "
+++                "O_NOFOLLOW defence may not be exercised"
+++            )
+++
+++        return True, (
+++            f"backend refused symlink egress: {egress_refused}.  "
+++            "Zero bytes of planted secret reached host workspace."
+++        )
+++
+++    finally:
+++        try:
+++            os.remove(planted_path)
+++        except OSError:
+++            pass
+++        shutil.rmtree(tmp, ignore_errors=True)
+++
+++
+++def _gen_run_id(length=16):
+++    alphabet = string.ascii_letters + string.digits + "_-"
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
+++
+++
+++def _gen_marker(length=24):
+++    alphabet = string.ascii_letters + string.digits
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
+++
+++
+++def _marker_in_workspace(workspace, marker):
+++    """Return the path of the first file in *workspace* containing *marker*,
+++    or None if no file contains it."""
+++    for fn in os.listdir(workspace):
+++        path = os.path.join(workspace, fn)
+++        if not os.path.isfile(path):
+++            continue
+++        try:
+++            with open(path, "r") as f:
+++                content = f.read()
+++            if marker in content:
+++                return fn
+++        except Exception:
+++            continue
+++    return None
++diff --git a/core/canaries/tree_kill.py b/core/canaries/tree_kill.py
++new file mode 100644
++index 0000000..adf4869
++--- /dev/null
+++++ b/core/canaries/tree_kill.py
++@@ -0,0 +1,171 @@
+++"""
+++Canary: tree_kill — host-side orchestrator.
+++
+++Runs the tree_kill payload inside the sandbox, then verifies that
+++backend.kill_all() terminates a daemonised escapee.
+++
+++Must hold: a child that does setsid(), double-forks, and daemonises,
+++leaving the original process group, MUST still be terminable by
+++backend.kill_all() — a uid-based pkill.  The canary FAILs if the
+++escapee disappeared before kill_all() was called, because that
+++proves nothing about the mechanism.
+++
+++Mechanism:
+++  1. Run the escapee payload inside the sandbox with teardown=False
+++     so sandbox-exec stays alive and the escapee is observable.
+++  2. Read the grandchild PID from escapee.pid.
+++  3. Verify the escapee is alive (via /bin/ps -p) — if dead, FAIL.
+++  4. Verify the pid's owner is the worker uid — a recycled pid owned
+++     by someone else is not evidence.
+++  5. Call backend.kill_all().  This IS the test.
+++  6. Poll up to ~5 s for the pid to disappear.  Still alive → FAIL.
+++  7. PASS only if alive-before and gone-after, stating what was actually
+++     observed.
+++  8. die_now exists ONLY as a cleanup fallback in finally; it must not
+++     influence the verdict.
+++"""
+++
+++import os
+++import secrets
+++import shutil
+++import string
+++import subprocess
+++import tempfile
+++import time
+++
+++_INNER_BASE = "/usr/local/var/jcode-runs/runs"
+++_WORKER_USER = "_jcode_worker"
+++
+++
+++def run(backend):
+++    run_id = _gen_run_id()
+++    tmp = tempfile.mkdtemp(prefix="canary_tree_kill_")
+++
+++    sandbox_proc = None
+++    try:
+++        # Phase 1: spawn the escapee inside the sandbox without waiting
+++        # for completion.  teardown=False keeps sandbox-exec alive so the
+++        # kernel does not tear down the seatbelt sandbox and kill the
+++        # escapee before we can observe it.
+++        sandbox_proc = backend.run("tree_kill", tmp, run_id=run_id, teardown=False)
+++
+++        # Give the daemonised grandchild a moment to write its PID.
+++        # The backend already slept 1 s; an extra beat here is cheap insurance.
+++        time.sleep(0.5)
+++
+++        pid_file = os.path.join(tmp, "escapee.pid")
+++        if not os.path.exists(pid_file):
+++            return False, "escapee did not write PID file — double-fork may have failed"
+++
+++        with open(pid_file) as f:
+++            escapee_pid = int(f.read().strip())
+++
+++        # Phase 2: verify the escapee is ALIVE before we call kill_all.
+++        # If it is already dead here we cannot prove anything — the
+++        # canary must distinguish "terminated by us" from "died on its own".
+++        if not _pid_alive(escapee_pid):
+++            return False, (
+++                f"escapee PID {escapee_pid} died on its own before kill_all was called — "
+++                "proves nothing about uid-based kill"
+++            )
+++
+++        # Phase 3: verify the pid's owner is the worker uid.
+++        # A recycled pid owned by someone else is not evidence.
+++        owner = _pid_owner(escapee_pid)
+++        if owner != _WORKER_USER:
+++            return False, (
+++                f"escapee PID {escapee_pid} is owned by '{owner}', "
+++                f"not '{_WORKER_USER}' — recycled pid, not evidence"
+++            )
+++
+++        # Phase 4: call backend.kill_all().  This is the actual test.
+++        kill_result = backend.kill_all()
+++        if not kill_result["ok"]:
+++            return False, (
+++                f"kill_all returned failure: returncode={kill_result['returncode']}, "
+++                f"stderr={kill_result['stderr']!r}"
+++            )
+++
+++        # Phase 5: poll up to ~5 s for the pid to disappear.
+++        deadline = time.time() + 5.0
+++        while time.time() < deadline:
+++            if not _pid_alive(escapee_pid):
+++                break
+++            time.sleep(0.2)
+++        else:
+++            # Still alive after polling — kill_all did not reach it.
+++            return False, (
+++                f"escapee PID {escapee_pid} SURVIVED backend.kill_all() — "
+++                "uid-based pkill did not terminate the daemonised grandchild"
+++            )
+++
+++        # Phase 6: escapee is gone.  Wait for the sandbox process to finish.
+++        _wait_sandbox(sandbox_proc)
+++
+++        return True, (
+++            f"escapee PID {escapee_pid} was alive before kill_all and gone after — "
+++            "uid-based kill survived the setsid+double-fork escape attempt"
+++        )
+++
+++    finally:
+++        # die_now is ONLY a cleanup fallback here, not the test.
+++        try:
+++            inner_ws = os.path.join(_INNER_BASE, run_id)
+++            with open(os.path.join(inner_ws, "die_now"), "w") as f:
+++                f.write("1")
+++        except Exception:
+++            pass
+++        try:
+++            backend.kill_all()
+++        except backend.KillUnavailable:
+++            pass
+++        if sandbox_proc is not None:
+++            _wait_sandbox(sandbox_proc)
+++        shutil.rmtree(tmp, ignore_errors=True)
+++
+++
+++def _pid_alive(pid):
+++    """Return True if a process with *pid* exists.
+++
+++    Uses ps(1) rather than os.kill(pid, 0) because the canary runs as the
+++    owner and the escapee runs as _jcode_worker.  macOS returns EPERM for
+++    cross-uid signals (even signal 0).  ps -p reads the kernel process
+++    table, which is visible to all users.
+++    """
+++    import subprocess as _sp
+++    rc = _sp.run(
+++        ["/bin/ps", "-p", str(pid), "-o", "pid="],
+++        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+++    ).returncode
+++    return rc == 0
+++
+++
+++def _pid_owner(pid):
+++    """Return the user name owning *pid*, or empty string if not found."""
+++    try:
+++        result = subprocess.run(
+++            ["/bin/ps", "-p", str(pid), "-o", "user="],
+++            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+++            text=True, timeout=3,
+++        )
+++        return result.stdout.strip()
+++    except Exception:
+++        return ""
+++
+++
+++def _wait_sandbox(proc):
+++    """Wait for the sandbox process to finish, forcefully if needed."""
+++    if proc is None:
+++        return
+++    if proc.poll() is not None:
+++        return
+++    try:
+++        proc.wait(timeout=5)
+++    except subprocess.TimeoutExpired:
+++        proc.kill()
+++        proc.wait()
+++
+++
+++def _gen_run_id(length=16):
+++    alphabet = string.ascii_letters + string.digits + "_-"
+++    return "".join(secrets.choice(alphabet) for _ in range(length))
++diff --git a/core/launcher.py b/core/launcher.py
++new file mode 100644
++index 0000000..b748f53
++--- /dev/null
+++++ b/core/launcher.py
++@@ -0,0 +1,127 @@
+++#!/usr/bin/env python3
+++"""Execution Core launcher (S1: seatbelt canaries).
+++
+++Every invocation runs the full canary suite — no skip flag, no env override,
+++no cached result.  Fail-closed.  Refusal messages name the missing capability,
+++the backend, and the exact policy field.
+++"""
+++
+++import importlib, json, os, sys
+++
+++_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+++_POLICY_PATH = os.path.join(_CORE_DIR, "policy.json")
+++_CANARY_ORDER = ["no_network", "fs_confinement", "pid_limit", "tree_kill", "symlink_egress"]
+++_policy_cache = None
+++
+++
+++def _load_policy():
+++    global _policy_cache
+++    if _policy_cache is None:
+++        with open(_POLICY_PATH) as f:
+++            _policy_cache = json.load(f)
+++    return _policy_cache
+++
+++
+++def check_capabilities(required):
+++    """Return the list of *required* capabilities not in claimed_capabilities."""
+++    policy = _load_policy()
+++    claimed = set(policy.get("claimed_capabilities", []))
+++    return [c for c in required if c not in claimed]
+++
+++
+++# ── Refusal ────────────────────────────────────────────────────────────────
+++
+++def _refuse(missing_caps):
+++    """Print refusal for each missing capability, then exit."""
+++    policy = _load_policy()
+++    backend = policy["backend"]
+++    for cap in missing_caps:
+++        reason = policy.get("unclaimable_capabilities", {}).get(
+++            cap, "not listed in claimed_capabilities"
+++        )
+++        print(
+++            f"REFUSED: capability '{cap}' not available on backend '{backend}'.\n"
+++            f"  Policy field 'unclaimable_capabilities.{cap}': {reason}\n"
+++            f"  To grant this capability, change 'unclaimable_capabilities' in\n"
+++            f"  {_POLICY_PATH} and ensure the corresponding canary passes.",
+++            file=sys.stderr,
+++        )
+++    sys.exit(1)
+++
+++
+++# ── Canary runner ──────────────────────────────────────────────────────────
+++
+++def _run_one_canary(cap_name, backend):
+++    """Import and run a single canary module.  Returns (passed, reason)."""
+++    mod = importlib.import_module(f"canaries.{cap_name}")
+++    return mod.run(backend)
+++
+++
+++def _run_canary_suite():
+++    """Run all canaries.  Returns (passed_all, surviving_set)."""
+++    sys.path.insert(0, _CORE_DIR)
+++
+++    import backends.macos_seatbelt as backend
+++
+++    policy = _load_policy()
+++    claimed = set(policy.get("claimed_capabilities", []))
+++
+++    # Snapshot the original set BEFORE running — this is the denominator.
+++    original_claimed = set(claimed)
+++
+++    print(f"Backend: {policy['backend']}")
+++    print(f"Profile: /usr/local/var/jcode-runs/profiles/worker.sb")
+++    print()
+++
+++    for cap in _CANARY_ORDER:
+++        if cap not in claimed:
+++            print(f"  canary {cap}: SKIP (not claimed)")
+++            continue
+++        try:
+++            passed, reason = _run_one_canary(cap, backend)
+++            status = "PASS" if passed else "FAIL"
+++            print(f"  canary {cap}: {status}")
+++            print(f"           {reason}")
+++            if not passed:
+++                claimed.discard(cap)
+++        except Exception as exc:
+++            print(f"  canary {cap}: FAIL (exception: {exc})")
+++            claimed.discard(cap)
+++        print()
+++
+++    total = len(original_claimed)
+++    surviving = len(claimed)
+++    print(f"Canary suite: {surviving}/{total} capabilities confirmed.")
+++
+++    return surviving == total, claimed
+++
+++
+++# ── Main ───────────────────────────────────────────────────────────────────
+++
+++def main(argv=None):
+++    if argv is None:
+++        argv = sys.argv[1:]
+++
+++    print("=== Execution Core S1 — Canary Suite ===")
+++    print()
+++
+++    all_passed, _ = _run_canary_suite()
+++
+++    if not all_passed:
+++        print("REFUSED: one or more canaries failed. Check output above for details.",
+++              file=sys.stderr)
+++        sys.exit(1)
+++
+++    print("All canaries complete.  Ready for orders (S2+).")
+++    if argv:
+++        missing = check_capabilities(argv)
+++        if missing:
+++            _refuse(missing)
+++        else:
+++            print("Capability check: all requested capabilities available.")
+++
+++    return 0
+++
+++
+++if __name__ == "__main__":
+++    sys.exit(main())
++diff --git a/core/payloads/__init__.py b/core/payloads/__init__.py
++new file mode 100644
++index 0000000..80ccae7
++--- /dev/null
+++++ b/core/payloads/__init__.py
++@@ -0,0 +1 @@
+++# Payloads — sandbox-side scripts installed to /usr/local/var/jcode-runs/canaries/
++diff --git a/core/payloads/fs_confinement.py b/core/payloads/fs_confinement.py
++new file mode 100644
++index 0000000..a5c1d99
++--- /dev/null
+++++ b/core/payloads/fs_confinement.py
++@@ -0,0 +1,97 @@
+++"""
+++Payload: fs_confinement — filesystem access checks from inside the sandbox.
+++
+++Executed inside the seatbelt sandbox by worker_exec.sh.
+++Receives the workspace path as sys.argv[1].
+++
+++Reports raw check results — does NOT judge.  The host-side canary
+++decides pass or fail.
+++"""
+++
+++import json
+++import os
+++import sys
+++
+++
+++def _try_read_file(path):
+++    """Attempt to open and read *path*.  Returns (succeeded: bool, detail)."""
+++    try:
+++        with open(path, "r") as f:
+++            content = f.read(256)
+++        return True, f"read {len(content)} bytes from {path}"
+++    except PermissionError:
+++        return False, f"PermissionError reading {path}"
+++    except FileNotFoundError:
+++        return False, f"FileNotFoundError: {path}"
+++    except IsADirectoryError:
+++        return False, f"IsADirectoryError: {path}"
+++    except Exception as e:
+++        return True, f"UNEXPECTED read access: {path} -> {type(e).__name__}: {e}"
+++
+++
+++def _try_write_file(path, content="canary-write-test"):
+++    """Attempt to write *content* to *path*.  Returns (succeeded: bool, detail)."""
+++    try:
+++        with open(path, "w") as f:
+++            f.write(content)
+++        return True, f"wrote {len(content)} bytes to {path}"
+++    except PermissionError:
+++        return False, f"PermissionError writing {path}"
+++    except Exception as e:
+++        return True, f"UNEXPECTED write access: {path} -> {type(e).__name__}: {e}"
+++
+++
+++def _try_list_dir(path):
+++    """Attempt to list *path*.  Returns (succeeded: bool, detail)."""
+++    try:
+++        entries = os.listdir(path)
+++        return True, f"listed {len(entries)} entries in {path}"
+++    except PermissionError:
+++        return False, f"PermissionError listing {path}"
+++    except FileNotFoundError:
+++        return False, f"FileNotFoundError: {path}"
+++    except Exception as e:
+++        return True, f"UNEXPECTED list access: {path} -> {type(e).__name__}: {e}"
+++
+++
+++ws = sys.argv[1]
+++
+++checks = {}
+++
+++# 1. Attempt to read the REAL ~/.config/secrets/env (if HOME is set)
+++home = os.environ.get("HOME", os.path.expanduser("~"))
+++if home and home != "/var/empty":
+++    real_secret = os.path.join(home, ".config", "secrets", "env")
+++    checks["read_real_secret"] = _try_read_file(real_secret)
+++else:
+++    checks["read_real_secret"] = (False, "HOME not set or /var/empty — expected")
+++
+++# 2. Attempt to read the PLANTED fake secret file (outside workspace)
+++planted = "/tmp/.jcode_canary_secret_fs"
+++checks["read_planted_secret"] = _try_read_file(planted)
+++
+++# 3. Attempt to list $HOME
+++if home and home != "/var/empty":
+++    checks["list_home"] = _try_list_dir(home)
+++else:
+++    checks["list_home"] = (False, "HOME not set — expected")
+++
+++# 4. Attempt to list /Library/Keychains
+++checks["list_keychains"] = _try_list_dir("/Library/Keychains")
+++
+++# 5. Attempt to list /private/tmp
+++checks["list_private_tmp"] = _try_list_dir("/private/tmp")
+++
+++# 6. Attempt to write outside the workspace
+++outside = os.path.realpath(os.path.join(ws, "..", "outside_canary_test"))
+++checks["write_outside"] = _try_write_file(outside, "should-fail")
+++
+++# 7. Attempt to write inside the workspace
+++inside = os.path.join(ws, "inside_test.txt")
+++checks["write_inside"] = _try_write_file(inside, "should-succeed")
+++
+++with open(os.path.join(ws, "result.json"), "w") as f:
+++    json.dump(
+++        {"checks": {name: {"succeeded": ok, "detail": detail} for name, (ok, detail) in checks.items()}},
+++        f,
+++    )
++diff --git a/core/payloads/no_network.py b/core/payloads/no_network.py
++new file mode 100644
++index 0000000..22fea55
++--- /dev/null
+++++ b/core/payloads/no_network.py
++@@ -0,0 +1,51 @@
+++"""
+++Payload: no_network — attempts outbound TCP and DNS from inside the sandbox.
+++
+++Executed inside the seatbelt sandbox by worker_exec.sh.
+++Receives the workspace path as sys.argv[1].
+++
+++Reports raw check results — does NOT judge.  The host-side canary
+++decides pass or fail.
+++"""
+++
+++import json
+++import os
+++import socket
+++import sys
+++
+++
+++def _try_connect(host, port, timeout=2):
+++    """Attempt a TCP connect.  Returns (succeeded: bool, detail: str)."""
+++    try:
+++        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+++        s.settimeout(timeout)
+++        s.connect((host, port))
+++        s.close()
+++        return True, f"connected to {host}:{port}"
+++    except Exception as e:
+++        return False, f"{host}:{port} -> {e}"
+++
+++
+++def _try_dns(host, timeout=2):
+++    """Attempt DNS resolution.  Returns (succeeded: bool, detail: str)."""
+++    try:
+++        socket.setdefaulttimeout(timeout)
+++        addrs = socket.getaddrinfo(host, None)
+++        ips = sorted(set(a[4][0] for a in addrs))
+++        return True, f"{host} -> {', '.join(ips)}"
+++    except Exception as e:
+++        return False, f"{host} -> {e}"
+++
+++
+++ws = sys.argv[1]
+++
+++checks = {
+++    "tcp_1.1.1.1_443": _try_connect("1.1.1.1", 443, timeout=2),
+++    "dns_example_com": _try_dns("example.com", timeout=2),
+++}
+++
+++with open(os.path.join(ws, "result.json"), "w") as f:
+++    json.dump(
+++        {"checks": {name: {"succeeded": ok, "detail": detail} for name, (ok, detail) in checks.items()}},
+++        f,
+++    )
++diff --git a/core/payloads/pid_limit.py b/core/payloads/pid_limit.py
++new file mode 100644
++index 0000000..ee3f5c1
++--- /dev/null
+++++ b/core/payloads/pid_limit.py
++@@ -0,0 +1,71 @@
+++"""
+++Payload: pid_limit — fork bomb that MUST be stopped by RLIMIT_NPROC.
+++
+++Executed inside the seatbelt sandbox by worker_exec.sh.
+++Receives the workspace path as sys.argv[1].
+++
+++One controlling parent forks children that sleep (they never fork
+++themselves).  Counts successes until OSError.  Only the parent writes
+++result.json — children must never write output.
+++
+++Does NOT judge — the host-side canary decides pass or fail.
+++"""
+++
+++import json
+++import os
+++import sys
+++import time
+++
+++
+++def _child_sleep(duration=60):
+++    """Child process: sleep until killed or timeout.
+++
+++    Must never fork, never write output, never call sys.exit() on its own.
+++    os._exit(0) is used only if signalled (SIGTERM from kill_all).
+++    """
+++    try:
+++        time.sleep(duration)
+++    except Exception:
+++        pass
+++    os._exit(0)
+++
+++
+++ws = sys.argv[1]
+++
+++# One controlling parent.  It forks children that sleep and never fork
+++# again.  Count successes until OSError (EAGAIN from RLIMIT_NPROC).
+++count = 0
+++saved_errno = None
+++saved_strerror = None
+++error_record = None
+++
+++try:
+++    while True:
+++        pid = os.fork()
+++        if pid == 0:
+++            # Child: sleep, never fork, never write output.
+++            _child_sleep()
+++            # Unreachable, but belt and suspenders.
+++            os._exit(0)
+++        # Parent: count the child.
+++        count += 1
+++except OSError as e:
+++    # Expected: EAGAIN when RLIMIT_NPROC is hit.
+++    saved_errno = e.errno
+++    saved_strerror = e.strerror
+++except Exception as e:
+++    # Any other exception is recorded (not swallowed).
+++    error_record = f"{type(e).__name__}: {e}"
+++
+++# Only the parent writes result.json.
+++result = {
+++    "fork_count": count,
+++}
+++if saved_errno is not None:
+++    result["errno"] = saved_errno
+++    result["strerror"] = saved_strerror
+++if error_record is not None:
+++    result["error"] = error_record
+++
+++with open(os.path.join(ws, "result.json"), "w") as f:
+++    json.dump(result, f)
++diff --git a/core/payloads/symlink_egress.py b/core/payloads/symlink_egress.py
++new file mode 100644
++index 0000000..04f57a3
++--- /dev/null
+++++ b/core/payloads/symlink_egress.py
++@@ -0,0 +1,33 @@
+++"""
+++Payload: symlink_egress — attempts confused-deputy symlink egress.
+++
+++Executed inside the seatbelt sandbox by worker_exec.sh.
+++Receives the workspace path as sys.argv[1].
+++
+++Creates result.json as a symlink pointing at a host secret file the
+++canary planted outside the workspace.  If the backend copies files
+++using os.path.isfile() + shutil.copy() (which follow symlinks), the
+++owner's secret leaks into the host workspace — a confused-deputy
+++exfiltration.
+++
+++This is a negative canary: a PASS means the backend REFUSED the
+++egress, proving the O_NOFOLLOW + S_ISREG defence is working.
+++"""
+++
+++import os
+++import sys
+++
+++ws = sys.argv[1]
+++
+++# The canary planted its secret at this path outside the workspace.
+++# Create a symlink named result.json pointing at it.
+++secret_path = "/tmp/.jcode_canary_secret_symlink"
+++result_link = os.path.join(ws, "result.json")
+++
+++try:
+++    os.symlink(secret_path, result_link)
+++except OSError:
+++    # If symlink creation fails (e.g. sandbox blocks it), that itself
+++    # is a sign fs_confinement caught the attack — but that is tested
+++    # by the fs_confinement canary, not this one.
+++    pass
++diff --git a/core/payloads/tree_kill.py b/core/payloads/tree_kill.py
++new file mode 100644
++index 0000000..efd1ae4
++--- /dev/null
+++++ b/core/payloads/tree_kill.py
++@@ -0,0 +1,66 @@
+++"""
+++Payload: tree_kill — daemonised escapee for uid-based kill verification.
+++
+++Executed inside the seatbelt sandbox by worker_exec.sh.
+++Receives the workspace path as sys.argv[1].
+++
+++Daemonises via setsid + double-fork.  The resulting grandchild writes
+++its PID to <workspace>/escapee.pid, then sleeps ~120 s.  The grandchild
+++does NOT poll die_now — it must be killed, not asked.  The canary calls
+++backend.kill_all() to terminate it; that is the test.
+++
+++Parent and middle process stay alive (sleeping) so sandbox-exec does not
+++exit — if it exits, the kernel tears down the seatbelt sandbox and kills
+++the escapee before the canary can observe it.  The canary uses
+++teardown=False to regain control while the sandbox is still running.
+++"""
+++
+++import os
+++import signal
+++import sys
+++import time
+++
+++
+++def _sleep_forever(duration):
+++    """Sleep for *duration* seconds, keeping the process alive."""
+++    time.sleep(duration)
+++
+++
+++# Prevent SIGHUP from launchd when the grandchild is reparented.
+++signal.signal(signal.SIGHUP, signal.SIG_IGN)
+++
+++ws = sys.argv[1]
+++pid_file = os.path.join(ws, "escapee.pid")
+++
+++# Phase 1 — first fork: parent stays alive, child daemonises.
+++pid = os.fork()
+++if pid < 0:
+++    sys.exit(1)
+++if pid > 0:
+++    # Parent: keep sandbox-exec alive by sleeping.
+++    _sleep_forever(300)
+++    sys.exit(0)
+++
+++# Phase 2 — child: detach from the original process group.
+++os.setsid()
+++
+++# Phase 3 — second fork: daemonise the grandchild.
+++pid = os.fork()
+++if pid < 0:
+++    sys.exit(1)
+++if pid > 0:
+++    # Middle: keep sandbox-exec alive by sleeping.
+++    _sleep_forever(300)
+++    sys.exit(0)
+++
+++# Phase 4 — grandchild: write pid, then sleep.
+++# Must NOT poll die_now — the test is whether kill_all() reaches it.
+++try:
+++    with open(pid_file, "w") as f:
+++        f.write(str(os.getpid()))
+++except OSError:
+++    pass
+++
+++# Sleep ~120 s.  The canary must kill us; if it does not, the watchdog
+++# timer in the launcher will eventually clean up.
+++_sleep_forever(120)
++diff --git a/core/policy.json b/core/policy.json
++new file mode 100644
++index 0000000..bcbd04d
++--- /dev/null
+++++ b/core/policy.json
++@@ -0,0 +1,22 @@
+++{
+++  "backend": "macos-seatbelt",
+++  "claimed_capabilities": [
+++    "no_network",
+++    "fs_confinement",
+++    "pid_limit",
+++    "tree_kill",
+++    "symlink_egress"
+++  ],
+++  "unclaimable_capabilities": {
+++    "mem_limit": "RLIMIT_AS raises ValueError on macOS. A watchdog can detect but not prevent.",
+++    "disk_quota": "RLIMIT_FSIZE caps one file, not total write volume.",
+++    "cpu_limit": "RLIMIT_CPU is per-process, not per-tree. A process tree splits the budget.",
+++    "package_network": "not built"
+++  },
+++  "limits": {
+++    "wall_clock_seconds": 60,
+++    "rlimit_cpu_seconds": 30,
+++    "rlimit_nproc": 64,
+++    "rlimit_fsize_bytes": 10485760
+++  }
+++}
++diff --git a/core/profiles/worker.sb b/core/profiles/worker.sb
++new file mode 100644
++index 0000000..cff9029
++--- /dev/null
+++++ b/core/profiles/worker.sb
++@@ -0,0 +1,39 @@
+++;; worker.sb — Seatbelt-Profil fuer den isolierten Worker.
+++;;
+++;; Deny-default. Keine Sperrliste: was nicht ausdruecklich erlaubt ist,
+++;; ist verboten. Eine Sperrliste muss aufzaehlen, was verborgen sein soll,
+++;; und ist damit per Konstruktion unvollstaendig — zwei frueher gelieferte
+++;; Fassungen liessen /Library/Keychains und /private/tmp offen und haetten
+++;; trotzdem alle Canaries bestanden.
+++;;
+++;; (import "system.sb") ist Apples eigener Baustein fuer die Grundrechte,
+++;; die ein Prozess zum Starten braucht — dyld, Systembibliotheken, das
+++;; Noetigste an mach-Diensten. 362 von Apples mitgelieferten Profilen
+++;; benutzen ihn. Die Systempfade von Hand aufzuzaehlen fuehrt zu SIGABRT
+++;; ohne jede Fehlermeldung; das war eine Stunde Ratearbeit.
+++;;
+++;; Der Interpreter ist auf die CommandLineTools gepinnt. /usr/bin/python3
+++;; ist ein Shim, der bei Fehlschlag einen GUI-Installer oeffnet und ins
+++;; Netz will — beides gehoert nicht in einen Sandkasten.
+++;;
+++;; Das Arbeitsverzeichnis MUSS im Workspace liegen: Python haelt das cwd
+++;; im Modulsuchpfad, und ein cwd ausserhalb macht jeden Import unmoeglich.
+++;; worker_exec.sh sorgt dafuer.
+++
+++(version 1)
+++(deny default)
+++(import "system.sb")
+++
+++(deny network*)
+++
+++(allow process-fork)
+++(allow file-read-metadata)
+++
+++(allow process-exec* (subpath "/Library/Developer/CommandLineTools"))
+++(allow file-read*    (subpath "/Library/Developer/CommandLineTools"))
+++
+++;; Die Canary- und Job-Skripte liegen root-eigen ausserhalb des Workspace,
+++;; damit der Worker nicht aendern kann, was ausgefuehrt wird. Nur lesbar.
+++(allow file-read* (subpath "/usr/local/var/jcode-runs/canaries"))
+++
+++(allow file-read* file-write* (subpath (param "WORKSPACE")))
++diff --git a/core/worker_exec.sh b/core/worker_exec.sh
++new file mode 100755
++index 0000000..14b6942
++--- /dev/null
+++++ b/core/worker_exec.sh
++@@ -0,0 +1,78 @@
+++#!/bin/sh
+++set -e
+++
+++# worker_exec.sh — root-owned gateway into the seatbelt sandbox.
+++# The sudoers line permits ONLY this script; no other command may run
+++# as _jcode_worker.  The caller supplies a validated run-id and canary
+++# name; workspace, profile, and canary directory are hard-coded below.
+++
+++[ $# -eq 2 ] || {
+++    echo "worker_exec.sh: expected exactly 2 arguments, got $#" >&2
+++    exit 1
+++}
+++
+++# sudo startet uns mit dem cwd des Aufrufers. Der Worker darf es nicht
+++# lesen, was jeden getcwd-Aufruf scheitern laesst. Sofort wegwechseln.
+++cd / || exit 1
+++
+++RUN_ID="$1"
+++CANARY_NAME="$2"
+++
+++# Validate run-id: short alphanumeric + dash + underscore token.
+++# This keeps the caller from injecting path separators or options.
+++echo "$RUN_ID" | grep -qE '^[A-Za-z0-9_-]{1,64}$' || {
+++    echo "worker_exec.sh: invalid run_id '$RUN_ID'" >&2
+++    exit 1
+++}
+++
+++# Validate canary name: lowercase letters and underscores, 1-32 chars.
+++echo "$CANARY_NAME" | grep -qE '^[a-z_]{1,32}$' || {
+++    echo "worker_exec.sh: invalid canary_name '$CANARY_NAME'" >&2
+++    exit 1
+++}
+++
+++# ── Hard-coded trusted base — these define the boundary ─────────────────
+++BASE="/usr/local/var/jcode-runs"
+++CANARY_DIR="$BASE/canaries"
+++PROFILE="$BASE/profiles/worker.sb"
+++
+++WORKSPACE="$BASE/runs/$RUN_ID"
+++CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
+++
+++# Reject any name that does not resolve to an existing file in the
+++# root-owned canary directory.  The workspace is scratch/output only;
+++# nothing is ever executed from it.
+++[ -f "$CANARY_SCRIPT" ] || {
+++    echo "worker_exec.sh: canary script not found: $CANARY_SCRIPT" >&2
+++    exit 1
+++}
+++
+++# Resource limits are applied HERE, not by the caller: sudo has already
+++# switched to the worker uid, so RLIMIT_NPROC counts the worker's processes
+++# rather than the owner's. Applied before exec, inherited by everything below.
+++# Fail-closed: if a limit cannot be applied, the wrapper exits non-zero before
+++# exec.  Silently continuing without an enforced limit while claiming it is
+++# the defect this infrastructure exists to prevent.
+++ulimit -u 64  2>/dev/null || {
+++    echo "worker_exec.sh: FAILED to set RLIMIT_NPROC (ulimit -u 64)" >&2
+++    exit 1
+++}
+++ulimit -t 30  2>/dev/null || {
+++    echo "worker_exec.sh: FAILED to set RLIMIT_CPU (ulimit -t 30)" >&2
+++    exit 1
+++}
+++ulimit -f 10240  2>/dev/null || {
+++    echo "worker_exec.sh: FAILED to set RLIMIT_FSIZE (ulimit -f 10240)" >&2
+++    exit 1
+++}
+++
+++# env -i guarantees the owner's environment never crosses the boundary.
+++# The workspace path is passed as a positional argument so the canary
+++# script knows where to write results (it lives outside the workspace).
+++# Python haelt das cwd im Modulsuchpfad. Liegt es ausserhalb des
+++# Workspace, scheitert jeder Import mit PermissionError.
+++cd "$WORKSPACE" || exit 1
+++
+++exec /usr/bin/env -i PATH=/usr/bin:/bin \
+++    /usr/bin/sandbox-exec -f "$PROFILE" -D "WORKSPACE=$WORKSPACE" \
+++    /Library/Developer/CommandLineTools/usr/bin/python3 "$CANARY_SCRIPT" "$WORKSPACE"
++diff --git a/core/worker_kill.sh b/core/worker_kill.sh
++new file mode 100755
++index 0000000..cb6d75b
++--- /dev/null
+++++ b/core/worker_kill.sh
++@@ -0,0 +1,20 @@
+++#!/bin/sh
+++set -e
+++
+++# worker_kill.sh — root-owned, takes no arguments.
+++#
+++# Kills every process owned by _jcode_worker using pkill -9 -u.
+++# Running AS the worker user (via sudo -u _jcode_worker) is sufficient:
+++# a process may signal processes of its own uid.  No root privilege is
+++# needed — only a NOPASSWD sudoers entry for the worker identity.
+++#
+++# pkill exits 0 when it killed at least one process and 1 when no
+++# process matched.  Both are success for our purposes.
+++#
+++# This script takes NO arguments.  Any argument causes immediate exit.
+++
+++[ $# -eq 0 ] || exit 1
+++
+++cd /
+++
+++exec /usr/bin/pkill -9 -u _jcode_worker
++diff --git a/docs/s1-setup.md b/docs/s1-setup.md
++new file mode 100644
++index 0000000..d32ed41
++--- /dev/null
+++++ b/docs/s1-setup.md
++@@ -0,0 +1,316 @@
+++# S1 Setup — macos-seatbelt backend
+++
+++Four privileged steps the **owner** must perform by hand. Once done,
+++`python3 core/launcher.py` runs the canary suite and verifies the
+++backend.
+++
+++---
+++
+++## Step 1 — Create the unprivileged worker user
+++
+++The worker needs its own UID and a dedicated group — never the owner's
+++UID (501 on this machine) or the `staff` group (GID 20).  Sharing either
+++would give the worker the owner's DAC identity and let `pkill -9 -u`
+++kill the owner's login session.
+++
+++Pick a UID clearly outside the normal user range.  The highest UID
+++currently in use on this machine is 501, so 601 is safe:
+++
+++```bash
+++# Create a dedicated group for the worker
+++sudo dscl . -create /Groups/_jcode_worker
+++sudo dscl . -create /Groups/_jcode_worker PrimaryGroupID 601
+++sudo dscl . -create /Groups/_jcode_worker RealName "Jcode Worker Group"
+++
+++# Create the worker user with UID 601, owned by its own group
+++sudo dscl . -create /Users/_jcode_worker
+++sudo dscl . -create /Users/_jcode_worker UserShell /usr/bin/false
+++sudo dscl . -create /Users/_jcode_worker UniqueID 601
+++sudo dscl . -create /Users/_jcode_worker PrimaryGroupID 601
+++sudo dscl . -create /Users/_jcode_worker NFSHomeDirectory /var/empty
+++sudo dscl . -create /Users/_jcode_worker RealName "Jcode Worker"
+++```
+++
+++Do **not** append `_jcode_worker` to `staff` or any group the owner
+++belongs to.  The worker gets exactly one group — its own.
+++
+++Verify — worker and owner must have different uid *and* gid:
+++
+++```bash
+++echo "Owner: uid=$(id -u) gid=$(id -g)"
+++echo "Worker: uid=$(dscl . -read /Users/_jcode_worker UniqueID | awk '{print $2}') gid=$(dscl . -read /Users/_jcode_worker PrimaryGroupID | awk '{print $2}')"
+++
+++# Confirm they differ
+++[ "$(id -u)" != "$(dscl . -read /Users/_jcode_worker UniqueID | awk '{print $2}')" ] && echo "PASS: different UIDs"
+++[ "$(id -g)" != "$(dscl . -read /Users/_jcode_worker PrimaryGroupID | awk '{print $2}')" ] && echo "PASS: different GIDs"
+++
+++# Confirm worker is NOT in staff
+++dscl . -read /Groups/staff GroupMembership | grep -q _jcode_worker && echo "FAIL: worker in staff" || echo "PASS: worker not in staff"
+++
+++# Confirm sudo -u _jcode_worker works
+++sudo -u _jcode_worker whoami
+++# Must print "_jcode_worker" without prompting for a password.
+++```
+++
+++If `sudo -u _jcode_worker` prompts for a password, the user was created
+++with a shadow hash — delete it:
+++
+++```bash
+++sudo dscl . -delete /Users/_jcode_worker Password
+++```
+++
+++---
+++
+++## Step 2 — Create the trusted base directory and install artifacts
+++
+++The sandbox boundary depends on a root-owned base directory whose
+++ancestors are not world-writable.  `/tmp` is world-writable (`drwxrwxrwt`)
+++— any local user can pre-create or symlink paths under it.  We must not
+++execute anything from a location an attacker can influence.
+++
+++The base directory lives at `/usr/local/var/jcode-runs`.  Its ancestors
+++(`/usr`, `/usr/local`, `/usr/local/var`) are system directories; none
+++are world-writable.
+++
+++### 2a — Create the base directory
+++
+++```bash
+++sudo mkdir -p /usr/local/var/jcode-runs
+++sudo chown root:wheel /usr/local/var/jcode-runs
+++sudo chmod 0771 /usr/local/var/jcode-runs
+++```
+++
+++Mode `0771` means:
+++- Owner (root): read, write, execute
+++- Group (wheel): read, write, execute (can create per-run directories)
+++- Others: execute only (can traverse to known subpaths)
+++
+++Only root and wheel members can list the directory or create entries
+++inside it.  On a single-user macOS machine, wheel contains only root
+++and the owner.  Per-run directories underneath are created by the
+++owner (a wheel member), mode `0777`, so the worker can read and write
+++its own workspace.  The sandbox profile — not Unix permissions — is
+++the confinement boundary for what runs inside.
+++
+++Verify:
+++
+++```bash
+++ls -ld /usr/local/var/jcode-runs
+++# Expected: drwxrwx--x  ... root  wheel  ... /usr/local/var/jcode-runs
+++
+++# Confirm it is not world-writable (the 'other' permission digit is not 7)
+++[ "$(stat -f '%Mp' /usr/local/var/jcode-runs | tail -c 2)" != "7" ] && echo "PASS: not world-writable"
+++
+++# Confirm it is root-owned
+++[ "$(stat -f '%Su' /usr/local/var/jcode-runs)" = "root" ] && echo "PASS: root-owned"
+++```
+++
+++### 2b — Create subdirectories and install files
+++
+++```bash
+++REPO="/path/to/federation-recon"
+++BASE="/usr/local/var/jcode-runs"
+++
+++# Subdirectories
+++sudo mkdir -p "$BASE/canaries" "$BASE/profiles"
+++sudo chown root:wheel "$BASE/canaries" "$BASE/profiles"
+++sudo chmod 0755 "$BASE/canaries" "$BASE/profiles"
+++
+++# Wrapper (root:wheel, 0755 — owner can read/execute but NOT write)
+++sudo cp "$REPO/core/worker_exec.sh" "$BASE/worker_exec.sh"
+++sudo chown root:wheel "$BASE/worker_exec.sh"
+++sudo chmod 0755 "$BASE/worker_exec.sh"
+++
+++# Sandbox profile
+++sudo cp "$REPO/core/profiles/worker.sb" "$BASE/profiles/worker.sb"
+++sudo chown root:wheel "$BASE/profiles/worker.sb"
+++sudo chmod 0644 "$BASE/profiles/worker.sb"
+++
+++# Canary scripts (the payloads that run inside the sandbox — from core/payloads/)
+++for f in "$REPO/core/payloads/"*.py; do
+++    sudo cp "$f" "$BASE/canaries/"
+++done
+++sudo chown root:wheel "$BASE/canaries/"*.py
+++sudo chmod 0444 "$BASE/canaries/"*.py
+++```
+++
+++### 2c — Verify the wrapper
+++
+++The wrapper is the ONLY command sudoers permits as `_jcode_worker`.  If
+++the owner could rewrite it, the sudoers line grants the owner arbitrary
+++execution as the worker — which is not a catastrophe since the owner is
+++trusted, but it means the wrapper must not live at a path a *worker* or
+++any other local user can influence.
+++
+++```bash
+++# Wrapper is root-owned and not owner-writable
+++ls -l /usr/local/var/jcode-runs/worker_exec.sh
+++# Expected: -rwxr-xr-x  1 root  wheel  ... worker_exec.sh
+++
+++# Verify — owner must NOT be able to write it
+++[ ! -w /usr/local/var/jcode-runs/worker_exec.sh ] && echo "PASS: not owner-writable"
+++
+++# Canary scripts are root-owned and read-only
+++ls -l /usr/local/var/jcode-runs/canaries/
+++# Expected: -r--r--r--  1 root  wheel  ... for each .py file
+++
+++# Wrapper runs (will fail on missing run-id directory — that's fine)
+++sudo -u _jcode_worker /usr/local/var/jcode-runs/worker_exec.sh test123 no_network
+++# Expected: "env: ... No such file or directory" (workspace dir missing)
+++#           NOT "command not found" and NOT a sudo password prompt.
+++```
+++
+++---
+++
+++## Step 3 — NOPASSWD sudoers line
+++
+++Add this **exact** line to `/etc/sudoers.d/jcode-worker`, replacing
+++`<owner>` with your account name (not `%staff`):
+++
+++```
+++<owner>  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
+++```
+++
+++Example for user `ss`:
+++
+++```
+++ss  ALL=(_jcode_worker) NOPASSWD: /usr/local/var/jcode-runs/worker_exec.sh
+++```
+++
+++Then fix permissions:
+++
+++```bash
+++sudo chown root:wheel /etc/sudoers.d/jcode-worker
+++sudo chmod 440 /etc/sudoers.d/jcode-worker
+++```
+++
+++Verify:
+++
+++```bash
+++sudo -l
+++# Must show the worker_exec.sh entry without prompting for a password.
+++
+++# Wrapper is permitted
+++sudo -u _jcode_worker /usr/local/var/jcode-runs/worker_exec.sh test123 no_network
+++# Expected: runs (fails on missing workspace dir — that's fine)
+++
+++# Direct sandbox-exec MUST be REFUSED — this proves the sudoers line
+++# has no wildcards that allow bypassing the wrapper.
+++sudo -u _jcode_worker /usr/bin/sandbox-exec -f /dev/null /usr/bin/true
+++# Expected: "Sorry, user <owner> is not allowed to execute ..."
+++```
+++
+++The refusal of direct `sandbox-exec` is the key security check: it
+++confirms the caller cannot supply an arbitrary profile (`-f`) or
+++workspace directory (`-D`).  Only the wrapper's hard-coded profile and
+++computed workspace are ever used.
+++
+++**Where it goes:** `/etc/sudoers.d/jcode-worker` (not directly in
+++`/etc/sudoers`).  macOS `sudo` reads `/etc/sudoers.d/*` via `#includedir`.
+++
+++---
+++
+++## Step 4 — Verify the whole boundary
+++
+++This step confirms that every component of the trusted base is in place
+++and correctly owned.
+++
+++```bash
+++BASE="/usr/local/var/jcode-runs"
+++
+++echo "=== Base directory ==="
+++ls -ld "$BASE"
+++# drwxrwx--x  root  wheel
+++
+++echo "=== Wrapper ==="
+++ls -l "$BASE/worker_exec.sh"
+++# -rwxr-xr-x  root  wheel
+++
+++echo "=== Profile ==="
+++ls -l "$BASE/profiles/worker.sb"
+++# -rw-r--r--  root  wheel
+++
+++echo "=== Canary scripts ==="
+++ls -l "$BASE/canaries/"
+++# -r--r--r--  root  wheel  _fake_attacker.py
+++# -r--r--r--  root  wheel  fs_confinement.py
+++# -r--r--r--  root  wheel  no_network.py
+++# -r--r--r--  root  wheel  pid_limit.py
+++# -r--r--r--  root  wheel  tree_kill.py
+++
+++echo "=== Boundary check ==="
+++# At setup time no per-run directories exist.  Everything under the
+++# base should be non-world-writable.  Per-run directories created at
+++# runtime are mode 0777 (the sandbox profile handles confinement).
+++find "$BASE" -perm -o+w -ls
+++# Expected: no output (or only per-run dirs from a concurrent run)
+++
+++# The wrapper is not writable by anyone but root
+++[ "$(stat -f '%p' "$BASE/worker_exec.sh" | cut -c 3-9)" = "755" ] \
+++    && echo "PASS: wrapper mode 0755"
+++
+++# The canary directory is not writable by the worker
+++sudo -u _jcode_worker touch "$BASE/canaries/test_write" 2>&1 \
+++    && echo "FAIL: worker can write to canary dir" \
+++    || echo "PASS: worker cannot write to canary dir"
+++```
+++
+++---
+++
+++## Run the canary suite
+++
+++```bash
+++cd /path/to/federation-recon
+++/usr/bin/python3 core/launcher.py
+++```
+++
+++### Expected output
+++
+++```
+++=== Execution Core S1 — Canary Suite ===
+++
+++Backend: macos-seatbelt
+++Profile: /usr/local/var/jcode-runs/profiles/worker.sb
+++
+++  canary no_network: PASS
+++           tcp_1.1.1.1_443: BLOCKED (...) | dns_example_com: BLOCKED (...)
+++  canary fs_confinement: PASS
+++           read_real_secret: BLOCKED (...) | read_planted_secret: BLOCKED (...) | list_home: BLOCKED (...) | list_keychains: BLOCKED (...) | list_private_tmp: BLOCKED (...) | write_outside: BLOCKED (...) | write_inside: ALLOWED (...)
+++  canary pid_limit: PASS
+++           fork bomb stopped after N concurrent children in parent (rlimit enforced)
+++  canary tree_kill: PASS
+++           escapee PID NNNNN was alive before kill_all and gone after. uid-based kill survived the setsid+double-fork escape attempt.
+++
+++Canary suite: 4/4 capabilities confirmed.
+++
+++All canaries complete.  Ready for orders (S2+).
+++```
+++
+++`4/4 capabilities confirmed` means pass.  Anything else is fail.
+++
+++### Refusal demo
+++
+++```bash
+++/usr/bin/python3 core/launcher.py mem_limit package_network
+++```
+++
+++Expected stderr:
+++
+++```
+++REFUSED: capability 'mem_limit' not available on backend 'macos-seatbelt'.
+++  Policy field 'unclaimable_capabilities.mem_limit': RLIMIT_AS raises ValueError on macOS. ...
+++REFUSED: capability 'package_network' not available on backend 'macos-seatbelt'.
+++  Policy field 'unclaimable_capabilities.package_network': not built
+++```
+++
+++---
+++
+++## Tree-kill mechanism
+++
+++The backend uses `pkill -9 -u _jcode_worker` to kill every process
+++owned by the worker user.  `kill(-pgid)` alone is insufficient: a child
+++that calls `setsid()` then double-forks creates a grandchild in a new
+++session and process group, unreachable via the original pgid.  `pkill
+++-u` kills by uid — which the escapee cannot shed on macOS (no user
+++namespaces).  The `tree_kill` canary verifies this by spawning exactly
+++such an escapee and confirming it dies.
+diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+index 1c9848a..9b80a53 100644
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -21,6 +21,7 @@ heartbeat-v12-invariants.bats
+ heartbeat.bats
+ helpers.bats
+ manifest-gate.bats
++seatbelt-unit.bats
+ state-gate.bats
+ suite-inventory.bats
+ test-runner.bats
+diff --git a/scripts/test/seatbelt-unit.bats b/scripts/test/seatbelt-unit.bats
+new file mode 100644
+index 0000000..a199275
+--- /dev/null
++++ b/scripts/test/seatbelt-unit.bats
+@@ -0,0 +1,31 @@
++#!/usr/bin/env bats
++# seatbelt-unit.bats — Offline unit tests for core/backends/macos_seatbelt.py
++#
++# These tests run _copy_file_secure / _copy_ingress directly without a
++# sandbox or sudo, exercising internal defences that canaries cannot reach
++# (e.g. the post-read growth check, which the mkdir guard masks in the
++# ingress_symlink canary).
++
++setup() {
++  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
++}
++
++# ---------------------------------------------------------------------------
++# Egress growth race — post-read cap check in _copy_file_secure
++# ---------------------------------------------------------------------------
++
++@test "seatbelt-unit: egress growth race is caught" {
++  run python3 -c "
++import sys
++sys.path.insert(0, '$REPO_ROOT/core')
++from backends.macos_seatbelt import test_egress_growth_race
++
++passed, msg = test_egress_growth_race()
++if not passed:
++    print(msg)
++    sys.exit(1)
++print(msg)
++"
++  echo "$output"
++  [ "$status" -eq 0 ]
++}
