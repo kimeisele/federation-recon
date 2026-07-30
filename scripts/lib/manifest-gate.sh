@@ -15,6 +15,26 @@
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. A library must not change its caller's failure semantics. See #75.
 
+# _manifest_adopted_slugs <manifest_file>
+# Prints the list of repository slugs adopted in the manifest, one per line.
+# Exposed so downstream libraries (pin-gate.sh) reuse the same parser rather
+# than writing a second one — two parsers of the same document will drift,
+# which is how the census drifted in the first place.
+_manifest_adopted_slugs() {
+  local manifest_file="$1"
+
+  # Extract repository slugs from the adopted-observed-set table.
+  # Table rows have the shape: | `kimeisele/<slug>` | ... | yes |
+  # Parse the first backtick-delimited column, strip the kimeisele/ prefix.
+  # grep, not rg: ci-checks.sh is the fast OFFLINE gate and must not acquire
+  # new external dependencies. rg is absent from the invariants CI job, where
+  # this failed closed with "could not parse any adopted repository" — correct
+  # behaviour, wrong dependency. grep is everywhere.
+  grep -E '^\| `kimeisele/' "$manifest_file" \
+  | sed -n 's/^| `kimeisele\/\([^`]*\)` .*/\1/p' \
+  | sort
+}
+
 # check_pin_manifest_membership <manifest_file> <pins_glob>
 # Returns 0 when every pin slug is listed in the manifest's adopted set.
 # On failure prints diagnostic lines to stderr and returns 1.
@@ -27,19 +47,8 @@ check_pin_manifest_membership() {
     return 1
   fi
 
-  # Extract repository slugs from the adopted-observed-set table.
-  # Table rows have the shape: | `kimeisele/<slug>` | ... | yes |
-  # Parse the first backtick-delimited column, strip the kimeisele/ prefix.
-  # grep, not rg: ci-checks.sh is the fast OFFLINE gate and must not acquire
-  # new external dependencies. rg is absent from the invariants CI job, where
-  # this failed closed with "could not parse any adopted repository" — correct
-  # behaviour, wrong dependency. grep is everywhere.
   local allowed_slugs
-  allowed_slugs=$(
-    grep -E '^\| `kimeisele/' "$manifest_file" \
-    | sed -n 's/^| `kimeisele\/\([^`]*\)` .*/\1/p' \
-    | sort
-  )
+  allowed_slugs="$(_manifest_adopted_slugs "$manifest_file")"
 
   if [ -z "$allowed_slugs" ]; then
     echo "FAIL — could not parse any adopted repository from manifest: $manifest_file" >&2
