@@ -1,0 +1,39 @@
+;; worker.sb — Seatbelt-Profil fuer den isolierten Worker.
+;;
+;; Deny-default. Keine Sperrliste: was nicht ausdruecklich erlaubt ist,
+;; ist verboten. Eine Sperrliste muss aufzaehlen, was verborgen sein soll,
+;; und ist damit per Konstruktion unvollstaendig — zwei frueher gelieferte
+;; Fassungen liessen /Library/Keychains und /private/tmp offen und haetten
+;; trotzdem alle Canaries bestanden.
+;;
+;; (import "system.sb") ist Apples eigener Baustein fuer die Grundrechte,
+;; die ein Prozess zum Starten braucht — dyld, Systembibliotheken, das
+;; Noetigste an mach-Diensten. 362 von Apples mitgelieferten Profilen
+;; benutzen ihn. Die Systempfade von Hand aufzuzaehlen fuehrt zu SIGABRT
+;; ohne jede Fehlermeldung; das war eine Stunde Ratearbeit.
+;;
+;; Der Interpreter ist auf die CommandLineTools gepinnt. /usr/bin/python3
+;; ist ein Shim, der bei Fehlschlag einen GUI-Installer oeffnet und ins
+;; Netz will — beides gehoert nicht in einen Sandkasten.
+;;
+;; Das Arbeitsverzeichnis MUSS im Workspace liegen: Python haelt das cwd
+;; im Modulsuchpfad, und ein cwd ausserhalb macht jeden Import unmoeglich.
+;; worker_exec.sh sorgt dafuer.
+
+(version 1)
+(deny default)
+(import "system.sb")
+
+(deny network*)
+
+(allow process-fork)
+(allow file-read-metadata)
+
+(allow process-exec* (subpath "/Library/Developer/CommandLineTools"))
+(allow file-read*    (subpath "/Library/Developer/CommandLineTools"))
+
+;; Die Canary- und Job-Skripte liegen root-eigen ausserhalb des Workspace,
+;; damit der Worker nicht aendern kann, was ausgefuehrt wird. Nur lesbar.
+(allow file-read* (subpath "/usr/local/var/jcode-runs/canaries"))
+
+(allow file-read* file-write* (subpath (param "WORKSPACE")))

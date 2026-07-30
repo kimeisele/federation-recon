@@ -11,6 +11,7 @@ builder-jcode.bats
 ci-checks-composer.bats
 clean-procedure-artifacts.bats
 compose-digest.bats
+consultation-diff-hygiene.bats
 consultation-gate.bats
 consumption.bats
 count-procedure.bats
@@ -21,6 +22,7 @@ heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
 manifest-gate.bats
+seatbelt-unit.bats
 state-gate.bats
 suite-inventory.bats
 test-runner.bats

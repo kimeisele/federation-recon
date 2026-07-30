@@ -1,6 +1,13 @@
 # ADR — Execution Core: Bedrohungsmodell, Vertrauensgrenzen, Ausführungsprotokoll
 
-**Status:** Proposed. Kein bewiesenes Sicherheitsfundament — ein Vertrag, dessen Backends ihre Fähigkeiten erst durch Canaries nachweisen müssen (§7, §11).
+**Status:** **Accepted** (2026-07-30, nach S1). Die Bedeutung ist eng und
+absichtlich so formuliert: *Architekturentscheidung angenommen, und ein Backend
+existiert mit exakt den nachgewiesenen Fähigkeiten.* **Kein allgemeines
+Sicherheitsversprechen.** Bewiesen ist, was die Canaries zeigen — und nicht mehr.
+
+Vier Review-Runden eines zweiten Providers (REQUEST CHANGES, REQUEST CHANGES,
+REJECT, dann APPROVE gegen den korrigierten Diff) und zwei Gutachten eines
+dritten liegen unter `governance/consultations/107*.md`.
 **Anlass:** #104 — `acceptance_commands` waren beliebige Codeausführung mit den Rechten des Owners. Dreimal real gelaufen.
 **Revision 6.** Sechs Abschlussänderungen, kein neuer Entwurf. Revision 5 war die vollständige Neufassung. Revision 4 entschied in einem Abschnitt „keine VM" und ließ TCB, Diagramm, Messmodell und Roadmap weiter von Hypervisor und VM-Zerstörung sprechen. Diese Fassung ist in sich konsistent oder sie ist wertlos.
 
@@ -221,7 +228,48 @@ Aufbau: `sudo -u worker env -i sandbox-exec -f profile.sb /usr/bin/python3 job.p
 | `RLIMIT_CPU` | greift, Prozess getötet |
 | `RLIMIT_AS` (Speicher) | **`ValueError` — auf macOS nicht setzbar** |
 
-**Behauptbare Fähigkeiten:** `no_network`, `fs_confinement`, `pid_limit`, `tree_kill` — jeweils nach bestandenem Canary.
+**Behauptbare Fähigkeiten:** `no_network`, `fs_confinement`, `pid_limit`,
+`tree_kill`, `kill_persistent`, `symlink_egress`, `ingress_symlink`,
+`pool_integrity` — jeweils nach bestandenem Canary, **mit der Einschränkung, dass
+`no_network` und `fs_confinement` sich eine Erhaltungsprobe teilen und daher nicht
+unabhängig voneinander belegt sind.**
+
+Seit S1 ist jede Fähigkeit ein **Paar** aus Verweigerung und Erhaltung, nicht
+eine Verweigerungseigenschaft allein. Ein Loch besteht jeden Erhaltungstest,
+eine Leiche besteht jeden Verweigerungstest — dieses Projekt hat eine Leiche
+ausgeliefert: eine Härtung legte Eingabedateien als `0600` an, der Worker konnte
+seine eigene Konfiguration nicht mehr lesen, die Sandbox war funktionsunfähig,
+und alle sieben Canaries blieben grün. Dieselbe Änderung als Mutation gegen den
+heutigen Stand macht zwei Canaries rot und verweigert die Bereitschaftsmeldung.
+
+**Gekoppelte Erhaltungsprobe.** Die Erhaltungshälfte von `no_network` führt die
+`fs_confinement`-Payload als netzwerkfreie Rechenaufgabe aus. Ein Fehler in
+dieser Payload färbt daher beide Canaries rot — gemessen: eine mutierte Payload
+ergab 5/8 statt 7/8. Die Kaskade ist ehrlich, aber die beiden Fähigkeiten sind
+dadurch **nicht unabhängig** belegt. Wer eine der beiden für sich allein
+beurteilen will, braucht eine eigene Erhaltungsprobe.
+
+**Bedingung für die Weiterentwicklung, nicht für diesen Datensatz:** eine
+eigenständige Erhaltungsprobe für `no_network` ist **verpflichtend vor jeder
+Änderung am Sandbox-Profil und vor jedem zweiten Backend**. Eine
+Profil-Regression, die legitime Arbeit bricht, ohne die `fs_confinement`-Last zu
+brechen, ginge heute grün durch — genau die Klasse, für die das Paar-Prinzip
+existiert.
+
+**Gemessene Grenze bei `tree_kill`.** Der Canary belegt die Fähigkeit: der Slot
+erreicht null Prozesse und bleibt dort, gegen einen Baum, der nachweislich
+regeneriert (gemessen: 11 von 14 PIDs binnen 0,3 s ausgetauscht). Was **nicht**
+gemessen ist, ist die Notwendigkeit des STOP-dann-KILL-Protokolls: ein einzelnes
+`pkill -9` räumt denselben Baum ebenso vollständig ab, und zwei direkte
+Experimente zur Unterscheidung sind an der Instrumentierung gescheitert, nicht
+an der Sache. Das Protokoll bleibt, weil es strikt stärker ist und nichts
+kostet, und weil das Argument dafür — `pkill` durchläuft die Prozesstabelle
+nicht atomar, ein früh besuchter Prozess kann einen Ersatz forken, der nie
+besucht wird — theoretisch tragfähig ist. Die **Notwendigkeit ist nicht etabliert**; das Protokoll wird
+beibehalten, weil es strikt stärker und kostenlos ist. Das ist kein ausstehender
+Messwert und keine offene Aufgabe — die Fähigkeit ist nachgewiesen, die
+Begründung des Mechanismus ist Entwurfsentscheidung. Wer ihn entfernt, entfernt
+eine Annahme.
 
 **Nicht behauptbar:**
 
@@ -303,7 +351,7 @@ Fällt eines durch: **No-Go, erst das Dokument reparieren.**
 
 | | Inhalt |
 |---|---|
-| **S0** | dieses Dokument als *Proposed* — ein Vertrag, keine bewiesene Sicherheitsarchitektur |
+| **S0** | dieses Dokument, seit 2026-07-30 *Accepted* — ein Vertrag plus ein Backend mit exakt den nachgewiesenen Fähigkeiten |
 | **S1** | Spike: Backend `macos-seatbelt` plus vollständige Canary-Suite, **mit absichtlich bösartigem Fake-Angreifer**, kein echtes Modell |
 | **S2** | Supervisor: Auftragsvalidierung, Fähigkeitsprüfung, Ablehnung nicht abgedeckter Aufträge, Messung nach §6 |
 | **S3** | Prüflauf mit unveränderlichem Acceptance Bundle |
@@ -345,4 +393,4 @@ Rotation der API-Schlüssel **ausdrücklich abgelehnt** (2026-07-27).
 
 **Kosten- und Routingregeln.** Sie standen in Revision 5 als §15 hier und gehören nicht in eine Sicherheitsgrenze. Sie ziehen in ein eigenes Operations-Dokument um, dort ergänzt um: maximales Tokenbudget pro Auftrag, maximales Kostenbudget pro Auftrag, maximale Versuche, harter Stop bei Überschreitung.
 
-**Ein Sicherheitsversprechen.** Dieses Dokument ist ein *Proposed ADR*: ein Vertrag darüber, welche Fähigkeiten nachgewiesen werden müssen. Bewiesen ist nach S1 genau das, was die Canaries zeigen — und nicht mehr.
+**Ein Sicherheitsversprechen.** Dieses Dokument ist ein *Accepted ADR*: ein Vertrag darüber, welche Fähigkeiten nachgewiesen werden müssen, plus die Feststellung, dass genau ein Backend sie nachgewiesen hat. Bewiesen ist nach S1 genau das, was die Canaries zeigen — und nicht mehr.

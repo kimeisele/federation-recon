@@ -101,3 +101,22 @@ not there — a procedure inheriting an already-committed observed set, and a ba
 idiom already used throughout the codebase. Both were minutes of checking away.
 
 Being wrong in a review costs more than the check does.
+
+## Regenerate consultation diffs with the exclusion pathspec
+
+**2026-07-30.** `git diff main...HEAD` without exclusion includes the previous
+consultation diff artifact in its own diff, compounding the size on every
+regeneration (2047 lines became 4756 in S1 — roughly half of it a copy of
+itself).  A reviewer receiving that artifact is handed the old diff twice and
+the new work once.
+
+Canonical command:
+
+```bash
+git diff main...HEAD -- . ':(exclude)governance/consultations/*.diff'
+```
+
+The guard `scripts/test/consultation-diff-hygiene.bats` (registered in
+MANIFEST) checks for this defect.  If it fails, regenerate with the exclusion
+pathspec above.
+
