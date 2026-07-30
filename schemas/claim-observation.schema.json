@@ -9,7 +9,7 @@
     "claim_id": { "type": "string" },
     "source_repository": { "type": "string" },
     "source_path": { "type": "string" },
-    "claim_text": { "type": "string" },
+    "claim_text": { "type": "string", "maxLength": 256 },
     "observed_at": { "type": "string", "format": "date-time" },
     "repository_pin": { "type": "string" }
   },

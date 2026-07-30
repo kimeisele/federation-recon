@@ -37,6 +37,21 @@ Any of these may be added to a later slice's observed set through an explicit Re
 
 `steward-gateway` and `agent-template*` nodes may become relevant once they leave "not started" / scaffolding status. Recon should not infer this itself; re-inclusion requires a manifest revision, not an automatic rule.
 
+## The observatory is a pass-through recorder
+
+The observatory is a **pass-through recorder**. A claim records that an observed repository asserts something. It does not record that the assertion is true, and recording is not endorsement.
+
+Content flowing from an observed repository into an artifact is expected, bounded in length to 256 characters (`OBSERVED_STRING_MAX_LENGTH` in `scripts/lib/helpers.sh`), and **not** semantically validated. The bound applies where values enter (in `scripts/recon-run.sh` and `scripts/node-census-run.sh`), not at rendering time, so the artifact never contains the unbounded form.
+
+A 2026-07-30 measurement (cross-provider review) established the surface:
+
+- `claim_text` embeds `owner_boundary` and `kind` from each observed repository's own `.well-known/agent-federation.json`, which the observed repo fully controls.
+- The longest `claim_text` value at the time of measurement was 197 characters — within the 256-char bound.
+- `statement` in findings is generated from our own templates, not from observed content.
+- No `claim_text` value appeared verbatim in `STATE.md` (0 of 30 current values).
+
+If observations are ever merged without a human, bounding observed content and documenting the pass-through nature becomes a gate requirement rather than a documentation item — the same length bound applies, but the gate must enforce it.
+
 ## Unbounded discovery, bounded recording
 
 The Node Census (`scripts/node-census-run.sh`) discovers nodes by GitHub topic

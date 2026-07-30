@@ -172,6 +172,7 @@ try:
     print(d.get('owner_boundary',''))
 except: print('')
 " 2>/dev/null || echo "")
+    owner_boundary="$(truncate_observed "$owner_boundary")"
 
     local kind=""
     kind=$(printf '%s' "$content" | python3 -c "
@@ -181,6 +182,7 @@ try:
     print(d.get('kind',''))
 except: print('')
 " 2>/dev/null || echo "")
+    kind="$(truncate_observed "$kind")"
 
     local claim_text
     if [ -n "$owner_boundary" ]; then
@@ -188,6 +190,7 @@ except: print('')
     else
       claim_text="${repo}/.well-known/agent-federation.json exists at commit ${sha} (content parseable JSON)"
     fi
+    claim_text="$(truncate_observed "$claim_text")"
 
     local claim
     claim=$(gen_claim_observation "$repo" ".well-known/agent-federation.json" \
@@ -233,12 +236,14 @@ extract_boundary_table_claims() {
     local role=""
     role=$(printf '%s' "$row" | cut -d'|' -f3 | sed 's/\*\*//g' | sed 's/^ *//;s/ *$//')
     [ -z "$role" ] && role="(not asserted)"
+    role="$(truncate_observed "$role")"
 
     # Extract last-audited date from document header (date only, not parenthetical)
     local last_audited=""
     last_audited=$(printf '%s' "$content" | rg 'Last audited' | rg -o '\d{4}-\d{2}-\d{2}' 2>/dev/null || echo "2026-03-15")
 
     local claim_text="${repo}/docs/REPO_BOUNDARIES.md (last audited: ${last_audited}) asserts ${repo_in_row} role is \"${role}\""
+    claim_text="$(truncate_observed "$claim_text")"
 
     local claim
     claim=$(gen_claim_observation "$repo" "docs/REPO_BOUNDARIES.md" \
@@ -251,7 +256,9 @@ extract_boundary_table_claims() {
     local owns=""
     owns=$(printf '%s' "$row" | cut -d'|' -f5 | sed 's/^ *//;s/ *$//')
     if [ -n "$owns" ] && [ "$owns" != " " ]; then
+      owns="$(truncate_observed "$owns")"
       local owns_claim_text="${repo}/docs/REPO_BOUNDARIES.md asserts ${repo_in_row} owns: ${owns}"
+      owns_claim_text="$(truncate_observed "$owns_claim_text")"
       local owns_claim
       owns_claim=$(gen_claim_observation "$repo" "docs/REPO_BOUNDARIES.md" \
         "$owns_claim_text" "$pin_id" "$RUN_TIMESTAMP")
@@ -489,6 +496,7 @@ extract_cross_node_boundary_agreement() {
     local central_role=""
     central_role=$(printf '%s' "$row" | cut -d'|' -f3 | sed 's/\*\*//g' | xargs)
     [ -z "$central_role" ] && central_role="(not asserted)"
+    central_role="$(truncate_observed "$central_role")"
 
     # Reuse the role Claim Observation produced by extract_boundary_table_claims.
     # Cross-node agreement adds evidence and comparisons, not duplicate claims.
@@ -521,6 +529,8 @@ print(json.dumps([role, boundary], separators=(',', ':')))
     fi
     self_role=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')
     self_ob=$(printf '%s' "$parsed" | python3 -c 'import json,sys; print(json.load(sys.stdin)[1])')
+    self_role="$(truncate_observed "$self_role")"
+    self_ob="$(truncate_observed "$self_ob")"
     checked_count=$(( checked_count + 1 ))
 
     # Both sides are now in scope. Record the exact metadata fields supporting
@@ -534,6 +544,7 @@ print(json.dumps([role, boundary], separators=(',', ':')))
 
     # ---- Self evidence: role and owner_boundary from .well-known ----
     local self_ev_value="role=${self_role};owner_boundary=${self_ob}"
+    self_ev_value="$(truncate_observed "$self_ev_value")"
     local self_ev
     self_ev=$(gen_evidence "$repo_pin" "manifest_field" \
       "$self_ev_value" \
@@ -626,6 +637,7 @@ try:
     print(d.get('owner_boundary',''))
 except: print('')
 " 2>/dev/null || echo "")
+    owner_boundary="$(truncate_observed "$owner_boundary")"
 
     if [ -n "$owner_boundary" ]; then
       local ev_ob
