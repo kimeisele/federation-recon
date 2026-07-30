@@ -1441,8 +1441,15 @@ main() {
     frozen_ts="$(python3 -c "import json; print(json.load(open('digest/v0-boundary-drift.json')).get('run_timestamp',''))" 2>/dev/null || true)"
     [ -n "${frozen_ts:-}" ] && RUN_TIMESTAMP="$frozen_ts"
     # Freeze ALL derived timestamps (coverage/finding/drift) to the same value.
-    export RECON_FROZEN_TS="$RUN_TIMESTAMP"
   fi
+
+  # Freeze derived timestamps in BOTH modes, not only in reproduce. A live run
+  # used to stamp each artifact with the wall clock at the moment it was written
+  # while reproduce flattened them all to the run timestamp, so a live run's
+  # output was never a fixpoint — which is why every daily observation pull
+  # request failed the reproduce check regardless of its content. All artifacts
+  # of one observation carry that observation's time.
+  export RECON_FROZEN_TS="$RUN_TIMESTAMP"
 
   log "=== Boundary Drift Recon v0 ==="
   log "Timestamp: ${RUN_TIMESTAMP}"

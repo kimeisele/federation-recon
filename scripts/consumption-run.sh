@@ -756,8 +756,15 @@ main() {
   if $reproduce; then
     frozen_ts="$(python3 -c "import json; print(json.load(open('digest/v2-consumption.json')).get('run_timestamp',''))" 2>/dev/null || true)"
     [ -n "${frozen_ts:-}" ] && RUN_TIMESTAMP="$frozen_ts"
-    export RECON_FROZEN_TS="$RUN_TIMESTAMP"
   fi
+
+  # Freeze derived timestamps in BOTH modes, not only in reproduce. A live run
+  # used to stamp each artifact with the wall clock at the moment it was written
+  # while reproduce flattened them all to the run timestamp, so a live run's
+  # output was never a fixpoint — which is why every daily observation pull
+  # request failed the reproduce check regardless of its content. All artifacts
+  # of one observation carry that observation's time.
+  export RECON_FROZEN_TS="$RUN_TIMESTAMP"
 
   resolve_cycle "$reproduce"
 

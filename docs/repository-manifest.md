@@ -36,3 +36,20 @@ Any of these may be added to a later slice's observed set through an explicit Re
 ## Open scope question
 
 `steward-gateway` and `agent-template*` nodes may become relevant once they leave "not started" / scaffolding status. Recon should not infer this itself; re-inclusion requires a manifest revision, not an automatic rule.
+
+## Unbounded discovery, bounded recording
+
+The Node Census (`scripts/node-census-run.sh`) discovers nodes by GitHub topic
+search — the search is unbounded by design, so it can observe repos that are not
+yet in the manifest. An observatory that only looks where it is already authorised
+cannot discover a new node.
+
+Recording is bounded to this document's adopted observed set (the table above).
+A discovered slug that is not adopted produces no pin, evidence, finding, coverage,
+or drift artefact. Instead it appears in `coverage/census-candidates.json`, a
+deterministically-ordered record visible to the operator.
+
+A candidate remains a candidate until this manifest is revised to adopt it. Adding
+a slug to the adopted set is an explicit manifest revision — never automatic, never
+silent. This is the mechanism that makes the "never silently" rule above true rather
+than aspirational.
