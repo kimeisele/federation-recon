@@ -69,6 +69,34 @@ def _run_canary_suite():
     # Snapshot the original set BEFORE running — this is the denominator.
     original_claimed = set(claimed)
 
+    # Refuse to run if any claimed capability is not registered in _CANARY_ORDER.
+    # A policy that claims what no canary tests is broken — refuse, don't
+    # silently exclude.
+    unregistered = set(claimed) - set(_CANARY_ORDER)
+    if unregistered:
+        for cap in sorted(unregistered):
+            print(
+                f"REFUSED: capability {cap!r} is claimed in policy but has no "
+                f"registered canary in _CANARY_ORDER — no canary tests it"
+            )
+        print()
+        print(
+            f"Canary suite: {len(claimed) - len(unregistered)}/{len(claimed)} "
+            f"capabilities confirmed.",
+            file=sys.stderr,
+        )
+        return False, set()
+
+    # Warn if a registered canary is not in claimed_capabilities — it will be
+    # skipped, but the operator should know.
+    missing_canaries = set(_CANARY_ORDER) - set(claimed)
+    if missing_canaries:
+        for cap in sorted(missing_canaries):
+            print(
+                f"WARNING: canary {cap!r} is registered in _CANARY_ORDER but "
+                f"not listed in claimed_capabilities — will be skipped"
+            )
+
     print(f"Backend: {policy['backend']}")
     print(f"Profile: /usr/local/var/jcode-runs/profiles/worker.sb")
     print()

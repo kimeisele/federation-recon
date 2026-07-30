@@ -29,7 +29,7 @@ def _try_read_file(path):
     except PermissionError:
         return {"outcome": "blocked", "detail": f"PermissionError reading {path}"}
     except FileNotFoundError:
-        return {"outcome": "blocked", "detail": f"FileNotFoundError: {path}"}
+        return {"outcome": "unavailable", "detail": f"FileNotFoundError: {path} — target absent, cannot assess"}
     except IsADirectoryError:
         return {"outcome": "blocked", "detail": f"IsADirectoryError: {path}"}
     except Exception as e:
@@ -62,7 +62,7 @@ def _try_list_dir(path):
     except PermissionError:
         return {"outcome": "blocked", "detail": f"PermissionError listing {path}"}
     except FileNotFoundError:
-        return {"outcome": "blocked", "detail": f"FileNotFoundError: {path}"}
+        return {"outcome": "unavailable", "detail": f"FileNotFoundError: {path} — target absent, cannot assess"}
     except Exception as e:
         return {"outcome": "allowed", "detail": f"UNEXPECTED list access: {path} -> {type(e).__name__}: {e}"}
 
@@ -83,23 +83,15 @@ if os.path.exists(config_path):
 
 checks = {}
 
-# 1. Attempt to read the REAL ~/.config/secrets/env (if HOME is set)
-home = os.environ.get("HOME", os.path.expanduser("~"))
-if home and home != "/var/empty":
-    real_secret = os.path.join(home, ".config", "secrets", "env")
-    checks["read_real_secret"] = _try_read_file(real_secret)
-else:
-    checks["read_real_secret"] = {"outcome": "blocked", "detail": "HOME not set or /var/empty — expected"}
+# 1. Attempt to read /etc/hosts (exists on every macOS, should be blocked by sandbox)
+checks["read_real_secret"] = _try_read_file("/etc/hosts")
 
 # 2. Attempt to read the PLANTED fake secret file (outside workspace)
 planted = "/tmp/.jcode_canary_secret_fs"
 checks["read_planted_secret"] = _try_read_file(planted)
 
-# 3. Attempt to list $HOME
-if home and home != "/var/empty":
-    checks["list_home"] = _try_list_dir(home)
-else:
-    checks["list_home"] = {"outcome": "blocked", "detail": "HOME not set — expected"}
+# 3. Attempt to list /Users (should be blocked by sandbox)
+checks["list_home"] = _try_list_dir("/Users")
 
 # 4. Attempt to list /Library/Keychains
 checks["list_keychains"] = _try_list_dir("/Library/Keychains")

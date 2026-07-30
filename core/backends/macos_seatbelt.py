@@ -304,12 +304,34 @@ def kill_all():
                 capture_output=True, text=True, timeout=5,
             )
         except Exception:
-            pgrep_result = subprocess.CompletedProcess([], 1, "", "")
+            # pgrep itself failed — we cannot know how many processes remain.
+            # Fail closed rather than assuming zero.
+            return {
+                "ok": False,
+                "returncode": last_rc,
+                "stderr": last_stderr + "pgrep threw an exception — cannot count survivors",
+                "killed_any": killed_any,
+                "surviving": -1,
+            }
 
         if pgrep_result.returncode == 0:
             surviving = len(pgrep_result.stdout.strip().splitlines())
-        else:
+        elif pgrep_result.returncode == 1:
+            # Exit status 1 means "no processes matched" (pgrep convention).
             surviving = 0
+        else:
+            # Exit status >1 means an error occurred — we do not know whether
+            # any processes remain.  Fail closed.
+            return {
+                "ok": False,
+                "returncode": last_rc,
+                "stderr": last_stderr + (
+                    f"pgrep exited with status {pgrep_result.returncode}: "
+                    f"{pgrep_result.stderr.strip()} — cannot count survivors"
+                ),
+                "killed_any": killed_any,
+                "surviving": -1,
+            }
 
         if surviving == 0:
             consecutive_zero += 1

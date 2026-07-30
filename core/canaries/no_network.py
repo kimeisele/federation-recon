@@ -128,6 +128,12 @@ def run(backend):
                 )
             outcome = ch.get("outcome")
             detail = ch.get("detail", "")
+            # Validate outcome is a recognised enum value.
+            if outcome not in ("allowed", "blocked", "unavailable"):
+                return False, (
+                    f"mandatory check {name!r} has invalid outcome {outcome!r} "
+                    f"(detail: {detail}) — must be one of allowed/blocked/unavailable"
+                )
             if outcome == "unavailable":
                 return False, (
                     f"mandatory check {name!r} returned UNAVAILABLE: {detail} — "

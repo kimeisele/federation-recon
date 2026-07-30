@@ -28,6 +28,7 @@ import json
 import os
 import secrets
 import shutil
+import stat
 import string
 import tempfile
 
@@ -54,6 +55,55 @@ _EXPECTATIONS = {
     "write_outside": False,
     "write_inside": True,
 }
+
+
+# Targets for host-side pre-verification: map check name → absolute path.
+# The canary verifies each exists and is DAC-readable before launching.
+_READ_TARGETS = {
+    "read_real_secret": "/etc/hosts",
+    "read_planted_secret": "/tmp/.jcode_canary_secret_fs",
+    "list_home": "/Users",
+    "list_keychains": "/Library/Keychains",
+    "list_private_tmp": "/private/tmp",
+}
+
+
+def _target_readable_by_worker(path):
+    """Return True if *path* exists and is world-readable (o+r / o+rx).
+
+    The seatbelt worker runs as _jcode_worker (uid 601), not as the
+    calling user.  A DAC check against our own uid would be wrong.
+    We check world permissions instead: if the target is not world-
+    readable, the sandbox is not the only thing blocking access, and
+    the measurement is confounded.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    mode = st.st_mode
+    if stat.S_ISDIR(mode):
+        return bool(mode & stat.S_IXOTH) and bool(mode & stat.S_IROTH)
+    return bool(mode & stat.S_IROTH)
+
+
+def _precheck_targets():
+    """Verify every mandatory read target exists and is world-readable.
+
+    Returns None on success or a (False, reason) tuple on failure.
+    """
+    for name, path in _READ_TARGETS.items():
+        if not os.path.exists(path):
+            return False, (
+                f"precheck failed: mandatory target {path!r} for check "
+                f"{name!r} does not exist — cannot assess confinement"
+            )
+        if not _target_readable_by_worker(path):
+            return False, (
+                f"precheck failed: mandatory target {path!r} for check "
+                f"{name!r} is not world-readable — DAC would block before Seatbelt"
+            )
+    return None
 
 
 def run(backend):
@@ -87,6 +137,12 @@ def run(backend):
         with open(config_path, "w") as f:
             json.dump({"writable_path": writable_path}, f)
 
+        # Host-side precheck: verify every mandatory read target exists and is
+        # world-readable.  Fail early if a target cannot serve as evidence.
+        precheck = _precheck_targets()
+        if precheck is not None:
+            return precheck
+
         backend.run("fs_confinement", tmp, run_id=run_id)
 
         result_path = os.path.join(tmp, "result.json")
@@ -109,15 +165,27 @@ def run(backend):
                 )
             outcome = ch.get("outcome")
             detail = ch.get("detail", "")
+            # Validate outcome is a recognised enum value.
+            if outcome not in ("allowed", "blocked", "unavailable"):
+                return False, (
+                    f"mandatory check {name!r} has invalid outcome {outcome!r} "
+                    f"(detail: {detail}) — must be one of allowed/blocked/unavailable"
+                )
             if outcome == "unavailable":
                 return False, (
                     f"mandatory check {name!r} returned UNAVAILABLE: {detail} — "
                     "absent evidence is not evidence"
                 )
 
-        # Also fail on any UNAVAILABLE in non-mandatory checks.
+        # Also fail on any invalid or UNAVAILABLE in non-mandatory checks.
         for name, ch in checks.items():
-            if ch.get("outcome") == "unavailable":
+            outcome = ch.get("outcome")
+            if outcome not in ("allowed", "blocked", "unavailable", None):
+                return False, (
+                    f"check {name!r} has invalid outcome {outcome!r} "
+                    f"(detail: {ch.get('detail', '')}) — must be one of allowed/blocked/unavailable"
+                )
+            if outcome == "unavailable":
                 return False, (
                     f"check {name!r} returned UNAVAILABLE: {ch.get('detail', '')} — "
                     "absent evidence is not evidence"
