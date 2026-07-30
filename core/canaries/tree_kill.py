@@ -121,6 +121,11 @@ def run(backend):
             pass
         if sandbox_proc is not None:
             _wait_sandbox(sandbox_proc)
+        # Clean up the inner workspace left by teardown=False.
+        try:
+            backend.cleanup(run_id)
+        except Exception:
+            pass
         shutil.rmtree(tmp, ignore_errors=True)
 
 

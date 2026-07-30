@@ -18,16 +18,34 @@ cd / || exit 1
 RUN_ID="$1"
 CANARY_NAME="$2"
 
-# Validate run-id: short alphanumeric + dash + underscore token.
-# This keeps the caller from injecting path separators or options.
-echo "$RUN_ID" | grep -qE '^[A-Za-z0-9_-]{1,64}$' || {
-    echo "worker_exec.sh: invalid run_id '$RUN_ID'" >&2
+# Reject any argument containing a newline — embedded newlines bypass
+# grep's line-oriented matching and can inject path separators or
+# options.  The case test below is a whole-string match that cannot be
+# fooled by newlines.
+case "$RUN_ID" in
+  *[!A-Za-z0-9_-]*)
+    echo "worker_exec.sh: invalid run_id (contains disallowed characters)" >&2
+    exit 1
+    ;;
+esac
+# Length check: 1-64 characters.
+RUN_ID_LEN="${#RUN_ID}"
+[ "$RUN_ID_LEN" -ge 1 ] && [ "$RUN_ID_LEN" -le 64 ] || {
+    echo "worker_exec.sh: invalid run_id length ${RUN_ID_LEN} (expected 1-64)" >&2
     exit 1
 }
 
 # Validate canary name: lowercase letters and underscores, 1-32 chars.
-echo "$CANARY_NAME" | grep -qE '^[a-z_]{1,32}$' || {
-    echo "worker_exec.sh: invalid canary_name '$CANARY_NAME'" >&2
+# Same whole-string discipline — case cannot be fooled by newlines.
+case "$CANARY_NAME" in
+  *[!a-z_]*)
+    echo "worker_exec.sh: invalid canary_name (contains disallowed characters)" >&2
+    exit 1
+    ;;
+esac
+CANARY_LEN="${#CANARY_NAME}"
+[ "$CANARY_LEN" -ge 1 ] && [ "$CANARY_LEN" -le 32 ] || {
+    echo "worker_exec.sh: invalid canary_name length ${CANARY_LEN} (expected 1-32)" >&2
     exit 1
 }
 

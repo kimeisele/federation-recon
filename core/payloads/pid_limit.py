@@ -8,11 +8,15 @@ One controlling parent forks children that sleep (they never fork
 themselves).  Counts successes until OSError.  Only the parent writes
 result.json — children must never write output.
 
+Reports the measured rlimit values so the canary can verify the soft
+limit equals the policy value.
+
 Does NOT judge — the host-side canary decides pass or fail.
 """
 
 import json
 import os
+import resource
 import sys
 import time
 
@@ -31,6 +35,10 @@ def _child_sleep(duration=60):
 
 
 ws = sys.argv[1]
+
+# Report the rlimit values as measured INSIDE the sandbox.
+# The canary uses these to verify the policy value is actually applied.
+rlim = resource.getrlimit(resource.RLIMIT_NPROC)
 
 # One controlling parent.  It forks children that sleep and never fork
 # again.  Count successes until OSError (EAGAIN from RLIMIT_NPROC).
@@ -60,6 +68,8 @@ except Exception as e:
 # Only the parent writes result.json.
 result = {
     "fork_count": count,
+    "rlimit_nproc_soft": rlim[0],
+    "rlimit_nproc_hard": rlim[1],
 }
 if saved_errno is not None:
     result["errno"] = saved_errno

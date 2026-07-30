@@ -5,6 +5,7 @@
     "fs_confinement",
     "pid_limit",
     "tree_kill",
+    "kill_persistent",
     "symlink_egress",
     "ingress_symlink"
   ],

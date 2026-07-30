@@ -11,6 +11,7 @@ builder-jcode.bats
 ci-checks-composer.bats
 clean-procedure-artifacts.bats
 compose-digest.bats
+consultation-diff-hygiene.bats
 consultation-gate.bats
 consumption.bats
 count-procedure.bats
