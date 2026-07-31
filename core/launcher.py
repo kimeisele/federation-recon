@@ -227,6 +227,38 @@ def main(argv=None):
             print(f"  {name}: {status}")
     print()
 
+    # ── Pre-flight: is the pool clean before anything is handed to it? ──
+    #
+    # This ran AFTER the canary suite until a red-team pointed out what the
+    # refusal is for. A process surviving from a previous run means the pool's
+    # isolation is already in question, and the response to that cannot be to
+    # hand it a fresh workspace first and notice afterwards. Checked before the
+    # suite, refused before the suite.
+    #
+    # Both branches are fail-closed and neither can be reached by a sandboxed
+    # process choosing its own arguments: the decision rests on the uid the
+    # kernel assigned, not on anything the process wrote about itself.
+    pre = backend.reconcile()
+    pre_status = pre.get("stray_status", "not checked")
+    pre_strays = pre.get("stray_processes", [])
+    if pre_status != "ok":
+        print("REFUSED: the process check could not run, so the pool cannot be "
+              f"shown clean before use — {pre_status}. Not measured is not the "
+              "same as clean (ADR §6).", file=sys.stderr)
+        return 1
+    if pre_strays:
+        print(f"REFUSED: {len(pre_strays)} sandbox-owned process(es) survive "
+              "from a previous run. Handing a fresh workspace to a pool whose "
+              "isolation is already in question is the one thing not to do.",
+              file=sys.stderr)
+        for p_ in pre_strays:
+            print(f"  pid {p_['pid']} slot {p_['slot']} user {p_['user']} "
+                  f"state {p_['state']}: {p_['command'][:120]}", file=sys.stderr)
+        print("  A root-owned survivor cannot be killed from here — kill_slot "
+              "acts as the slot user. See #129, and #134 for the reaper.",
+              file=sys.stderr)
+        return 1
+
     all_passed, _ = _run_canary_suite()
 
     if not all_passed:
@@ -255,20 +287,49 @@ def main(argv=None):
     dirs_clean = not reconcile_result["removed_runs"] and not reconcile_result["released_slots"]
     if dirs_clean:
         print("reconcile(): no orphan run directories or slot claims")
+
+    # The scope is stated in the line itself. An earlier version printed
+    # "no processes outlived their run" — a claim about all processes, made by
+    # a check that saw only some of them. That is the same overstatement as the
+    # "zero orphans" line it replaced, one level down. What is established is
+    # narrower and is now what gets said: nothing is running under a sandbox
+    # slot uid whose slot is not claimed.
     if status != "ok":
         print(f"reconcile(): process check did NOT run — {status}", file=sys.stderr)
     elif strays:
-        print(f"reconcile(): {len(strays)} process(es) outlived their run and "
-              f"are not accounted for by any claimed slot:", file=sys.stderr)
+        print(f"reconcile(): {len(strays)} sandbox-owned process(es) outlived "
+              f"their run:", file=sys.stderr)
         for p_ in strays:
-            print(f"  pid {p_['pid']} user {p_['user']} state {p_['state']}: "
-                  f"{p_['command'][:120]}", file=sys.stderr)
-        print("  A process owned by root cannot be killed from here — kill_slot "
-              "acts as the slot user. Reaping needs an owner decision (#129).",
-              file=sys.stderr)
+            print(f"  pid {p_['pid']} slot {p_['slot']} user {p_['user']} "
+                  f"state {p_['state']}: {p_['command'][:120]}", file=sys.stderr)
     else:
-        print("reconcile(): no processes outlived their run")
+        print("reconcile(): no process is running under an unclaimed slot uid")
     print()
+
+    # ── The report has a consumer ────────────────────────────────────────
+    #
+    # A red-team rejected the first version for stopping at the print: "a
+    # report with no consumer, no exit code, no scheduler, whose false
+    # positives train dismissal." It was right. A detector whose only output is
+    # a line on stderr during an unattended run is the pathology this
+    # repository keeps producing, not a cure for it.
+    #
+    # Both refusals are fail-closed, and neither can be reached by a sandboxed
+    # process choosing its own arguments — the decision rests on the uid the
+    # kernel assigned, not on anything the process wrote.
+    if status != "ok":
+        print("REFUSED: the process check could not run, so the pool cannot be "
+              "shown clean. Not measured is not the same as clean (ADR §6).",
+              file=sys.stderr)
+        return 1
+    if strays:
+        print(f"REFUSED: {len(strays)} sandbox-owned process(es) survive from a "
+              f"previous run. Handing a fresh workspace to a pool whose "
+              f"isolation is already in question is the one thing not to do. A "
+              f"root-owned survivor cannot be killed from here — kill_slot acts "
+              f"as the slot user — so this needs an operator (#129) or the "
+              f"reaper decision (#134).", file=sys.stderr)
+        return 1
 
     # ── Check for degraded pool ─────────────────────────────────────
     ps = backend.pool_status()

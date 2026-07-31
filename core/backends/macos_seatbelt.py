@@ -625,36 +625,76 @@ def kill_slot(slot_name, slot_uid):
 #
 # reconcile() below counts DIRECTORIES. That is all it ever counted, and the
 # launcher printed its result as "zero orphans", which reads as a statement
-# about processes. On 2026-07-31 a root-owned `sudo` from a killed run
-# survived seven hours while exactly that line was printed. See #129.
+# about processes. On 2026-07-31 a root-owned `sudo` from a killed run survived
+# seven hours while exactly that line was printed. See #129.
 #
-# The gap is structural rather than accidental. A worker is launched as
+# The blindness is structural. A worker is launched as
 #   sudo -u <slot> <wrapper> ...
 # and the sudo process itself runs as ROOT until it drops privileges. So it
-# cannot appear in `pgrep -u <slot_uid>` — the emptiness proof used by
-# _release_slot — and cannot be killed by kill_slot, which kills *as* the slot
-# user. Both existing controls are scoped to a uid the survivor does not have.
+# cannot appear in `pgrep -u <slot_uid>` — the emptiness proof _release_slot
+# uses — and cannot be killed by kill_slot, which kills *as* the slot user.
+# Both existing controls are scoped to a uid the survivor does not have.
 #
-# This function looks at the process table instead, which needs no privilege.
-# It reports; it does not kill. Reaping a root-owned process needs a sudoers
-# rule, and permission changes are OWNER-ONLY under CLAUDE.md — and detection
-# has to come first anyway: a reaper that kills what it cannot reliably
-# identify is worse than a report.
+# ── Identify on what the process cannot choose ────────────────────────────
+#
+# The first version of this function matched `_SANDBOX_BASE in command` and
+# excluded live runs by looking for a claimed run id anywhere in the command
+# line. An independent red-team took it apart, and the objection was
+# structural rather than cosmetic:
+#
+#   "Substring matching against attacker-influenceable data. […] the builder
+#    can read runs/, learn live ids, and mint them into its daemon's argv."
+#
+# argv belongs to the process. A worker that double-forks and execs by relative
+# path has no base path in its command line and was invisible; a worker that
+# copies a live run id into its arguments excluded itself. Both were measured
+# and both returned zero strays.
+#
+# So identification now rests on the one attribute a sandboxed process cannot
+# rewrite: **the uid the kernel assigned it**. Every descendant of a worker
+# runs as that slot's user — that is the property the whole sandbox is built
+# on, and the property every capability canary already depends on. Whether a
+# process is sandbox-owned is read from the user column; whether it is a stray
+# is decided by whether its slot is currently claimed.
+#
+# argv is still consulted for exactly one case: the root-owned `sudo` parent,
+# whose command line WE construct in run() and the worker never touches.
+#
+# This reports. It does not kill: reaping a root-owned process needs a sudoers
+# rule, which is an owner decision (#134). The caller is expected to refuse
+# rather than merely print — see launcher.py.
 
-def find_stray_processes(claimed_run_ids=(), ps_output=None):
-    """Processes referencing the sandbox root that no claimed run accounts for.
+def _slot_of_sudo_parent(command):
+    """The slot named by `sudo -u <slot>` in *command*, or None.
 
-    Returns (strays, status) where *strays* is a list of dicts with pid, user,
-    state and command, and *status* is "ok" or "unknown".
+    Only meaningful for root-owned processes, whose command line is the one
+    run() built. A worker cannot produce this: it has no privilege to become
+    root, which is the property the whole sandbox rests on.
+    """
+    tokens = command.split()
+    for i, tok in enumerate(tokens):
+        if tok == "-u" and i + 1 < len(tokens):
+            candidate = tokens[i + 1]
+            if candidate in _SLOT_MAP:
+                return candidate
+    return None
+
+
+def find_stray_processes(claimed_slots=(), ps_output=None):
+    """Sandbox-owned processes whose slot is not currently claimed.
+
+    Returns (strays, status). Each stray is a dict with pid, user, state,
+    command and slot.
 
     **"unknown" is not "none".** If the process table cannot be read, the
     answer is that we do not know, and the caller must not render that as a
-    clean result. That distinction is the entire point of this function: the
-    defect it exists for was a clean-looking line printed by a check that had
-    not looked.
+    clean result. The defect this function exists for was a clean-looking line
+    printed by a check that had not looked; a version able to print zero
+    without looking would reintroduce it in its own body.
 
-    *ps_output* is injectable so the tests can drive real fixtures without
-    needing a sandbox host or privileges.
+    *ps_output* is injectable so tests can drive real fixtures without a
+    sandbox host or privileges — the root-owned case cannot be created
+    otherwise, since a long-lived root process needs a sudoers rule.
     """
     if ps_output is None:
         try:
@@ -669,24 +709,38 @@ def find_stray_processes(claimed_run_ids=(), ps_output=None):
                 result.returncode, result.stderr.strip())
         ps_output = result.stdout
 
+    claimed = set(claimed_slots)
     strays = []
     for line in ps_output.splitlines():
         parts = line.strip().split(None, 3)
         if len(parts) < 4:
             continue
         pid, user, state, command = parts
-        if _SANDBOX_BASE not in command:
+
+        if user in _SLOT_MAP:
+            # Owned by a slot uid. The kernel assigned it; nothing the process
+            # does to its own argv changes this.
+            slot = user
+        elif user == "root" and _WRAPPER_PATH in command:
+            # The sudo parent. Its command line is ours, not the worker's.
+            slot = _slot_of_sudo_parent(command)
+            if slot is None:
+                # Root, naming the wrapper, but not in the shape run() emits.
+                # Unexplained rather than benign — report it and say so.
+                strays.append({"pid": pid, "user": user, "state": state,
+                               "command": command, "slot": "unattributed"})
+                continue
+        else:
             continue
-        # A process belonging to a run whose slot is still claimed is doing its
-        # job, not surviving one.
-        if any(rid in command for rid in claimed_run_ids):
+
+        if slot in claimed:
             continue
         strays.append({"pid": pid, "user": user, "state": state,
-                       "command": command})
+                       "command": command, "slot": slot})
     return strays, "ok"
 
 
-def reconcile():
+def reconcile(ps_output=None):
     """Reconcile runs directory with slot state.
 
     For every directory under runs/, if its run id does not correspond to a
@@ -697,7 +751,12 @@ def reconcile():
 
     Run at launcher startup and after every run.
 
-    Returns dict with counts: {removed_runs, released_slots, errors}.
+    Returns dict with counts: {removed_runs, released_slots, errors} plus
+    stray_processes and stray_status.
+
+    *ps_output* is forwarded to find_stray_processes so this whole path can be
+    exercised by execution rather than by grepping the source of this function
+    — which is what the first version of its test did.
     Errors are reported, never swallowed.
     """
     # removed_runs and released_slots count DIRECTORIES. stray_processes
@@ -812,9 +871,22 @@ def reconcile():
                 )
                 result["errors"] += 1
 
-    # The process table, which nothing above looked at. Done last so it sees
-    # the state reconcile leaves behind rather than the state it inherited.
-    strays, status = find_stray_processes(claimed_run_ids)
+    # The process table, which nothing above looked at.
+    #
+    # Deliberately re-reads the claim directory instead of reusing the
+    # claimed_slots snapshot taken at the top of this function. The red-team's
+    # third finding: that snapshot predates the releases this pass performs, so
+    # a slot released here would still mask its own root-owned survivor for a
+    # whole cycle — one turn of blindness, on exactly the shape of #129.
+    live_slots = set()
+    if os.path.isdir(_SLOTS_DIR):
+        try:
+            live_slots = {e for e in os.listdir(_SLOTS_DIR) if "." not in e}
+        except OSError as exc:
+            print(f"[seatbelt] reconcile: cannot re-list slots dir: {exc}",
+                  file=sys.stderr)
+            result["errors"] += 1
+    strays, status = find_stray_processes(live_slots, ps_output)
     result["stray_processes"] = strays
     result["stray_status"] = status
     return result
