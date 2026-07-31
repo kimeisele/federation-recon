@@ -67,8 +67,11 @@ bash scripts/verify-determinism.sh            # two --reproduce passes must be b
 | Workflow | Trigger | Checks |
 |---|---|---|
 | `ci.yml` (`invariants`) | every PR + push to main | strict schema validation, composed-digest idempotency, pin-reference resolution — fast, offline |
-| `nightly-determinism.yml` | daily 05:30 UTC + manual | reproduce-stability: two full `--reproduce` passes must be byte-identical |
-| `node-census.yml` | daily 06:00 UTC + manual | live run of all procedures + compose; commits the fresh Federation Digest |
+| `nightly-determinism.yml` | daily 00:05 UTC nominal + manual | reproduce-stability: two full `--reproduce` passes must be byte-identical |
+| `node-census.yml` | daily 00:35 UTC nominal + manual | live run of all procedures + compose; opens the fresh Federation Digest as a pull request |
+
+Scheduled runs on this repository start 2–4 hours after their nominal cron time,
+measured, every day. Read the schedule as an ordering, not as a clock.
 
 ## What this is not
 

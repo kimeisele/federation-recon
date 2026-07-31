@@ -2,8 +2,20 @@ name: Federation Recon — Composed Digest
 
 on:
   schedule:
-    # Daily at 06:00 UTC
-    - cron: '0 6 * * *'
+    # Daily at 00:35 UTC. The nominal time is not the arrival time: measured on
+    # this repository, a `0 6 * * *` census actually started between 07:59 and
+    # 09:40 UTC — a 2h00–3h40 delay, every day, never once on time. The
+    # observation was meant to be waiting when the owner reads it in the
+    # morning (CEST), and at 06:00 UTC nominal it arrived around 10:00 CEST.
+    #
+    # Whether moving the nominal time actually moves the arrival is NOT yet
+    # established. Two models fit the seven measurements equally well: an
+    # additive queue delay (then this lands ~03:00–04:15 UTC), or a fixed
+    # arrival window around 08:00 UTC that ignores the nominal time entirely
+    # (then this changes nothing). The next scheduled runs decide it. If the
+    # arrival stays near 08:00 UTC, cron is the wrong instrument and the
+    # census needs an external `workflow_dispatch` trigger instead.
+    - cron: '35 0 * * *'
   workflow_dispatch:  # manual trigger
 
 # Only one census may run at a time. A scheduled run and a manual dispatch used
