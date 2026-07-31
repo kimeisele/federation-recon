@@ -23,6 +23,7 @@ heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
 manifest-gate.bats
+order-validator.bats
 order-vectors.bats
 pin-gate.bats
 seatbelt-unit.bats
