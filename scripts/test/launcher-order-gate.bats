@@ -83,13 +83,77 @@ PY
 
 @test "launcher-order-gate: an admissible order gets past the gate" {
   # Without this the gate could refuse everything and every test above would
-  # still pass. What happens after the gate needs the root-owned pool from
-  # docs/s1-setup.md, so this asserts only that the order was admitted and the
-  # run proceeded — which is the part the gate is responsible for.
-  run python3 "$REPO_ROOT/core/launcher.py" "$VEC/accept/01-minimal.json"
+  # still pass.
+  #
+  # The backend is replaced by a stub in sys.modules BEFORE main() runs, so the
+  # real one is never imported. That is not tidiness. The first version of this
+  # test invoked the launcher as a subprocess and let it continue past the
+  # gate, and on a host where S1 is installed that runs the entire canary suite
+  # — eight sandboxed workers under sudo, minutes per invocation. One of those
+  # sudo calls was left stopped and orphaned for seven hours (#129). A test
+  # asserting one line of stdout must not launch root-owned processes to do it.
+  #
+  # Stubbing also makes the assertion sharper: what is under test is that the
+  # gate admits the order and hands control onward, not what the backend then
+  # does with it.
+  run python3 - "$REPO_ROOT" <<'PY'
+import sys, types
+root = sys.argv[1]
+sys.path.insert(0, root + "/core")
+sys.path.insert(0, root)
+
+stub = types.ModuleType("backends.macos_seatbelt")
+stub.reached = False
+def _unreachable(*a, **k):
+    stub.reached = True
+    raise AssertionError("the stub was called — see the assertions below")
+stub.pool_status = lambda: {}
+stub.reconcile = lambda: {"removed_runs": 0, "released_slots": 0, "errors": 0}
+pkg = types.ModuleType("backends")
+pkg.macos_seatbelt = stub
+sys.modules["backends"] = pkg
+sys.modules["backends.macos_seatbelt"] = stub
+
+import io, contextlib
+import launcher
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    try:
+        launcher.main([root + "/core/orders/vectors/accept/01-minimal.json"])
+    except BaseException as exc:      # anything past the gate is out of scope
+        # BaseException, not Exception: the launcher signals a failed canary
+        # suite with sys.exit, and SystemExit does not inherit from Exception.
+        # Catching the narrower class made this test fail for a reason that has
+        # nothing to do with the gate it is testing.
+        print("(stopped after the gate: %s)" % type(exc).__name__)
+text = out.getvalue()
+print(text)
+assert "admitted for issue" in text, text[:400]
+assert "ORDER REFUSED" not in text, text[:400]
+PY
   echo "$output"
-  [[ "$output" == *"admitted for issue"* ]]
-  [[ "$output" != *"ORDER REFUSED"* ]]
+  [ "$status" -eq 0 ]
+}
+
+@test "launcher-order-gate: admitting an order does not need the real backend" {
+  # The property the stub above relies on, asserted rather than assumed: the
+  # admission decision is complete before the backend is consulted. If this
+  # ever stops holding, the test above starts passing for the wrong reason.
+  run python3 - "$REPO_ROOT" <<'PY'
+import sys
+root = sys.argv[1]
+sys.path.insert(0, root + "/core")
+sys.path.insert(0, root)
+import launcher
+rc, err = launcher.validate_order(root + "/core/orders/vectors/accept/01-minimal.json")
+loaded = [m for m in sys.modules if m.startswith("backends")]
+print("rc=%s stderr=%r backend_modules=%s" % (rc, err, loaded))
+assert rc == 0, (rc, err)
+assert err == "", err
+assert not loaded, loaded
+PY
+  echo "$output"
+  [ "$status" -eq 0 ]
 }
 
 @test "launcher-order-gate: the refusal says the backend was not consulted" {
