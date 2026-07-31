@@ -27,6 +27,7 @@ manifest-gate.bats
 order-validator.bats
 order-vectors.bats
 pin-gate.bats
+schedule-watchdog.bats
 seatbelt-unit.bats
 state-gate.bats
 suite-inventory.bats

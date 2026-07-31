@@ -1,0 +1,68 @@
+name: Schedule watchdog — is the census still firing?
+
+# scripts/state-gate.sh has had an --enforce mode since it was written, and
+# until now nothing used it. #117: "Nothing invokes the state gate on a
+# schedule." A gate nobody invokes is as silent as no gate, and the whole point
+# of the STALE state (#92) is that a schedule which stops firing keeps its last
+# verdict forever — and that verdict may be green.
+#
+# ── What this cannot detect, stated because it is load-bearing ────────────
+#
+# This watchdog is itself a scheduled GitHub workflow. If GitHub's scheduler
+# stops running *everything* for this repository, the watchdog stops with it
+# and reports nothing. It catches the census breaking; it cannot catch the
+# platform that runs both of them going quiet.
+#
+# That is not fixed by moving the watchdog to a different workflow file, and it
+# is not fixed by wishing. It needs an observer outside GitHub Actions, which is
+# a separate decision with a separate cost. Tracked rather than papered over.
+#
+# The `push` trigger is a partial mitigation with a different failure profile:
+# it fires on human or agent activity rather than on GitHub's clock, so a merge
+# surfaces staleness even during a scheduler outage. It is not a substitute —
+# a repository nobody touches produces no pushes either.
+
+on:
+  schedule:
+    # 09:00 UTC nominal. Scheduled runs on this repository start 2–4 hours late
+    # (measured, see README), so this lands mid-morning UTC — comfortably after
+    # the census at 00:35 nominal should have arrived. The exact time barely
+    # matters: the staleness threshold is 30 hours, not minutes.
+    - cron: '0 9 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read          # gh run list, and nothing else
+
+jobs:
+  state-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is the census schedule still alive?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --enforce turns the verdict into an exit status: 1 RED, 2 UNKNOWN,
+          # 3 STALE. Without it this script prints and exits 0, which is the
+          # reporting mode — useful at a terminal, useless as a control.
+          bash scripts/state-gate.sh --enforce
+
+      - name: Explain a failure in the log rather than in someone's memory
+        if: failure()
+        run: |
+          echo "::error::The census schedule is not in a green, current state."
+          echo ""
+          echo "Exit 1 RED     — the newest scheduled run failed."
+          echo "Exit 2 UNKNOWN — the history could not be read. Not the same as green."
+          echo "Exit 3 STALE   — no scheduled run inside the 30h threshold."
+          echo ""
+          echo "STALE is the state this workflow exists for. A schedule that stops"
+          echo "firing keeps its last verdict, and that verdict is usually green."
+          echo "See issue #92 for the measurement the threshold is derived from,"
+          echo "and #117 for why nothing was checking it until now."
