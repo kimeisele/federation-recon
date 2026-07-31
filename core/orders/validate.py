@@ -635,6 +635,21 @@ def _validate_bundle_provenance(order):
 # ── Main entry ───────────────────────────────────────────────────────────────
 
 
+# Module-level, deliberately: validate() communicates its verdict by exiting,
+# so a return value cannot carry the parsed order out. A caller that wants the
+# bytes it validated — rather than the bytes at that path afterwards — reads
+# them from here after catching SystemExit(0). See validated_order().
+_validated_order = {}
+
+
+def validated_order():
+    """The order dict that the last successful validate() actually inspected.
+
+    Returns None when the last call did not reach a verdict of admissible.
+    """
+    return _validated_order.get("order")
+
+
 def validate(order_path):
     """Run the full validation pipeline on *order_path*.
 
@@ -646,6 +661,11 @@ def validate(order_path):
       5. E_LIMIT — non‑positive effective limit
       6. E_BUNDLE_PROVENANCE — bundle provenance
     """
+
+    # A previous call's result must never be readable as this call's. Cleared
+    # before anything else, so every early refusal leaves validated_order()
+    # returning None rather than the last order that happened to pass.
+    _validated_order.clear()
 
     # 1. Read raw bytes ──────────────────────────────────────────────────
     try:
@@ -681,6 +701,20 @@ def validate(order_path):
 
     # 8. Bundle provenance ───────────────────────────────────────────────
     _validate_bundle_provenance(order)
+
+    # The parsed order survives the verdict.
+    #
+    # A caller used to learn only the exit status and then RE-OPEN the file
+    # with a plain json.load — no size check, no canonicity, no schema, no
+    # provenance. Everything established about the bytes this function read was
+    # assumed to hold for whatever bytes were at that path a moment later.
+    #
+    # ADR §5 says "Bytegrößen-Prüfung vor jedem Lesen" — before every read, not
+    # before the first one. The second read had none. Closing the window costs
+    # nothing, because the dict is already in memory here, and the alternative
+    # is a rule that holds only as long as nobody adds a field to the second
+    # read. See #128.
+    _validated_order["order"] = order
 
     # Admissible — silent exit 0
     sys.exit(0)
