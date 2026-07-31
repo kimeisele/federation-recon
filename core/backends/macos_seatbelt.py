@@ -696,7 +696,31 @@ def _slot_of_sudo_parent(command):
     return None
 
 
-def find_stray_processes(claimed_slots=(), ps_output=None):
+def _etime_seconds(etime):
+    """Seconds from a ps ELAPSED field: [[dd-]hh:]mm:ss. None if unparseable."""
+    try:
+        days = 0
+        if "-" in etime:
+            d, etime = etime.split("-", 1)
+            days = int(d)
+        bits = [int(x) for x in etime.split(":")]
+        while len(bits) < 3:
+            bits.insert(0, 0)
+        h, m, sec = bits[-3], bits[-2], bits[-1]
+        return days * 86400 + h * 3600 + m * 60 + sec
+    except Exception:
+        return None
+
+
+def _claim_age_seconds(slot):
+    """Seconds since this slot's claim directory was created. None if absent."""
+    try:
+        return time.time() - os.stat(os.path.join(_SLOTS_DIR, slot)).st_ctime
+    except OSError:
+        return None
+
+
+def find_stray_processes(claimed_slots=(), ps_output=None, claim_ages=None):
     """Sandbox-owned processes whose slot is not currently claimed.
 
     Returns (strays, status). Each stray is a dict with pid, user, state,
@@ -715,7 +739,7 @@ def find_stray_processes(claimed_slots=(), ps_output=None):
     if ps_output is None:
         try:
             result = subprocess.run(
-                ["/bin/ps", "-eo", "pid=,uid=,state=,command="],
+                ["/bin/ps", "-eo", "pid=,uid=,etime=,state=,command="],
                 capture_output=True, text=True, timeout=10,
             )
         except Exception as exc:
@@ -728,10 +752,33 @@ def find_stray_processes(claimed_slots=(), ps_output=None):
     claimed = set(claimed_slots)
     strays = []
     for line in ps_output.splitlines():
-        parts = line.strip().split(None, 3)
-        if len(parts) < 4:
+        if not line.strip():
             continue
-        pid, uid_field, state, command = parts
+
+        # UID FIRST, and a missing COMMAND is not a reason to skip a row.
+        #
+        # This split on four fields and skipped anything shorter. A red-team
+        # exec'd a process with whitespace-only argv[0]; macOS ps then emits
+        # pid, uid and state with a BLANK command, the row was skipped before
+        # the uid was ever read, and the answer was ([], "ok"). A sandbox-owned
+        # process removed itself from the report by clearing its own argv —
+        # which is the same class of defect as identifying by argv in the first
+        # place, one field further along.
+        #
+        # The uid decides. The command is used only for the root parent, whose
+        # command line run() builds.
+        parts = line.strip().split(None, 4)
+        if len(parts) < 4:
+            # Not even pid/uid/etime/state. Report rather than skip: a row this
+            # malformed means the invocation is not returning what the parser
+            # was built for, and that is the condition all of this exists to
+            # make visible.
+            strays.append({"pid": parts[0] if parts else "?", "user": "?",
+                           "state": "?", "command": line.strip(),
+                           "slot": "unparseable-row"})
+            continue
+        pid, uid_field, etime, state = parts[0], parts[1], parts[2], parts[3]
+        command = parts[4] if len(parts) > 4 else ""
 
         # NUMERIC uid, not the user name.
         #
@@ -778,6 +825,32 @@ def find_stray_processes(claimed_slots=(), ps_output=None):
             continue
 
         if slot in claimed:
+            # Claimed — but by THIS claim?
+            #
+            # A red-team's second finding: slot reuse masks an old survivor. A
+            # root parent left over from a previous run on slot N is excluded
+            # the moment slot N is claimed again, and the pool then looks clean
+            # while somebody else's process is still running under that uid.
+            #
+            # A process older than the claim cannot belong to it. Ages are
+            # compared rather than absolute times, so no clock has to agree
+            # with any other.
+            ages = claim_ages if claim_ages is not None else {}
+            claim_age = ages.get(slot, _claim_age_seconds(slot))
+            proc_age = _etime_seconds(etime)
+            if claim_age is None or proc_age is None:
+                # Cannot compare. Do not silently treat that as belonging:
+                # unknown is not fine, and this is exactly where a clean-looking
+                # answer would come from a check that could not look.
+                strays.append({"pid": pid, "user": user, "state": state,
+                               "command": command,
+                               "slot": slot + " (age-uncomparable)"})
+                continue
+            if proc_age <= claim_age + 2:
+                continue          # started within this claim; it belongs
+            strays.append({"pid": pid, "user": user, "state": state,
+                           "command": command,
+                           "slot": slot + " (predates its claim)"})
             continue
         strays.append({"pid": pid, "user": user, "state": state,
                        "command": command, "slot": slot})

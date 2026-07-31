@@ -43,7 +43,7 @@ PY
 
 @test "stray-processes: a root-owned sudo survivor is found and attributed" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = (" 35701 0        T        sudo -u _jcode_w01 %s W-AbGC tree_kill\n"
+ps = (" 35701 0      00:00:05 T        sudo -u _jcode_w01 %s W-AbGC tree_kill\n"
       "   501 501      S        /usr/bin/python3 unrelated\n") % WRAPPER
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok", status
@@ -60,7 +60,7 @@ PY
   # by relative path carries no sandbox path at all — and is still owned by the
   # slot uid, which it cannot change.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40002 613      S        ./payload\n"
+ps = " 40002 613      00:00:05 S        ./payload\n"
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok", status
 assert len(strays) == 1 and strays[0]["slot"] == "_jcode_w03", strays
@@ -75,7 +75,7 @@ PY
   # run id. Under the old rule, putting one in its argv excluded it. Exclusion
   # is now by slot ownership, which argv cannot assert.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40003 615      S        ./daemon --tag qzA5VJYFsvwF0ANX\n"
+ps = " 40003 615      00:00:05 S        ./daemon --tag qzA5VJYFsvwF0ANX\n"
 strays, _ = b.find_stray_processes(("_jcode_w02",), ps)   # w05 is NOT claimed
 assert len(strays) == 1 and strays[0]["slot"] == "_jcode_w05", strays
 print("run id in argv no longer buys an exclusion")
@@ -91,7 +91,7 @@ PY
   # reporting status "ok". Tolerating corrupt claim state is what reconcile()
   # is FOR.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40004 617      S        ./payload\n"
+ps = " 40004 617      00:00:05 S        ./payload\n"
 for claimed in [("",), ("", "_jcode_w01"), ("w07",), ("_jcode_w0",), ()]:
     strays, status = b.find_stray_processes(claimed, ps)
     assert status == "ok", (claimed, status)
@@ -107,11 +107,16 @@ PY
   # and the real line is lost in it — which the red-team named as the way false
   # positives train dismissal.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = (" 41000 613      S        ./worker\n"
-      " 41001 0        S        sudo -u _jcode_w03 %s RUNID x\n") % WRAPPER
-strays, status = b.find_stray_processes(("_jcode_w03",), ps)
+ps = (" 41000 613      00:00:05 S        ./worker\n"
+      " 41001 0      00:00:05 S        sudo -u _jcode_w03 %s RUNID x\n") % WRAPPER
+# claim_ages is injected. A process is only excluded by a claim it is YOUNGER
+# than: a red-team showed that slot reuse otherwise masks an old root parent,
+# because re-claiming slot N silently adopts whatever was already running under
+# that uid.
+ages = {"_jcode_w03": 3600, "_jcode_w04": 3600}
+strays, status = b.find_stray_processes(("_jcode_w03",), ps, claim_ages=ages)
 assert status == "ok" and strays == [], strays
-strays2, _ = b.find_stray_processes(("_jcode_w04",), ps)
+strays2, _ = b.find_stray_processes(("_jcode_w04",), ps, claim_ages=ages)
 assert len(strays2) == 2, strays2
 print("claimed slot silent; the same two lines report when it is not claimed")
 PY
@@ -121,7 +126,7 @@ PY
 
 @test "stray-processes: root naming the wrapper in an unexpected shape is reported, not ignored" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 42000 0        S        sudo -n %s something\n" % WRAPPER
+ps = " 42000 0      00:00:05 S        sudo -n %s something\n" % WRAPPER
 strays, status = b.find_stray_processes(("_jcode_w01",), ps)
 assert len(strays) == 1 and strays[0]["slot"] == "unattributed", strays
 print("unexplained rather than benign:", strays[0]["slot"])
@@ -133,9 +138,9 @@ PY
 @test "stray-processes: unrelated processes are ignored" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
 ps = ("   1 0        S        /sbin/launchd\n"
-      " 900 501      S        /usr/bin/python3 -m http.server\n"
-      " 901 0        S        sudo -u nobody /bin/sleep 30\n"
-      " 902 501      S        tail -f %s/log\n") % BASE
+      " 900 501      00:00:05 S        /usr/bin/python3 -m http.server\n"
+      " 901 0      00:00:05 S        sudo -u nobody /bin/sleep 30\n"
+      " 902 501      00:00:05 S        tail -f %s/log\n") % BASE
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok" and strays == [], strays
 print("four unrelated processes, including one that merely names the base path")
@@ -178,12 +183,24 @@ PY
   echo "$output"; [ "$status" -eq 0 ]
 }
 
-@test "stray-processes: malformed ps lines are skipped, not crashed on" {
+@test "stray-processes: a malformed row is REPORTED, never skipped" {
+  # This asserted that malformed rows were skipped. A red-team then exec'd a
+  # process with whitespace-only argv[0]; macOS ps emitted pid, uid and state
+  # with a BLANK command, the row was skipped before the uid was ever read, and
+  # the answer was ([], "ok") — a sandbox-owned process removing itself from
+  # the report by clearing its own argv. Seventeen tests stayed green.
+  #
+  # Skipping a row the parser does not understand is how a check reports clean
+  # about something it did not read. Every unreadable row is now a finding, and
+  # the uid decides before the command is looked at.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = "\ngarbage\n 123 root\n 456 _jcode_w08 T   ./x\n"
+ps = "\ngarbage\n 123 613\n 456 618      00:00:05 T\n 457 618      00:00:05 T        ./x\n"
 strays, status = b.find_stray_processes((), ps)
-assert status == "ok" and len(strays) == 1 and strays[0]["pid"] == "456", strays
-print("three malformed lines skipped, the real one still found")
+assert status == "ok", status
+slots = sorted(s["slot"] for s in strays)
+assert slots.count("unparseable-row") == 2, strays
+assert slots.count("_jcode_w08") == 2, strays
+print("2 unreadable rows reported; 2 attributed by uid, one with a blank COMMAND")
 PY
   run _py "$BATS_TEST_TMPDIR/t.py"
   echo "$output"; [ "$status" -eq 0 ]
@@ -197,7 +214,7 @@ PY
   # an injectable process table, so this executes the wiring instead of reading
   # about it.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 43000 616      T        ./leftover\n"
+ps = " 43000 616      00:00:05 T        ./leftover\n"
 r = b.reconcile(ps_output=ps)
 assert r["stray_status"] == "ok", r
 assert len(r["stray_processes"]) == 1, r
@@ -307,7 +324,7 @@ def fake_listdir(path):
     return real_listdir(path)
 os.listdir = fake_listdir
 try:
-    ps = " 43000 616      T        ./leftover\n"
+    ps = " 43000 616      00:00:05 T        ./leftover\n"
     r = b.reconcile(ps_output=ps)
 finally:
     os.listdir = real_listdir
@@ -382,7 +399,7 @@ PY
   # silently dropped. If ps ever does print a name here, the run says so
   # instead of quietly finding nothing.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 51000 _jcode_+ T        sudo -u _jcode_w01 %s R c\n" % WRAPPER
+ps = " 51000 _jcode_+ 00:00:05 T        sudo -u _jcode_w01 %s R c\n" % WRAPPER
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok", status
 assert len(strays) == 1, strays
@@ -401,14 +418,50 @@ PY
 for cmd in ("/bin/cat %s" % WRAPPER,
             "/usr/bin/vim %s" % WRAPPER,
             "grep -n foo %s" % WRAPPER):
-    ps = " 52000 0        S        %s\n" % cmd
+    ps = " 52000 0      00:00:05 S        %s\n" % cmd
     strays, status = b.find_stray_processes((), ps)
     assert status == "ok" and strays == [], (cmd, strays)
 # But a sudo-shaped launch that cannot be attributed is still reported.
-ps = " 52001 0        S        sudo -n %s x\n" % WRAPPER
+ps = " 52001 0      00:00:05 S        sudo -n %s x\n" % WRAPPER
 strays, _ = b.find_stray_processes((), ps)
 assert len(strays) == 1 and strays[0]["slot"] == "unattributed", strays
 print("three root readers ignored; the sudo-shaped one still reported")
+PY
+  run _py "$BATS_TEST_TMPDIR/t.py"
+  echo "$output"; [ "$status" -eq 0 ]
+}
+
+@test "stray-processes: a process older than its claim is not adopted by it" {
+  # The red-team's second finding: slot reuse masks an old survivor. A root
+  # parent left from a previous run on slot N is excluded the moment slot N is
+  # claimed again, and the pool then looks clean while somebody else's process
+  # still runs under that uid.
+  cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
+ps = (" 40010 613      02:00:00 S        ./survivor-from-a-previous-run\n"
+      " 40011 613      00:00:10 S        ./belongs-to-this-claim\n")
+strays, status = b.find_stray_processes(("_jcode_w03",), ps,
+                                        claim_ages={"_jcode_w03": 60})
+assert status == "ok", status
+assert len(strays) == 1, strays
+assert strays[0]["pid"] == "40010", strays
+assert "predates its claim" in strays[0]["slot"], strays
+print("the two-hour-old process is not adopted by a one-minute-old claim")
+PY
+  run _py "$BATS_TEST_TMPDIR/t.py"
+  echo "$output"; [ "$status" -eq 0 ]
+}
+
+@test "stray-processes: an incomparable age is reported, not assumed to belong" {
+  # Where a clean-looking answer would otherwise come from a check that could
+  # not look: no claim age, or an elapsed field that will not parse.
+  cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
+ps = " 40012 613      not-a-time S        ./x\n"
+strays, _ = b.find_stray_processes(("_jcode_w03",), ps, claim_ages={"_jcode_w03": 60})
+assert len(strays) == 1 and "age-uncomparable" in strays[0]["slot"], strays
+ps2 = " 40013 613      00:00:05 S        ./x\n"
+strays2, _ = b.find_stray_processes(("_jcode_w03",), ps2, claim_ages={})
+assert len(strays2) == 1 and "age-uncomparable" in strays2[0]["slot"], strays2
+print("unparseable elapsed and missing claim age both reported")
 PY
   run _py "$BATS_TEST_TMPDIR/t.py"
   echo "$output"; [ "$status" -eq 0 ]
