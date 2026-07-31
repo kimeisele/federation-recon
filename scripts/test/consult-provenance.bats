@@ -29,6 +29,7 @@ setup() {
   OUT="$BATS_TEST_TMPDIR/out.md"
   PROMPT="$BATS_TEST_TMPDIR/prompt.txt"
   echo "irrelevant" > "$PROMPT"
+  SESSION="session_test_1785500000000_deadbeefcafef00d"
 }
 
 # A log window that looks like the named provider served the request.
@@ -43,13 +44,17 @@ setup() {
 # run the log lines are always written after the mark, so a future stamp is the
 # faithful simulation rather than a workaround.
 _log_for() {
+  # Every fixture line now carries the session id, because attribution is bound
+  # to the request's own jcode session rather than to a time window. A window
+  # is a claim about the clock; a concurrent session broke the first version
+  # and it deleted the review that found the flaw.
   local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
   case "$1" in
-    openai)   printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] API stream opened in 0.03s\n' "$now" ;;
-    deepseek) printf '[%s] [INFO] API stream attempt 1/3 (model: deepseek-v4-flash, endpoint: https://api.deepseek.com)\n' "$now"
-              printf '[%s] [INFO] [ses:x|prv:OpenRouter|mod:deepseek] API stream opened in 0.03s\n' "$now" ;;
-    both)     printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] opened\n' "$now"
-              printf '[%s] [INFO] [ses:y|prv:OpenRouter|mod:deepseek] opened\n' "$now" ;;
+    openai)   printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] API stream opened in 0.03s\n' "$now" "$SESSION" ;;
+    deepseek) printf '[%s] [INFO] [ses:%s] API stream attempt 1/3 (model: deepseek-v4-flash, endpoint: https://api.deepseek.com)\n' "$now" "$SESSION"
+              printf '[%s] [INFO] [ses:%s|prv:OpenRouter|mod:deepseek] API stream opened in 0.03s\n' "$now" "$SESSION" ;;
+    both)     printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] opened\n' "$now" "$SESSION"
+              printf '[%s] [INFO] [ses:%s|prv:OpenRouter|mod:deepseek] opened\n' "$now" "$SESSION" ;;
     empty)    : ;;
   esac > "$LOG"
 }
@@ -57,7 +62,7 @@ _log_for() {
 @test "consult: the requested provider actually serving is accepted" {
   _log_for openai
   echo "REPORT BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -71,7 +76,7 @@ _log_for() {
   # tool exited 0. This is the test the repository did not have.
   _log_for deepseek
   echo "PLAUSIBLE REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -86,7 +91,7 @@ _log_for() {
   # even when the one asked for is among them.
   _log_for both
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -98,7 +103,7 @@ _log_for() {
   # Not measured must never produce the same outcome as measured-and-fine.
   _log_for empty
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -108,7 +113,7 @@ _log_for() {
 
 @test "consult: an unreadable log is a refusal, not a shrug" {
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$BATS_TEST_TMPDIR/does-not-exist.log" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$BATS_TEST_TMPDIR/does-not-exist.log" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -120,7 +125,7 @@ _log_for() {
   # The check must not simply prefer one provider — it compares.
   _log_for deepseek
   echo "BUILD REPORT" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" deepseek deepseek-v4-flash "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -135,15 +140,65 @@ _log_for() {
   [ -z "$output" ]
 }
 
-@test "consult: refusing leaves no partial artifact behind" {
+@test "consult: a refusal leaves no consultation, but keeps the body" {
+  # This asserted that NOTHING survived a refusal, and the first version did
+  # delete everything. That cost a twenty-five-kilobyte red-team report whose
+  # findings had to be reconstructed from the part already read.
+  #
+  # The reasoning about CITATION was right and the conclusion about DESTRUCTION
+  # was wrong. A refused body is unattributable, which is not the same as
+  # worthless. It survives under an extension no gate, glob or reader treats as
+  # a consultation.
   _log_for deepseek
-  echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  echo "FINDINGS NOBODY SHOULD LOSE" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
   [ "$status" -eq 1 ]
-  run bash -c "ls '$BATS_TEST_TMPDIR' | grep -c 'out.md'"
-  echo "files matching out.md: $output"
-  [ "$output" = "0" ]
+  [ ! -f "$OUT" ]                       # no consultation
+  [ ! -f "$OUT.stdout" ]                # no half-written leftover
+  [ -f "$OUT.unattributed" ]            # the body kept
+  grep -q "FINDINGS NOBODY SHOULD LOSE" "$OUT.unattributed"
+  grep -q "NOT A CONSULTATION" "$OUT.unattributed"
+  # And it must not be mistaken for one by the gate, which looks at *.md only.
+  [[ "$OUT.unattributed" != *.md ]]
+}
+
+@test "consult: a run that cannot be bound to a session is refused" {
+  # Attribution is bound to the request's own jcode session. Without one the
+  # log can only be filtered by time, and a concurrent session then makes the
+  # answer ambiguous or wrong — which is exactly how the first version deleted
+  # the review that found the flaw.
+  _log_for openai
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not bind the run to a jcode session"* ]]
+  [ ! -f "$OUT" ]
+  # Every refusal path keeps the body. Mutation testing found that destroying
+  # it on ONE branch went unnoticed because the test only covered another — and
+  # destroying a finding is the mistake that cost a twenty-five-kilobyte report.
+  [ -f "$OUT.unattributed" ]
+  grep -q "NOT A CONSULTATION" "$OUT.unattributed"
+}
+
+@test "consult: another session in the same window cannot decide the verdict" {
+  # The red-team's executed evasion: run your own provider session while being
+  # reviewed and the time window contains two providers. Bound to a session id,
+  # the other one is irrelevant rather than fatal.
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  {
+    printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] ours\n' "$now" "$SESSION"
+    printf '[%s] [INFO] [ses:session_other_1785500000000_ffffffffffffffff|prv:OpenRouter|mod:deepseek] theirs\n' "$now"
+  } > "$LOG"
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "served_provider: openai" "$OUT"
 }
 
 # ── The builder's own invocation ───────────────────────────────────────────
@@ -188,11 +243,11 @@ _log_for() {
   local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
   {
     for i in $(seq 1 2000); do
-      printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] line %d\n' "$now" "$i"
+      printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] line %d\n' "$now" "$SESSION" "$i"
     done
   } > "$LOG"
   echo "REPORT BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -207,11 +262,11 @@ _log_for() {
   local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
   {
     for i in $(seq 1 2000); do
-      printf '[%s] [INFO] [ses:x|prv:OpenRouter|mod:deepseek] line %d\n' "$now" "$i"
+      printf '[%s] [INFO] [ses:%s|prv:OpenRouter|mod:deepseek] line %d\n' "$now" "$SESSION" "$i"
     done
   } > "$LOG"
   echo "REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]

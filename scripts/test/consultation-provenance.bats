@@ -86,9 +86,18 @@ _proven() {
   echo "$output"; [ "$status" -eq 0 ]
 }
 
-@test "provenance: files that name no provider are not checked" {
+@test "provenance: files naming no provider are checked too, and must be registered" {
+  # This asserted the opposite until a red-team walked past the gate by
+  # choosing a filename outside the token list. Every .md is now checked; a
+  # file that genuinely makes no provider claim says so in the register, which
+  # costs one line and removes an entire class of evasion.
   printf 'a prompt, not a consultation\n' > "$D/20.md"
-  printf 'operator response\n' > "$D/21-operator-response.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"20.md"* ]]
+
+  printf '20.md\n    a prompt rather than a consultation; it claims no provider\n' > "$D/UNVERIFIED"
   run check_consultation_provenance "$D"
   echo "$output"; [ "$status" -eq 0 ]
 }
@@ -115,12 +124,73 @@ import re, sys
 lines = open('$REPO_ROOT/governance/consultations/UNVERIFIED').read().split('\n')
 bare = []
 for i, l in enumerate(lines):
-    if l.endswith('.md') and not l.startswith('#'):
-        tail = [x for x in lines[i+1:i+4] if x.strip() and not x.endswith('.md')]
-        if not tail or len(' '.join(tail).strip()) < 40:
-            bare.append(l)
+    if not (l.endswith('.md') and not l.startswith('#')):
+        continue
+    # A run of filenames may share one reason — the reason follows the last of
+    # them. Walk forward past any further filenames, then require prose.
+    j = i + 1
+    while j < len(lines) and lines[j].endswith('.md') and not lines[j].startswith('#'):
+        j += 1
+    tail = [x for x in lines[j:j+4] if x.strip() and not x.endswith('.md')
+            and not x.startswith('#') and not x.startswith('##')]
+    if not tail or len(' '.join(tail).strip()) < 40:
+        bare.append(l)
 assert not bare, 'entries with no reason: %s' % bare
 print('every register entry carries a reason')
 "
   echo "$output"; [ "$status" -eq 0 ]
+}
+
+@test "provenance: a file whose name avoids the token list is still checked" {
+  # The red-team's gate evasion, executed: the first version inferred the claim
+  # from the filename against a token list, so `137-independent-review.md` was
+  # never looked at. A gate a filename can walk past is a naming convention.
+  #
+  # Demonstrated on this repository's own corpus, too: 105.md, 107.md, 42.md,
+  # 53.md, 66.md and 71.md each name a reviewer in their body and none in their
+  # filename. Six artifacts no check had ever examined.
+  printf 'a plausible review by some model\n' > "$D/30-independent-review.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"30-independent-review.md"* ]]
+}
+
+@test "provenance: a comment naming a file is not an allowlist entry" {
+  # Also executed by the red-team. The lookup was `grep -qF "$base"`, so a
+  # comment mentioning a filename admitted it. The register is a list of claims
+  # the repository has stopped making; a prose mention is not such a claim.
+  printf 'x\n' > "$D/31-sol.md"
+  printf '# we should look at 31-sol.md one day\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"31-sol.md"* ]]
+
+  # And an anchored, uncommented entry does admit it.
+  printf '31-sol.md\n    a reason long enough to say something real about it\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "provenance: a partial filename in the register does not admit a file" {
+  printf 'x\n' > "$D/32-sol.md"
+  printf 'x\n' > "$D/32-sol.md.backup.md"
+  printf '32-sol.md\n    reason enough to be a real entry in this register\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"32-sol.md.backup.md"* ]]
+}
+
+@test "provenance: a SELFTEST block is not evidence" {
+  # consult.sh stamps SELFTEST when its test path is used, because that path
+  # contacts no provider. The red-team forged an accepted artifact through it;
+  # the stamp is what makes the forgery visible here.
+  printf '<!-- provenance\nrequested_provider: openai\nserved_provider: openai\nmodel: m\nverified_by: scripts/consult.sh SELFTEST — no provider was contacted, NOT EVIDENCE\n-->\nbody\n' > "$D/33-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"SELFTEST"* ]]
 }

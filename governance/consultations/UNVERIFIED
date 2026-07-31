@@ -1,90 +1,122 @@
 # Consultations whose provider attribution is NOT established
 #
 # Enforced by check_consultation_provenance (scripts/lib/consultation-provenance.sh).
-# A consultation whose filename names a provider must either carry a provenance
-# block written by scripts/consult.sh, or appear here with a reason.
+# Every .md in this directory must either carry a provenance block written by
+# scripts/consult.sh, or appear here on a line of its own with a reason.
 #
 # This register is not a loophole. It is the opposite: an artifact whose
 # attribution is unknown is allowed to exist and is NOT allowed to look proven.
-# Every line below is a claim this repository has stopped making.
+# Every entry below is a claim this repository has stopped making.
 #
 # ── What happened ─────────────────────────────────────────────────────────
 #
 # On 2026-07-31, `jcode run -p openai -m gpt-5.6-sol` was found to return
 # plausible reports with exit 0 while the tool's own log recorded the request
-# being served by DeepSeek:
+# being served by DeepSeek. The -p/-m flags are discarded whenever [provider]
+# default_provider names an API-key provider; resolution slides to OpenRouter
+# and the DEFAULT model serves — which in this repository is the builder.
 #
-#     auth: DEEPSEEK_API_KEY
-#     endpoint: https://api.deepseek.com
-#     prv:OpenRouter|mod:deepseek
+# Measured directly in the two dispatch windows:
 #
-# The -p/-m flags are discarded whenever [provider] default_provider in
-# ~/.jcode/config.toml names an API-key provider; resolution slides to
-# OpenRouter and the DEFAULT model serves — which in this repository is the
-# builder. So the reviewer of the code was the same provider as its writer.
+#     08:07–08:40   803 events   all prv:OpenRouter|mod:deepseek   zero OpenAI
+#     10:01–10:15   450 events   all prv:OpenRouter|mod:deepseek   zero OpenAI
 #
-# Streams to api.openai.com, by day, from the tool's logs:
+# ── A correction, because the first version of this file got its facts wrong ─
 #
-#     07-24: 13    07-25: 0     07-26: 8     07-27: 66
-#     07-28: 0     07-29: (no log)           07-30: 0     07-31: 0
+# It cited a per-day count of `endpoint: https://api.openai.com` lines. Those
+# lines are `/v1/models` catalog probes, 63 of 66 sitting beside an HTTP 401 —
+# the OpenAI *API key* is dead, which `jcode usage` reports plainly. They have
+# nothing to do with the OAuth path that serves Sol.
 #
-# Nothing in this repository noticed. It surfaced because the owner observed
-# that a subscription quota was untouched.
+# The strict signal is the session tag. Published figure vs. actual:
+#
+#     07-24    13 vs  9738      07-27    66 vs     0   ← inverted
+#     07-25     0 vs    42      07-28     0 vs     0
+#     07-26     8 vs  8279      07-30     0 vs   562   ← inverted
+#                               07-31     0 vs  1712
+#
+# An independent reviewer found this on its first pass and named the lesson,
+# which is in docs/operator-lessons.md: "a count is not a reading."
 #
 # ── format ────────────────────────────────────────────────────────────────
-# <filename>  —  <why attribution is not established>
+# The filename alone on a line, then an indented reason.
 
-42-attempt-sol.md
-    Records an attempt rather than a review. 2026-07-25, a day with zero
-    streams to api.openai.com. Retained as evidence of the attempt, not as a
-    consultation.
-
-55-sol-ratification.md
-    Committed 2026-07-26, a day with 8 streams to api.openai.com, so the
-    attribution is PLAUSIBLE and remains unproven: no per-artifact evidence was
-    recorded at the time and the day's log cannot bind a stream to this file.
-
-66-round2-sol.md
-    Same day and same reasoning as 55-sol-ratification.md. Plausible,
-    unproven.
-
-107-sol.md
-    Committed 2026-07-30 17:16, a day with ZERO streams to api.openai.com. No
-    log exists for 07-29, so production on the previous day cannot be excluded
-    and this is not a finding that it was misattributed. What can no longer be
-    asserted is that it was independent — and this is the security review of
-    the S1 sandbox isolation backend, the most consequential in the repository.
-    Re-run required before it is cited again. See #135.
+## Established as NOT independent
 
 127-sol.md
-    ESTABLISHED as not independent. Dispatched 2026-07-31 08:07; the log for
-    that window records prv:OpenRouter|mod:deepseek and a stream to
-    api.deepseek.com. Served by the same provider as the builder whose code it
-    reviewed. PR #127 was merged citing it as a cross-provider review; that
-    condition was not met. See #135.
+    Served by DeepSeek — the same provider as the builder whose code it
+    reviewed. Dispatched 08:07 on 2026-07-31; every one of the 803 events in
+    that window is tagged prv:OpenRouter|mod:deepseek. PR #127 was merged
+    citing this as a cross-provider review; that condition was not met. See
+    #135. A re-review under a verified provider is required before the S2
+    validator can be said to have passed its tier.
 
 127-sol-round2.md
-    ESTABLISHED as not independent. Dispatched 2026-07-31 10:01, same evidence
-    as 127-sol.md. This is the round that verified the round-1 conditions were
-    met, so the verification of the verification is unproven too.
+    Served by DeepSeek. Dispatched 10:01, 450 events, same evidence. This was
+    the round that verified round 1's conditions had been met, so the
+    verification of the verification is unproven as well.
+
+## Attribution unknown — neither shown nor excluded
+
+107-sol.md
+    The security review of the S1 sandbox isolation backend, which the entire
+    execution core rests on. Committed 2026-07-30 17:16. That day DOES contain
+    genuine OpenAI sessions — 562 tagged events, at 12:00 and 13:00 — roughly
+    four hours before the commit, and nothing binds a session to a file. The
+    first version of this entry said the day had zero, which was false and
+    came from counting the wrong lines. Its status is unchanged and the reason
+    given for it is now correct.
+
+107.md
+    Names Sol 5.6 in its body while its filename claims nothing. The gate did
+    not look at it at all until the filename-token inference was removed, which
+    is a red-team finding demonstrated on this repository's own corpus.
+
+105.md
+    Names Kimi K3 and Fable 5. Same as above: a consultation claiming two
+    providers that no check had ever examined.
+
+42.md
+53.md
+66.md
+71.md
+    Each names a reviewer in its body and none in its filename. Committed
+    before any per-artifact evidence was recorded, and invisible to the gate
+    until it stopped inferring claims from filenames.
+
+42-attempt-sol.md
+    Records an attempt rather than a review, on 2026-07-25. Retained as
+    evidence that the attempt was made, not as a consultation.
+
+55-sol-ratification.md
+    Committed 2026-07-26, a day with 8279 OpenAI-tagged events, so the
+    attribution is plausible. It remains unproven: no per-artifact evidence
+    was recorded at the time, and a day's log cannot bind a stream to a file.
 
 66-round1-kimi.md
-    Committed 2026-07-26, before any per-artifact evidence was recorded. Kimi
-    is reached by a direct API call with no failover in the path, so the class
-    of substitution found on 07-31 cannot apply — but "cannot apply" is an
-    argument, not a measurement, and this file carries none.
+    Committed 2026-07-26. Kimi is reached by a direct API call with no failover
+    in the path, so the substitution found on 07-31 cannot apply — but "cannot
+    apply" is an argument, and this file carries no measurement.
+
+66-round2-sol.md
+    Same day and same reasoning as 55-sol-ratification.md.
 
 107-kimi-adoption.md
-    Committed 2026-07-30. Names the endpoint and model in its prose, which is
-    weaker than a recorded response field but is not nothing. Registered rather
+107-kimi-architecture.md
+    Committed 2026-07-30. Both name the endpoint and model in prose, which is
+    weaker than a recorded response field and is not nothing. Registered rather
     than back-filled: writing a provenance block after the fact from prose
-    would manufacture exactly the appearance of verification this register
+    would manufacture precisely the appearance of verification this register
     exists to withhold.
 
-107-kimi-architecture.md
-    Same as 107-kimi-adoption.md.
+## Not consultations
 
-# 131-kimi.md and 127-kimi.md carry provenance blocks: both were produced by a
-# direct API call with the response's `model` field read from the body, so the
-# tool with the silent failover was never in the path. That is why they are
-# above this register rather than in it.
+127-operator-response.md
+    The operator's point-by-point response to a review, required by
+    governance/adversarial-review.md before merging. It makes no claim about
+    which model answered anything, because no model produced it.
+
+# 127-kimi.md and 131-kimi.md are absent from this register on purpose: they
+# carry provenance blocks. Both were produced by a direct API call with the
+# response's `model` field read from the body, so the tool with the silent
+# failover was never in the path.
