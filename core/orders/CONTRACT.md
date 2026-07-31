@@ -138,9 +138,24 @@ builder under test**, author and approval recorded.
 Three of those the validator can decide from the order alone:
 
 - `location` outside the patch tree — enforced by the required absolute prefix.
-- `author` not a builder identity — an author matching `jcode`, `deepseek`,
-  `builder`, or `worker` (case-insensitive substring) is `E_BUNDLE_PROVENANCE`.
-- `approved_by` present.
+- **Neither `author` nor `approved_by` is a builder identity** — either field
+  matching `jcode`, `deepseek`, `builder`, or `worker` (case-insensitive
+  substring) is `E_BUNDLE_PROVENANCE`.
+
+  This said `author` alone until 2026-07-31, when an independent red-team put
+  a builder name in `approved_by`, left everything else impeccable, and was
+  admitted with exit 0 and silent stderr in about a minute. An approval is not
+  a lesser thing than authorship — it is the field that decides whether the
+  order proceeds — and a rule enforced on one of two adjacent fields is an
+  invitation to use the other.
+
+**Deliberately not required: that `author` and `approved_by` differ.** The same
+review noted self-approval passes. It is not adopted, because two distinct
+strings are not two distinct people: `kimeisele` and `kim eisele` would satisfy
+it while nothing changed. That is theatre, and theatre in a provenance rule is
+worse than a stated gap — it converts "unverified" into "checked". Who may
+approve is a policy question for the owner and belongs in the run record's
+approval, not in a string comparison.
 
 **What it cannot decide, and must not appear to:** that the digest matches the
 bytes at `location`, that those bytes predate the build run, or that the

@@ -9,7 +9,7 @@ Concurrency up to pool size (8) is **permitted**.  Pool exhaustion results
 in clean refusal.
 """
 
-import importlib, json, os, sys
+import contextlib, importlib, io, json, os, sys
 
 _CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 _POLICY_PATH = os.path.join(_CORE_DIR, "policy.json")
@@ -139,14 +139,82 @@ def _run_canary_suite():
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
+def validate_order(order_path):
+    """Run the S2 order validator on *order_path*.
+
+    Returns (returncode, stderr_text). Runs in-process: no subprocess, no
+    shell. The validator signals its verdict by exiting, so SystemExit is
+    caught here and read as the status — which is the supervisor measuring the
+    exit status itself rather than believing a reported one (ADR §6).
+    """
+    sys.path.insert(0, _CORE_DIR)
+    import orders.validate as order_validate
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            order_validate.validate(order_path)
+    except SystemExit as exc:
+        return (exc.code if isinstance(exc.code, int) else 1), buf.getvalue()
+    # validate() always exits; reaching here means its contract changed.
+    return 1, buf.getvalue() + "validator returned without a verdict\n"
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
 
+    # ── The order gate ───────────────────────────────────────────────────
+    #
+    # An order file is required, and it is validated before anything else.
+    # Not optional, and not a flag: an optional gate is bypassed by omitting
+    # it, and then the gate is the thing that can be left out rather than the
+    # order.
+    #
+    # This runs before the backend module is imported, so a refused order
+    # cannot reach the backend even by accident — there is no backend loaded
+    # to reach. `scripts/test/launcher-order-gate.bats` asserts exactly that, by
+    # inspecting sys.modules after a refusal rather than by reading this
+    # comment.
+    #
+    # Added because an independent red-team rejected the validator for having
+    # no caller, and a second, from a third provider, ruled that deferring the
+    # caller to the next slice was the defect rather than the schedule: "a
+    # gate never exercised at a real boundary is a prop whether or not its
+    # unit tests are green."
+    if len(argv) != 1:
+        print("Usage: python3 core/launcher.py <order-file>", file=sys.stderr)
+        print("  The order is validated before any backend call. There is no "
+              "mode that runs without one.", file=sys.stderr)
+        return 2
+
+    order_path = argv[0]
+    rc, verr = validate_order(order_path)
+    if rc != 0:
+        code = (verr.strip().splitlines() or ["E_UNKNOWN"])[0]
+        print(f"ORDER REFUSED: {code}", file=sys.stderr)
+        print(verr, end="", file=sys.stderr)
+        print("The backend was not consulted and no workspace was created.",
+              file=sys.stderr)
+        return 1
+
+    # Canonicity was established by the validator; this second read is a plain
+    # load of bytes already proven to parse exactly one way.
+    with open(order_path) as f:
+        order = json.load(f)
+
     print("=== Execution Core S1 — Canary Suite (per-run uid pool) ===")
+    print(f"Order {order['run_id']} admitted for issue #{order['issue']}")
     print()
 
     import backends.macos_seatbelt as backend
+
+    # The launcher checks the order's capabilities itself rather than
+    # inheriting the validator's verdict. Two independent refusals of the same
+    # order are cheap; a single point that must be right is not.
+    missing = check_capabilities(order["required_capabilities"])
+    if missing:
+        _refuse(missing)
 
     # ── Report pool status ───────────────────────────────────────────
     ps = backend.pool_status()
@@ -200,14 +268,12 @@ def main(argv=None):
             print(f"  {name}: {reason}", file=sys.stderr)
         sys.exit(1)
 
-    print("All canaries complete.  Ready for orders (S2+).")
-    if argv:
-        missing = check_capabilities(argv)
-        if missing:
-            _refuse(missing)
-        else:
-            print("Capability check: all requested capabilities available.")
-
+    # The capability check moved to the top, where it acts on the order's
+    # declared capabilities before the backend is touched. Here it took a bare
+    # argv list, so it checked whatever a caller happened to type rather than
+    # what the run actually required, and it ran after the canaries — that is,
+    # after the backend had already been exercised.
+    print("All canaries complete.  The order's capabilities are proven.")
     return 0
 
 

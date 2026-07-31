@@ -140,6 +140,10 @@
     "35-capability-is-a-number.json": {
       "code": "E_SCHEMA",
       "why": "A number where a capability name belongs. Hashable, so it survives the set() that vector 34 crashes on and reaches the enum check by a different path — the two together pin the order of the checks, not just their presence."
+    },
+    "36-bundle-approved-by-builder.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A human author and a builder approver. Found by an independent red-team, which put the builder name in the field the rule did not cover and got exit 0 with silent stderr in about a minute. Vector 30 covers the same rule on `author`; a rule enforced on one of two adjacent fields is an invitation to use the other, and the approval is the field that actually decides whether the order proceeds."
     }
   },
   "accept": {

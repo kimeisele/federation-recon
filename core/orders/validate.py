@@ -45,10 +45,34 @@ _POLICY_PATH = os.path.join(
 )
 
 
+def _refuse_unreadable(path, detail):
+    """Refuse when a file the validator must read cannot be read.
+
+    Both callers — the order file and the policy — funnel through here on
+    purpose. The code below is the wrong category: E_SIZE is defined as "the
+    file exceeds the byte limit", and a file that is absent has no byte count
+    to exceed. That is #126, and it is a contract decision rather than an
+    implementation one, so it is deliberately not made here.
+
+    What this function does establish is that the failure leaves through the
+    documented door: exit 1 with a bare reason code on the first line of
+    stderr. A missing policy.json used to raise an uncaught FileNotFoundError,
+    putting "Traceback (most recent call last):" where a caller reads the code
+    — fail-closed in status, unusable in content. When #126 is decided, exactly
+    one function changes.
+    """
+    _refuse('E_SIZE', f'{detail}\n  (reason code is provisional — see #126)')
+
+
 def _load_policy():
     """Load core/policy.json.  Returns the parsed dict."""
-    with open(_POLICY_PATH) as f:
-        return json.load(f)
+    try:
+        with open(_POLICY_PATH) as f:
+            return json.load(f)
+    except OSError as exc:
+        _refuse_unreadable(_POLICY_PATH, f'Cannot read the policy: {exc}')
+    except json.JSONDecodeError as exc:
+        _refuse('E_JSON', f'The policy at {_POLICY_PATH} is not valid JSON: {exc}')
 
 
 # ── Refusal ──────────────────────────────────────────────────────────────────
@@ -408,17 +432,26 @@ def _validate_bundle_provenance(order):
             f'{location!r}',
         )
 
-    # Author identity check
-    author_lower = bundle['author'].lower()
-    for name in BUILDER_NAMES:
-        if name in author_lower:
-            _refuse(
-                'E_BUNDLE_PROVENANCE',
-                f'acceptance_bundle.author {bundle["author"]!r} matches '
-                f'a builder identity ({name!r} — case‑insensitive '
-                f'substring match).  The acceptance bundle must not be '
-                f'authored by the builder under test (ADR §10).',
-            )
+    # Identity check on BOTH author and approved_by.
+    #
+    # It applied to `author` alone until an independent red-team put a builder
+    # name in the other field and the order was admitted, silent, exit 0. ADR
+    # §10 forbids the bundle being "produced or altered by the builder under
+    # test", and an approval is not a lesser thing than authorship: it is the
+    # field that decides whether the order proceeds. A rule enforced on one of
+    # two adjacent fields is an invitation to use the other one.
+    for field in ('author', 'approved_by'):
+        value_lower = bundle[field].lower()
+        for name in BUILDER_NAMES:
+            if name in value_lower:
+                _refuse(
+                    'E_BUNDLE_PROVENANCE',
+                    f'acceptance_bundle.{field} {bundle[field]!r} matches '
+                    f'a builder identity ({name!r} — case-insensitive '
+                    f'substring match).  The acceptance bundle must be '
+                    f'neither authored nor approved by the builder under '
+                    f'test (ADR §10).',
+                )
 
 
 # ── Main entry ───────────────────────────────────────────────────────────────
@@ -440,10 +473,8 @@ def validate(order_path):
     try:
         with open(order_path, 'rb') as f:
             raw = f.read()
-    except FileNotFoundError:
-        _refuse('E_SIZE', f'File not found: {order_path}')
     except OSError as exc:
-        _refuse('E_SIZE', f'Cannot read file: {exc}')
+        _refuse_unreadable(order_path, f'Cannot read the order: {exc}')
 
     # 2. Size check (before the parser sees a byte) ──────────────────────
     if len(raw) > SIZE_LIMIT:
