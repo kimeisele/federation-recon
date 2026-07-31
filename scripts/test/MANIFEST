@@ -22,7 +22,9 @@ gate-cleanup.bats
 heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
+launcher-order-gate.bats
 manifest-gate.bats
+order-validator.bats
 order-vectors.bats
 pin-gate.bats
 seatbelt-unit.bats
