@@ -359,6 +359,21 @@ if [ "$SELFTEST" = "1" ]; then
   verified_by="scripts/consult.sh SELFTEST — no provider was contacted, NOT EVIDENCE"
 fi
 
+# In checkout mode the reviewing agent writes the artifact ITSELF, at the path
+# it was told to use. The first version always rebuilt $OUTPUT from the console
+# transcript and moved it into place — clobbering the agent's report with a log
+# of thinking-tokens and tool calls. Two clean reports were destroyed that way
+# before it was noticed, and the findings had to be read out of the transcript.
+#
+# So: if the file exists after the run, the provenance record is PREPENDED to
+# it and the transcript is kept beside it as evidence. Only when the agent
+# wrote nothing is the artifact built from stdout.
+AGENT_WROTE=0
+if [ -f "$OUTPUT" ] && [ -s "$OUTPUT" ]; then
+  AGENT_WROTE=1
+  cp "$OUTPUT" "${OUTPUT}.agent"
+fi
+
 if ! {
   echo "<!-- provenance"
   echo "requested_provider: $PROVIDER"
@@ -371,7 +386,11 @@ if ! {
   echo "window_start: $MARK"
   echo "-->"
   echo
-  [ -f "${OUTPUT}.stdout" ] && cat "${OUTPUT}.stdout"
+  if [ "$AGENT_WROTE" = "1" ]; then
+    cat "${OUTPUT}.agent"
+  else
+    [ -f "${OUTPUT}.stdout" ] && cat "${OUTPUT}.stdout"
+  fi
 } > "${OUTPUT}.tmp"; then
   # A red-team found that a failed write printed success and exited 0. A
   # control that reports having recorded something it did not record is the
@@ -401,7 +420,15 @@ if [ -L "$OUTPUT" ] || [ ! -f "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
   quarantine_output
   exit 1
 fi
-rm -f "${OUTPUT}.stdout"
+rm -f "${OUTPUT}.agent"
+if [ "$AGENT_WROTE" = "1" ]; then
+  # The transcript is kept: it is the record of what the agent actually did,
+  # and it is not the report.
+  mv "${OUTPUT}.stdout" "${OUTPUT}.transcript" 2>/dev/null || true
+  echo "  transcript kept beside it: ${OUTPUT}.transcript" >&2
+else
+  rm -f "${OUTPUT}.stdout"
+fi
 
 # "consistent with", not "verified". The word verified is what a red-team
 # rejected: this reads the audited tool's own log, so it can show the log

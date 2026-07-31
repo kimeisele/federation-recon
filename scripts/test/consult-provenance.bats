@@ -358,3 +358,37 @@ _log_for() {
   [ "$status" -eq 1 ]
   [ ! -f "$OUT" ]
 }
+
+@test "consult: a report the agent wrote itself is not replaced by the transcript" {
+  # In checkout mode the reviewing agent writes the artifact at the path it was
+  # given. The first version always rebuilt the output from the captured
+  # console transcript and moved it into place, destroying the report and
+  # leaving a log of thinking-tokens and tool calls in its place. Two clean
+  # reviews were lost that way before anyone noticed, and their findings had to
+  # be read out of the transcript.
+  _log_for openai
+  printf 'THE AGENT REPORT\n\nverdict: REJECT\n' > "$OUT"
+  printf 'console transcript, tool calls, token counts\n' > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "THE AGENT REPORT" "$OUT"
+  grep -q "verdict: REJECT" "$OUT"
+  grep -q "^served_provider: openai" "$OUT"
+  # and the transcript survives beside it, as evidence rather than as the report
+  [ -f "$OUT.transcript" ]
+  grep -q "console transcript" "$OUT.transcript"
+  ! grep -q "console transcript" "$OUT"
+}
+
+@test "consult: with no agent report, the transcript becomes the artifact" {
+  _log_for openai
+  rm -f "$OUT"
+  printf 'the only output there was\n' > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "the only output there was" "$OUT"
+}
