@@ -25,7 +25,12 @@
 
 # ── Staleness threshold ──────────────────────────────────────────────────
 #
-# Measured on this repository, workflow node-census.yml, cron 0 6 * * *:
+# Measured on this repository, workflow node-census.yml, while its cron was
+# 0 6 * * * (the cron moved to 35 0 * * * on 2026-07-31; the derivation below
+# depends on the 24-hour *cadence* and the observed delay spread, not on the
+# nominal time, so the threshold is unaffected — but if the delay spread
+# changes under the new schedule, re-derive it here rather than adjusting the
+# number to fit):
 #   2026-07-30T08:15:22Z    +2h15
 #   2026-07-29T08:31:04Z    +2h31
 #   2026-07-28T08:25:00Z    +2h25

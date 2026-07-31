@@ -10,7 +10,11 @@ name: Nightly — reproduce determinism
 
 on:
   schedule:
-    - cron: '30 5 * * *'   # daily 05:30 UTC, before the census commit at 06:00
+    # Daily 00:05 UTC, 30 minutes before the census at 00:35. The gap, not the
+    # absolute time, is what matters: both workflows are delayed by the same
+    # scheduler, and the measured delays kept their relative order across a
+    # 30-minute nominal gap (determinism 07:32–08:55, census 07:59–09:40).
+    - cron: '5 0 * * *'
   workflow_dispatch:
 
 permissions:
