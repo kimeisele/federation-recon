@@ -76,6 +76,25 @@ _cp_inventory() {
   find "$dir" \( -iname '*.md' -o -iname '*.markdown' \) -print0 2>/dev/null
 }
 
+# _cp_register_reason <register> <name> — true when the entry, or the run of
+# entries it belongs to, is followed by prose of at least 40 characters.
+_cp_register_reason() {
+  local register="$1" name="$2"
+  awk -v want="$name" '
+    /^[[:space:]]*#/ { next }
+    {
+      if ($0 == want) { seen = 1; run = 1; next }
+      if (seen) {
+        if ($0 ~ /\.(md|markdown)$/) { next }        # a shared reason follows the run
+        if ($0 ~ /^[[:space:]]*$/) { if (got) exit; next }
+        prose = prose $0 " "
+        got = 1
+      }
+    }
+    END { exit (length(prose) >= 40) ? 0 : 1 }
+  ' "$register"
+}
+
 check_consultation_provenance() {
   local dir="${1:-governance/consultations}"
   local register="$dir/UNVERIFIED"
@@ -111,7 +130,7 @@ check_consultation_provenance() {
     # Searching the whole file rejected a review that QUOTED the sentinel while
     # describing this very attack — the same shape as a test satisfied by a
     # comment explaining the mechanism, met three times in one day.
-    if head -3 "$f" 2>/dev/null | grep -qF "$_CP_QUARANTINE_SENTINEL"; then
+    if grep -qF "$_CP_QUARANTINE_SENTINEL" <<< "$(head -3 "$f" 2>/dev/null)"; then
       echo "FAIL — $base carries the quarantine sentinel. It is a body whose" >&2
       echo "       provider could not be determined; renaming it does not" >&2
       echo "       change that." >&2
@@ -119,7 +138,12 @@ check_consultation_provenance() {
       continue
     fi
 
-    openers="$(grep -c '^<!-- provenance' "$f" 2>/dev/null || true)"
+    # Read the file once, into a variable. `tr … | grep -q` reports 141 under
+    # `set -o pipefail` because grep exits at its first match and tr takes
+    # SIGPIPE — the THIRD instance of that defect in one day, and this one made
+    # the gate reject two reports whose closers were present on line 10.
+    local text; text="$(tr -d '\r' < "$f")"
+    openers="$(grep -c '^<!-- provenance' <<< "$text" || true)"
     if [[ "$openers" -gt 1 ]]; then
       echo "FAIL — $base has $openers provenance blocks. One record, or none." >&2
       rc=1
@@ -128,18 +152,46 @@ check_consultation_provenance() {
 
     if [[ "$openers" -eq 1 ]]; then
       # ── the record must OPEN the file ─────────────────────────────────
-      if [[ "$(head -1 "$f")" != '<!-- provenance' ]]; then
+      if [[ "$(head -1 <<< "$text")" != '<!-- provenance' ]]; then
         echo "FAIL — $base has a provenance block that does not start the file." >&2
         echo "       A block further down was how a renamed quarantine passed." >&2
         rc=1
         continue
       fi
 
-      served="$(sed -n 's/^served_provider:[[:space:]]*//p' "$f" | head -1)"
-      claim="$(sed -n 's/^reviewer_claim:[[:space:]]*//p' "$f" | head -1)"
-      model="$(sed -n 's/^model:[[:space:]]*//p' "$f" | head -1)"
+      # ── the record is the block, not the file ─────────────────────────
+      #
+      # Round 3 executed four ways past the previous parser: required fields
+      # supplied by BODY lines after the block had closed; a block with no
+      # closing `-->` at all; a duplicated field where `head -1` silently chose
+      # the first; and CRLF line endings whose carriage returns survived into
+      # the values. Each passed.
+      #
+      # The block is now extracted first — opener to closer, closer required —
+      # and every field is read only from within it. Carriage returns are
+      # stripped. A duplicated field is a malformed record rather than a
+      # question of which copy wins.
+      local block
+      block="$(awk '/^<!-- provenance/{f=1;next} /^-->/{f=0;exit} f' <<< "$text")"
+      if ! grep -q '^-->' <<< "$text"; then
+        echo "FAIL — $base has a provenance block that is never closed. Without" >&2
+        echo "       a closer, every line of the body is inside the record." >&2
+        rc=1
+        continue
+      fi
+      local dup
+      dup="$(printf '%s\n' "$block" | sed -n 's/^\([a-z_]*\):.*/\1/p' | sort | uniq -d)"
+      if [[ -n "$dup" ]]; then
+        echo "FAIL — $base repeats provenance field(s): $(printf '%s' "$dup" | tr '\n' ' ')" >&2
+        echo "       Which copy counts is not a question a record should raise." >&2
+        rc=1
+        continue
+      fi
+      served="$(printf '%s\n' "$block" | sed -n 's/^served_provider:[[:space:]]*//p')"
+      claim="$(printf '%s\n' "$block" | sed -n 's/^reviewer_claim:[[:space:]]*//p')"
+      model="$(printf '%s\n' "$block" | sed -n 's/^model:[[:space:]]*//p')"
 
-      if grep -q '^\(consistency_check\|verified_by\):.*SELFTEST' "$f" 2>/dev/null; then
+      if grep -q '^\(consistency_check\|verified_by\):.*SELFTEST' <<< "$block"; then
         echo "FAIL — $base carries a SELFTEST record: no provider was contacted," >&2
         echo "       so it establishes nothing." >&2
         rc=1
@@ -166,8 +218,20 @@ check_consultation_provenance() {
     #
     # `grep -Fqx --`. It was `grep -qx`, which treats the filename as a basic
     # regular expression, so a register line `attackXmd` admitted `attack.md`.
+    # An entry must carry a reason. Round 3 registered an unproven file with no
+    # reason at all and the gate admitted it — the register is a list of claims
+    # the repository has stopped making, and a bare filename makes no claim
+    # about anything. The grammar is checked here rather than only in a test
+    # over today's register, because a test over today's data is not a rule.
     if [[ -f "$register" ]] && \
        grep -v '^[[:space:]]*#' "$register" | grep -Fqx -- "$base"; then
+      if ! _cp_register_reason "$register" "$base"; then
+        echo "FAIL — $base is listed in $register with no reason." >&2
+        echo "       An entry without one is an allowlist, which is what the" >&2
+        echo "       register exists not to be." >&2
+        rc=1
+        continue
+      fi
       registered=$((registered + 1))
       continue
     fi

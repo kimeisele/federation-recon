@@ -71,7 +71,7 @@ _proven() {
 @test "provenance: the register does not cover a file it does not name" {
   printf 'x\n' > "$D/15-sol.md"
   printf 'x\n' > "$D/16-kimi.md"
-  printf '15-sol.md\n    reason\n' > "$D/UNVERIFIED"
+  printf '15-sol.md\n    a reason long enough to satisfy the register grammar\n' > "$D/UNVERIFIED"
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -308,4 +308,75 @@ print('every register entry carries a reason')
   echo "$output"
   [ "$status" -eq 1 ]
   [[ "$output" == *"empty inventory"* ]]
+}
+
+# ── Round-3 executed evasions ──────────────────────────────────────────────
+
+@test "provenance: body lines cannot supply the record's fields" {
+  # Executed: the opener and requested_provider appeared first, the block
+  # CLOSED, and body lines later supplied served_provider, reviewer_claim and
+  # model. The parser read the whole file, so the body wrote the record.
+  printf '<!-- provenance\nrequested_provider: openai\n-->\n\nserved_provider: openai\nreviewer_claim: openai\nmodel: m\n' > "$D/50-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"incomplete provenance record"* ]]
+}
+
+@test "provenance: an unclosed block is refused" {
+  # Without a closer every line of the body is inside the record.
+  printf '<!-- provenance\nserved_provider: openai\nreviewer_claim: openai\nmodel: m\n\nbody with no closer\n' > "$D/51-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"never closed"* ]]
+}
+
+@test "provenance: a duplicated field is refused rather than resolved" {
+  # Executed: served_provider appeared twice, openai then deepseek, and
+  # `head -1` silently chose openai. Which copy counts is not a question a
+  # record should be able to raise.
+  printf '<!-- provenance\nserved_provider: openai\nserved_provider: deepseek\nreviewer_claim: openai\nmodel: m\n-->\nbody\n' > "$D/52-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"repeats provenance field"* ]]
+}
+
+@test "provenance: CRLF line endings do not smuggle values through" {
+  # Executed: the opener used LF while the field lines used CRLF, and the
+  # carriage returns survived into the values.
+  printf '<!-- provenance\r\nserved_provider: openai\r\nreviewer_claim: openai\r\nmodel: m\r\n-->\r\nbody\r\n' > "$D/53-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "provenance: a register entry with no reason does not admit a file" {
+  # Executed: an unproven file was registered with no reason at all and the
+  # gate admitted it. A bare filename makes no claim about anything.
+  printf 'unproven\n' > "$D/54-sol.md"
+  printf '54-sol.md\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no reason"* ]]
+
+  printf '54-sol.md\n    produced before any evidence was recorded, and not re-runnable\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "provenance: the gate uses no pipe into a short-circuiting reader" {
+  # The third instance in one day. `tr … | grep -q` reports 141 under
+  # `set -o pipefail`, because grep exits at its first match and tr takes
+  # SIGPIPE — so a present closer read as absent and the gate rejected two
+  # reports whose `-->` sat on line 10.
+  #
+  # Comments stripped first: this block explains the defect by naming the
+  # construct, which is how the equivalent test was first satisfied by prose.
+  run bash -c "sed 's/#.*//' '$REPO_ROOT/scripts/lib/consultation-provenance.sh' | grep -nE '\\| *grep -q'"
+  echo "$output"
+  [ -z "$output" ]
 }

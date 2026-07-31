@@ -78,6 +78,12 @@ if [ ! -f "$PROMPT" ] && [ -z "${CONSULT_SKIP_RUN:-}" ]; then
   exit 2
 fi
 
+if [ -L "$OUTPUT" ]; then
+  echo "consult: refusing — the output path is a symlink: $OUTPUT" >&2
+  echo "  The artifact must be the bytes at the path it is cited by; writing" >&2
+  echo "  through a link certifies content stored somewhere else." >&2
+  exit 2
+fi
 if [ -d "$OUTPUT" ]; then
   echo "consult: refusing — the output path is a directory: $OUTPUT" >&2
   echo "  `mv` would succeed by writing INSIDE it and every later check would" >&2
@@ -232,7 +238,15 @@ quarantine_output() {
   # the script deleted the only copy of the body anyway and printed "Body
   # kept". That is the round-1 destruction defect on a different branch, so the
   # delete now happens only after the quarantine is a non-empty regular file.
-  if [ -f "$q" ] && [ -s "$q" ]; then
+  # Non-empty is not enough: the header alone is non-empty, so a failed `cat`
+  # left a quarantine that passed the check while containing no findings, and
+  # the body was deleted anyway. The quarantine must be LARGER than its own
+  # header before the only copy is removed.
+  local hdr_bytes body_bytes q_bytes
+  body_bytes="$(wc -c < "${OUTPUT}.stdout" 2>/dev/null | tr -d ' ')"
+  q_bytes="$(wc -c < "$q" 2>/dev/null | tr -d ' ')"
+  if [ -f "$q" ] && [ -n "$q_bytes" ] && [ -n "$body_bytes" ] \
+     && [ "$q_bytes" -gt "$body_bytes" ]; then
     rm -f "${OUTPUT}.stdout"
     echo "  Body kept, unattributed: $q" >&2
   else
@@ -382,7 +396,7 @@ fi
 #
 # So the check is on the final state at the exact path, and a directory is
 # refused before anything is written at all.
-if [ ! -f "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
+if [ -L "$OUTPUT" ] || [ ! -f "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
   echo "CONSULT FAILED — $OUTPUT is not a non-empty regular file after writing" >&2
   quarantine_output
   exit 1
