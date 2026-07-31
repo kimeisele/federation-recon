@@ -78,6 +78,13 @@ if [ ! -f "$PROMPT" ] && [ -z "${CONSULT_SKIP_RUN:-}" ]; then
   exit 2
 fi
 
+if [ -d "$OUTPUT" ]; then
+  echo "consult: refusing — the output path is a directory: $OUTPUT" >&2
+  echo "  `mv` would succeed by writing INSIDE it and every later check would" >&2
+  echo "  pass while the requested artifact did not exist." >&2
+  exit 2
+fi
+
 LOG="${CONSULT_LOG:-$HOME/.jcode/logs/jcode-$(date '+%Y-%m-%d').log}"
 
 # ── Which provider actually served THIS request ───────────────────────────
@@ -100,16 +107,40 @@ LOG="${CONSULT_LOG:-$HOME/.jcode/logs/jcode-$(date '+%Y-%m-%d').log}"
 # Evidence from outside the tool would be a different design. The limit is
 # stated here and in governance/reviewers.md rather than papered over.
 
+# session_for_pid <pid> <not-before-epoch>
+#
+# Exactly one match, or nothing. A red-team accepted a WRONG session by
+# planting a second pid file with the same contents: the loop returned the
+# first it happened to see, which is whatever the directory order gave it.
+#
+# Also rejects a stale file — one written before this run started — because a
+# recycled pid would otherwise bind us to somebody else's old session, and a
+# pid is a small recycled integer.
 session_for_pid() {
-  local pid="$1" f
+  local pid="$1" not_before="$2" f matches="" n=0 mtime
   for f in "$HOME"/.jcode/streaming_pids/*; do
-    [ -e "$f" ] || continue
-    if [ "$(cat "$f" 2>/dev/null)" = "$pid" ]; then
-      basename "$f"
-      return 0
-    fi
+    [ -f "$f" ] || continue
+    [ "$(cat "$f" 2>/dev/null)" = "$pid" ] || continue
+
+    # Shape: session_<name>_<epoch-ms>_<hex>. Anything else is not a session id
+    # and must not become one by being in the directory.
+    case "$(basename "$f")" in
+      session_*_*_*) ;;
+      *) continue ;;
+    esac
+
+    mtime="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+    [ "$mtime" -ge "$not_before" ] || continue
+
+    matches="$matches $(basename "$f")"
+    n=$((n + 1))
   done
-  return 1
+  if [ "$n" -ne 1 ]; then
+    echo "AMBIGUOUS:$n"
+    return 1
+  fi
+  printf '%s' "${matches# }"
+  return 0
 }
 
 served_provider() {
@@ -117,15 +148,28 @@ served_provider() {
   [ -r "$log" ] || { echo "unreadable-log"; return; }
 
   local window
-  if [ -n "$session" ]; then
-    # Bound to our own session id. The log truncates it, so match the prefix
-    # it actually writes.
-    local short="${session:0:24}"
-    window="$(grep -F "ses:$short" "$log" 2>/dev/null)"
-  else
+  if [ -z "$session" ]; then
     echo "no-session-binding"
     return
   fi
+
+  # The log truncates the session id, and the truncation length is NOT a thing
+  # to assume. This used a hardcoded 24 and matched zero lines on every real
+  # run, because the log writes 20 — two full reviews refused for an off-by-four
+  # in a control whose entire subject is not assuming things. Both were
+  # attributable; the script could not see it.
+  #
+  # So the length is measured: try the full id, then shorter prefixes, and take
+  # the first that matches anything. A floor of 16 keeps the prefix long enough
+  # to identify one session rather than a family of them. If nothing matches at
+  # any length the run is unattributable and is refused — the same answer as
+  # before, now for a reason that is true.
+  local n
+  for n in "${#session}" 28 24 20 16; do
+    [ "$n" -le "${#session}" ] || continue
+    window="$(grep -F "ses:${session:0:$n}" "$log" 2>/dev/null)"
+    [ -n "$window" ] && break
+  done
   [ -n "$window" ] || { echo "no-log-activity"; return; }
 
   # HERESTRINGS, not pipes. `... | grep -q` under `set -o pipefail` reports 141
@@ -184,11 +228,22 @@ quarantine_output() {
     echo
     cat "${OUTPUT}.stdout"
   } > "$q"
-  rm -f "${OUTPUT}.stdout"
-  echo "  Body kept, unattributed: $q" >&2
+  # A red-team made <output>.unattributed a directory. The redirection failed,
+  # the script deleted the only copy of the body anyway and printed "Body
+  # kept". That is the round-1 destruction defect on a different branch, so the
+  # delete now happens only after the quarantine is a non-empty regular file.
+  if [ -f "$q" ] && [ -s "$q" ]; then
+    rm -f "${OUTPUT}.stdout"
+    echo "  Body kept, unattributed: $q" >&2
+  else
+    echo "  QUARANTINE FAILED — could not write $q" >&2
+    echo "  The body is left at ${OUTPUT}.stdout rather than deleted." >&2
+  fi
 }
 
 MARK="$(date '+%Y-%m-%d %H:%M:%S')"
+START_EPOCH="$(date +%s)"
+AMBIG=""
 
 SESSION=""
 SELFTEST=0
@@ -207,7 +262,8 @@ if [ -z "${CONSULT_SKIP_RUN:-}" ]; then
   # would be unattributable for a reason that has nothing to do with which
   # provider answered.
   for _ in $(seq 1 60); do
-    SESSION="$(session_for_pid "$JPID" || true)"
+    SESSION="$(session_for_pid "$JPID" "$START_EPOCH" || true)"
+    case "$SESSION" in AMBIGUOUS:*) AMBIG="$SESSION"; SESSION="" ;; esac
     [ -n "$SESSION" ] && break
     sleep 1
   done
@@ -225,6 +281,7 @@ fi
 
 if [ -z "$SESSION" ]; then
   echo "CONSULT REFUSED — could not bind the run to a jcode session." >&2
+  [ -n "$AMBIG" ] && echo "  ${AMBIG/AMBIGUOUS:/pid files matching this run: } (exactly one is required)" >&2
   echo "  Without a session id the log can only be filtered by time, and a" >&2
   echo "  concurrent session then makes the answer ambiguous or wrong. That is" >&2
   echo "  how the first version of this script deleted the review that found" >&2
@@ -269,7 +326,19 @@ if [ "$SERVED" != "$PROVIDER" ]; then
 fi
 
 # Verified. The artifact carries its own evidence from here on.
-verified_by="scripts/consult.sh"
+# NOT "verified_by". A red-team's third blocking condition:
+#
+#   "The right architecture puts the oracle outside the component whose
+#    provider-selection behaviour is being audited. […] jcode cannot be both
+#    the subject and sole witness. Keep the log check as defense in depth […]
+#    Do not let it mint the repository's assertion that an independent provider
+#    answered."
+#
+# Moving the oracle outside jcode is a different design and a larger change.
+# The reviewer offered the alternative explicitly: downgrade this to a
+# non-authoritative consistency alarm and say so. This field is that sentence,
+# in the artifact, where anyone reading the record sees it.
+verified_by="scripts/consult.sh — CONSISTENCY CHECK against jcode's own log, not proof of independence"
 if [ "$SELFTEST" = "1" ]; then
   # The test path did not dispatch anything. Say so IN the artifact, where the
   # gate can see it, rather than letting a self-test look like evidence.
@@ -280,8 +349,9 @@ if ! {
   echo "<!-- provenance"
   echo "requested_provider: $PROVIDER"
   echo "served_provider: $SERVED"
+  echo "reviewer_claim: $SERVED"
   echo "model: $MODEL"
-  echo "verified_by: $verified_by"
+  echo "consistency_check: $verified_by"
   echo "session: $SESSION"
   echo "log: $LOG"
   echo "window_start: $MARK"
@@ -303,11 +373,25 @@ if ! mv "${OUTPUT}.tmp" "$OUTPUT"; then
   quarantine_output
   exit 1
 fi
-if [ ! -s "$OUTPUT" ]; then
-  echo "CONSULT FAILED — $OUTPUT is empty after writing" >&2
+
+# `mv file dir/` SUCCEEDS by putting the file inside the directory, and
+# `[ -s dir ]` is true because a directory has a size. A red-team pointed the
+# output at a directory: mv returned 0, the size test passed, the script
+# deleted the body, printed success and exited 0 — with the requested artifact
+# existing only as <output>/<output>.tmp.
+#
+# So the check is on the final state at the exact path, and a directory is
+# refused before anything is written at all.
+if [ ! -f "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
+  echo "CONSULT FAILED — $OUTPUT is not a non-empty regular file after writing" >&2
+  quarantine_output
   exit 1
 fi
 rm -f "${OUTPUT}.stdout"
 
-echo "consult: $PROVIDER/$MODEL verified from the log (session $SESSION) — $OUTPUT"
+# "consistent with", not "verified". The word verified is what a red-team
+# rejected: this reads the audited tool's own log, so it can show the log
+# does not contradict the request. It cannot show an independent provider
+# answered.
+echo "consult: $PROVIDER/$MODEL consistent with the log (session $SESSION) — $OUTPUT"
 exit $rc

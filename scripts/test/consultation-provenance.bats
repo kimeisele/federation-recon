@@ -18,7 +18,10 @@ setup() {
 }
 
 _proven() {
-  printf '<!-- provenance\nrequested_provider: %s\nserved_provider: %s\nmodel: m\n-->\n\nbody\n' "$1" "$1" > "$D/$2"
+  # reviewer_claim is required and must agree with served_provider: the
+  # authoritative claim lives in the record, not in the filename and not in
+  # free text, because a body may mention any number of models.
+  printf '<!-- provenance\nrequested_provider: %s\nserved_provider: %s\nreviewer_claim: %s\nmodel: m\n-->\n\nbody\n' "$1" "$1" "$1" > "$D/$2"
 }
 
 @test "provenance: a proven consultation passes" {
@@ -35,25 +38,25 @@ _proven() {
   echo "$output"
   [ "$status" -eq 1 ]
   [[ "$output" == *"11-sol.md"* ]]
-  [[ "$output" == *"no provenance block"* ]]
+  [[ "$output" == *"no provenance record"* ]]
 }
 
 @test "provenance: a block claiming one provider while served by another FAILS" {
   # The failure with the evidence present and contradicting the name. A gate
   # that only checked for the presence of a block would pass this.
-  printf '<!-- provenance\nrequested_provider: openai\nserved_provider: deepseek\nmodel: m\n-->\nbody\n' > "$D/12-sol.md"
+  printf '<!-- provenance\nrequested_provider: openai\nserved_provider: deepseek\nreviewer_claim: openai\nmodel: m\n-->\nbody\n' > "$D/12-sol.md"
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"claims 'sol' but its provenance says served by 'deepseek'"* ]]
+  [[ "$output" == *"must not contradict itself"* ]]
 }
 
 @test "provenance: a block with no served_provider FAILS" {
-  printf '<!-- provenance\nrequested_provider: openai\nmodel: m\n-->\nbody\n' > "$D/13-sol.md"
+  printf '<!-- provenance\nrequested_provider: openai\nreviewer_claim: openai\nmodel: m\n-->\nbody\n' > "$D/13-sol.md"
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no served_provider"* ]]
+  [[ "$output" == *"incomplete provenance record"* ]]
 }
 
 @test "provenance: an UNVERIFIED entry admits the file without proving it" {
@@ -76,14 +79,23 @@ _proven() {
   [[ "$output" != *"FAIL — 15-sol.md"* ]]
 }
 
-@test "provenance: model names map to their providers" {
-  # 'sol' is a model of openai and 'kimi' of moonshot. A gate that compared the
-  # filename token to served_provider literally would reject every correct file.
-  _proven openai "17-sol.md"
-  _proven moonshot "18-kimi.md"
-  _proven claude "19-fable.md"
+@test "provenance: the filename decides nothing at all" {
+  # This used to assert that filename tokens were mapped to providers — 'sol'
+  # to openai, 'kimi' to moonshot. The gate no longer reads filenames, because
+  # a red-team both walked past the token list with a neutral name AND used a
+  # neutral name to hide a record that contradicted the body.
+  #
+  # Rewritten rather than deleted, and inverted: a filename that flatly
+  # disagrees with the record must now be irrelevant, because the record is the
+  # authoritative claim. A test kept as scenery after its premise was removed is
+  # the thing this file exists to catch elsewhere.
+  _proven openai "17-kimi.md"        # named kimi, served openai
+  _proven moonshot "18-sol.md"       # named sol, served moonshot
+  _proven claude "19-totally-unrelated.md"
   run check_consultation_provenance "$D"
-  echo "$output"; [ "$status" -eq 0 ]
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"3 with a provenance record"* ]]
 }
 
 @test "provenance: files naming no provider are checked too, and must be registered" {
@@ -188,9 +200,112 @@ print('every register entry carries a reason')
   # consult.sh stamps SELFTEST when its test path is used, because that path
   # contacts no provider. The red-team forged an accepted artifact through it;
   # the stamp is what makes the forgery visible here.
-  printf '<!-- provenance\nrequested_provider: openai\nserved_provider: openai\nmodel: m\nverified_by: scripts/consult.sh SELFTEST — no provider was contacted, NOT EVIDENCE\n-->\nbody\n' > "$D/33-sol.md"
+  printf '<!-- provenance\nrequested_provider: openai\nserved_provider: openai\nreviewer_claim: openai\nmodel: m\nconsistency_check: scripts/consult.sh SELFTEST — no provider was contacted, NOT EVIDENCE\n-->\nbody\n' > "$D/33-sol.md"
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ "$output" == *"SELFTEST"* ]]
+}
+
+# ── Round-2 gate omissions, each executed by the reviewer in about a second ─
+
+@test "provenance: a nested markdown file is checked" {
+  mkdir -p "$D/sub"
+  printf 'unproven\n' > "$D/sub/review.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sub/review.md"* ]]
+}
+
+@test "provenance: a hidden markdown file is checked" {
+  printf 'unproven\n' > "$D/.review.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".review.md"* ]]
+}
+
+@test "provenance: an uppercase or long extension is checked" {
+  printf 'unproven\n' > "$D/review.MD"
+  printf 'unproven\n' > "$D/other.markdown"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"review.MD"* ]]
+  [[ "$output" == *"other.markdown"* ]]
+}
+
+@test "provenance: a symlink is refused, live or dangling" {
+  _proven openai "40-sol.md"
+  ln -s "$D/40-sol.md" "$D/41-live-link.md"
+  ln -s "$D/nowhere.md" "$D/42-dangling.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"41-live-link.md is a symlink"* ]]
+  [[ "$output" == *"42-dangling.md is a symlink"* ]]
+}
+
+@test "provenance: a provenance block must open the file" {
+  # The renamed-quarantine attack: a body with a block further down passed.
+  printf 'some review body\n\n<!-- provenance\nserved_provider: openai\nreviewer_claim: openai\nmodel: m\n-->\n' > "$D/43-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not start the file"* ]]
+}
+
+@test "provenance: a renamed quarantine is refused" {
+  printf 'UNATTRIBUTED CONSULTATION OUTPUT — NOT A CONSULTATION\n\nbody\n' > "$D/44-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quarantine sentinel"* ]]
+}
+
+@test "provenance: two provenance blocks are refused" {
+  printf '<!-- provenance\nserved_provider: openai\nreviewer_claim: openai\nmodel: m\n-->\nbody\n<!-- provenance\nserved_provider: deepseek\n-->\n' > "$D/45-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"provenance blocks"* ]]
+}
+
+@test "provenance: the record must name its reviewer, and not contradict itself" {
+  # The neutral-filename attack: a body claiming Sol with a record saying
+  # DeepSeek passed, because the claim was inferred from the filename. The
+  # authoritative claim now lives in the record.
+  printf '<!-- provenance\nserved_provider: deepseek\nreviewer_claim: openai\nmodel: m\n-->\nReviewer: Sol 5.6\n' > "$D/46-independent-review.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must not contradict itself"* ]]
+
+  printf '<!-- provenance\nserved_provider: deepseek\nmodel: m\n-->\nbody\n' > "$D/46-independent-review.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"incomplete provenance record"* ]]
+}
+
+@test "provenance: the register matches literally, not as a regex" {
+  # Executed: the register said `attackXmd` and it admitted `attack.md`,
+  # because the filename was handed to grep as a basic regular expression.
+  printf 'unproven\n' > "$D/attack.md"
+  printf 'attackXmd\n    a reason long enough to look like a real register entry\n' > "$D/UNVERIFIED"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"attack.md"* ]]
+}
+
+@test "provenance: an empty inventory is a failure, not a pass" {
+  # A broken enumeration and a clean directory give the same answer, and only
+  # one of them is good news.
+  rm -f "$D"/*.md "$D"/UNVERIFIED 2>/dev/null || true
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"empty inventory"* ]]
 }

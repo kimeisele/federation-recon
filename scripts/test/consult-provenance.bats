@@ -68,6 +68,8 @@ _log_for() {
   [ "$status" -eq 0 ]
   [ -f "$OUT" ]
   grep -q "served_provider: openai" "$OUT"
+  grep -q "reviewer_claim: openai" "$OUT"
+  grep -q "^consistency_check:" "$OUT"
   grep -q "REPORT BODY" "$OUT"
 }
 
@@ -130,6 +132,7 @@ _log_for() {
   echo "$output"
   [ "$status" -eq 0 ]
   grep -q "served_provider: deepseek" "$OUT"
+  grep -q "reviewer_claim: deepseek" "$OUT"
 }
 
 @test "consult: there is no flag that skips verification" {
@@ -199,6 +202,8 @@ _log_for() {
   echo "$output"
   [ "$status" -eq 0 ]
   grep -q "served_provider: openai" "$OUT"
+  grep -q "reviewer_claim: openai" "$OUT"
+  grep -q "^consistency_check:" "$OUT"
 }
 
 # ── The builder's own invocation ───────────────────────────────────────────
@@ -253,6 +258,8 @@ _log_for() {
   [ "$status" -eq 0 ]
   [ -f "$OUT" ]
   grep -q "served_provider: openai" "$OUT"
+  grep -q "reviewer_claim: openai" "$OUT"
+  grep -q "^consistency_check:" "$OUT"
 }
 
 @test "consult: a large window still catches the WRONG provider" {
@@ -286,4 +293,68 @@ _log_for() {
   run bash -c "sed 's/#.*//' '$CONSULT' | grep -nE '\\| *grep -q'"
   echo "$output"
   [ -z "$output" ]
+}
+
+# ── Round-2 blocking conditions, each with the executed attack behind it ───
+
+@test "consult: an output path that is a directory is refused before anything runs" {
+  # Executed by the red-team: `mv file dir/` succeeds by writing INSIDE it, and
+  # `[ -s dir ]` is true because a directory has a size. consult exited 0 with
+  # the requested artifact existing only as <output>/<output>.tmp.
+  mkdir -p "$BATS_TEST_TMPDIR/asdir.md"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$BATS_TEST_TMPDIR/asdir.md" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"output path is a directory"* ]]
+}
+
+@test "consult: a failed quarantine write does not delete the body" {
+  # Executed by the red-team: <output>.unattributed was made a directory, the
+  # redirection failed, and the script deleted the only copy of the body while
+  # printing "Body kept". The round-1 destruction defect on another branch.
+  _log_for deepseek
+  echo "FINDINGS NOBODY SHOULD LOSE" > "$OUT.stdout"
+  mkdir -p "$OUT.unattributed"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"QUARANTINE FAILED"* ]]
+  # The body survives where it was, rather than being deleted for a tidy log.
+  [ -f "$OUT.stdout" ]
+  grep -q "FINDINGS NOBODY SHOULD LOSE" "$OUT.stdout"
+}
+
+@test "consult: the session prefix length is measured, not assumed" {
+  # The finding that rejected round 2: the script searched for a 24-character
+  # session prefix while the log writes 20, matched nothing on every real run,
+  # and refused two attributable reviews. The fixtures passed because they used
+  # synthetic tags long enough for the constant.
+  #
+  # This drives a log written with the REAL truncation and a full-length
+  # session id, which is the pair that failed.
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  local full="session_mouse_1785528404066_0f57a143f3cff2d8"
+  local truncated="${full:0:20}"
+  printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] real shape\n' "$now" "$truncated" > "$LOG"
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$full" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "served_provider: openai" "$OUT"
+}
+
+@test "consult: no prefix short enough to match is still a refusal" {
+  # The floor matters in the other direction: shortening until something
+  # matches would eventually match anything.
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  printf '[%s] [INFO] [ses:session_unrelated_9999|prv:OpenAI|mod:gpt] other\n' "$now" > "$LOG"
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="session_mouse_1785528404066_0f57a143f3cff2d8" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ ! -f "$OUT" ]
 }
