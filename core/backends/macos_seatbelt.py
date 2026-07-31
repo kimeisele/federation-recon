@@ -664,6 +664,22 @@ def kill_slot(slot_name, slot_uid):
 # rule, which is an owner decision (#134). The caller is expected to refuse
 # rather than merely print — see launcher.py.
 
+def _is_sudo_invocation(command):
+    """True when argv[0] of *command* is sudo.
+
+    A root process that merely mentions the wrapper path — an operator reading
+    the file, a backup, a grep — is not a worker launch. Without this it was
+    reported as an unattributed stray, and an unattributed stray wedges the
+    pool. Raised by the round-2 red-team as non-blocking; taken anyway, because
+    a control whose false positives are routine trains dismissal of the ones
+    that are not.
+    """
+    tokens = command.split()
+    if not tokens:
+        return False
+    return os.path.basename(tokens[0]) == "sudo"
+
+
 def _slot_of_sudo_parent(command):
     """The slot named by `sudo -u <slot>` in *command*, or None.
 
@@ -699,7 +715,7 @@ def find_stray_processes(claimed_slots=(), ps_output=None):
     if ps_output is None:
         try:
             result = subprocess.run(
-                ["/bin/ps", "-eo", "pid=,user=,state=,command="],
+                ["/bin/ps", "-eo", "pid=,uid=,state=,command="],
                 capture_output=True, text=True, timeout=10,
             )
         except Exception as exc:
@@ -715,18 +731,46 @@ def find_stray_processes(claimed_slots=(), ps_output=None):
         parts = line.strip().split(None, 3)
         if len(parts) < 4:
             continue
-        pid, user, state, command = parts
+        pid, uid_field, state, command = parts
 
-        if user in _SLOT_MAP:
+        # NUMERIC uid, not the user name.
+        #
+        # This compared the name until a red-team pointed out that ps(1)
+        # reserves the right to print a decimal uid, or a truncated name, when
+        # the name exceeds the column width — and `_jcode_w01` is ten
+        # characters. On a host where that happens, `user in _SLOT_MAP` is
+        # never true: zero strays, status "ok", and every test still green,
+        # because every fixture is injected and none reads real ps. That is a
+        # silent fail-open reproducing the exact shape of #129 inside the fix
+        # for #129.
+        #
+        # A uid is a number the kernel assigned. No width, no localisation, no
+        # truncation, nothing to resolve.
+        try:
+            uid = int(uid_field)
+        except ValueError:
+            # ps did not put a number where a uid belongs. Do not guess and do
+            # not skip: not being able to read the field is the condition this
+            # change exists to remove, so it is reported.
+            strays.append({"pid": pid, "user": uid_field, "state": state,
+                           "command": command, "slot": "unparseable-uid"})
+            continue
+
+        if uid in _SLOT_REVERSE_MAP:
             # Owned by a slot uid. The kernel assigned it; nothing the process
-            # does to its own argv changes this.
-            slot = user
-        elif user == "root" and _WRAPPER_PATH in command:
+            # does to its own argv changes it.
+            slot = _SLOT_REVERSE_MAP[uid]
+            user = slot
+        elif uid == 0 and _WRAPPER_PATH in command and _is_sudo_invocation(command):
             # The sudo parent. Its command line is ours, not the worker's.
+            # argv[0] must be sudo: a root process that merely mentions the
+            # wrapper — an operator reading it, a backup, a grep — is not a
+            # worker launch and must not wedge the pool.
+            user = "root"
             slot = _slot_of_sudo_parent(command)
             if slot is None:
-                # Root, naming the wrapper, but not in the shape run() emits.
-                # Unexplained rather than benign — report it and say so.
+                # sudo-shaped, naming the wrapper, but not the form run()
+                # emits. Unexplained rather than benign.
                 strays.append({"pid": pid, "user": user, "state": state,
                                "command": command, "slot": "unattributed"})
                 continue

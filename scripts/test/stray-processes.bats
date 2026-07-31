@@ -43,8 +43,8 @@ PY
 
 @test "stray-processes: a root-owned sudo survivor is found and attributed" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = (" 35701 root     T        sudo -u _jcode_w01 %s W-AbGC tree_kill\n"
-      "   501 ss       S        /usr/bin/python3 unrelated\n") % WRAPPER
+ps = (" 35701 0        T        sudo -u _jcode_w01 %s W-AbGC tree_kill\n"
+      "   501 501      S        /usr/bin/python3 unrelated\n") % WRAPPER
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok", status
 assert len(strays) == 1, strays
@@ -60,7 +60,7 @@ PY
   # by relative path carries no sandbox path at all — and is still owned by the
   # slot uid, which it cannot change.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40002 _jcode_w03 S      ./payload\n"
+ps = " 40002 613      S        ./payload\n"
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok", status
 assert len(strays) == 1 and strays[0]["slot"] == "_jcode_w03", strays
@@ -75,7 +75,7 @@ PY
   # run id. Under the old rule, putting one in its argv excluded it. Exclusion
   # is now by slot ownership, which argv cannot assert.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40003 _jcode_w05 S      ./daemon --tag qzA5VJYFsvwF0ANX\n"
+ps = " 40003 615      S        ./daemon --tag qzA5VJYFsvwF0ANX\n"
 strays, _ = b.find_stray_processes(("_jcode_w02",), ps)   # w05 is NOT claimed
 assert len(strays) == 1 and strays[0]["slot"] == "_jcode_w05", strays
 print("run id in argv no longer buys an exclusion")
@@ -91,7 +91,7 @@ PY
   # reporting status "ok". Tolerating corrupt claim state is what reconcile()
   # is FOR.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 40004 _jcode_w07 S      ./payload\n"
+ps = " 40004 617      S        ./payload\n"
 for claimed in [("",), ("", "_jcode_w01"), ("w07",), ("_jcode_w0",), ()]:
     strays, status = b.find_stray_processes(claimed, ps)
     assert status == "ok", (claimed, status)
@@ -107,8 +107,8 @@ PY
   # and the real line is lost in it — which the red-team named as the way false
   # positives train dismissal.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = (" 41000 _jcode_w03 S      ./worker\n"
-      " 41001 root     S        sudo -u _jcode_w03 %s RUNID x\n") % WRAPPER
+ps = (" 41000 613      S        ./worker\n"
+      " 41001 0        S        sudo -u _jcode_w03 %s RUNID x\n") % WRAPPER
 strays, status = b.find_stray_processes(("_jcode_w03",), ps)
 assert status == "ok" and strays == [], strays
 strays2, _ = b.find_stray_processes(("_jcode_w04",), ps)
@@ -121,7 +121,7 @@ PY
 
 @test "stray-processes: root naming the wrapper in an unexpected shape is reported, not ignored" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 42000 root     S        /bin/sh -c %s something\n" % WRAPPER
+ps = " 42000 0        S        sudo -n %s something\n" % WRAPPER
 strays, status = b.find_stray_processes(("_jcode_w01",), ps)
 assert len(strays) == 1 and strays[0]["slot"] == "unattributed", strays
 print("unexplained rather than benign:", strays[0]["slot"])
@@ -132,10 +132,10 @@ PY
 
 @test "stray-processes: unrelated processes are ignored" {
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = ("   1 root     S        /sbin/launchd\n"
-      " 900 ss       S        /usr/bin/python3 -m http.server\n"
-      " 901 root     S        sudo -u nobody /bin/sleep 30\n"
-      " 902 ss       S        tail -f %s/log\n") % BASE
+ps = ("   1 0        S        /sbin/launchd\n"
+      " 900 501      S        /usr/bin/python3 -m http.server\n"
+      " 901 0        S        sudo -u nobody /bin/sleep 30\n"
+      " 902 501      S        tail -f %s/log\n") % BASE
 strays, status = b.find_stray_processes((), ps)
 assert status == "ok" and strays == [], strays
 print("four unrelated processes, including one that merely names the base path")
@@ -197,7 +197,7 @@ PY
   # an injectable process table, so this executes the wiring instead of reading
   # about it.
   cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
-ps = " 43000 _jcode_w06 T      ./leftover\n"
+ps = " 43000 616      T        ./leftover\n"
 r = b.reconcile(ps_output=ps)
 assert r["stray_status"] == "ok", r
 assert len(r["stray_processes"]) == 1, r
@@ -307,7 +307,7 @@ def fake_listdir(path):
     return real_listdir(path)
 os.listdir = fake_listdir
 try:
-    ps = " 43000 _jcode_w06 T      ./leftover\n"
+    ps = " 43000 616      T        ./leftover\n"
     r = b.reconcile(ps_output=ps)
 finally:
     os.listdir = real_listdir
@@ -319,5 +319,97 @@ assert len(r["stray_processes"]) == 1, (
     "the survivor of a slot released during this pass was masked: %r" % r["stray_processes"])
 assert r["stray_processes"][0]["slot"] == "_jcode_w06", r["stray_processes"]
 PY
+  echo "$output"; [ "$status" -eq 0 ]
+}
+
+# ── The one test that does not inject a fixture ────────────────────────────
+
+@test "stray-processes: the real ps invocation yields parseable numeric uids" {
+  # The round-2 red-team's blocking finding, and the gap that made it possible:
+  #
+  #   "every test injects fixtures and none reads real ps"
+  #
+  # The code used to compare the user NAME. ps(1) reserves the right to print a
+  # decimal uid, or a truncated name, when the name exceeds the column width —
+  # and `_jcode_w01` is ten characters. On a host where that happens, no line
+  # would ever match a slot: zero strays, status "ok", every fixture-driven
+  # test still green. A silent fail-open inside the fix for a silent fail-open.
+  #
+  # This runs the EXACT invocation the code runs, against the real process
+  # table of whatever host the suite is on, and asserts the field the decision
+  # rests on is a number. It is the only test here that could fail because of
+  # the machine rather than because of the code, which is the point.
+  run python3 - "$REPO_ROOT" <<'PY'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1] + "/core")
+import backends.macos_seatbelt as b
+
+r = subprocess.run(["/bin/ps", "-eo", "pid=,uid=,state=,command="],
+                   capture_output=True, text=True, timeout=10)
+assert r.returncode == 0, (r.returncode, r.stderr[:200])
+lines = [l for l in r.stdout.splitlines() if l.strip()]
+assert len(lines) > 5, "implausibly small process table: %d" % len(lines)
+
+bad = []
+for l in lines:
+    parts = l.strip().split(None, 3)
+    if len(parts) < 4:
+        continue
+    try:
+        int(parts[1])
+    except ValueError:
+        bad.append(l[:80])
+assert not bad, "uid column is not numeric on this host:\n  " + "\n  ".join(bad[:5])
+
+uids = {int(l.strip().split(None, 3)[1]) for l in lines
+        if len(l.strip().split(None, 3)) >= 4}
+assert 0 in uids, "no root processes — the uid column is not what it claims"
+
+# And the function itself must survive the real table without choking.
+strays, status = b.find_stray_processes(())
+assert status == "ok", status
+unparseable = [s for s in strays if s["slot"] == "unparseable-uid"]
+assert not unparseable, unparseable[:3]
+print("%d real processes, %d distinct uids, all numeric; %d stray(s) on this host"
+      % (len(lines), len(uids), len(strays)))
+PY
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "stray-processes: a non-numeric uid field is reported, never skipped" {
+  # The condition the switch to uids exists to remove, made visible rather than
+  # silently dropped. If ps ever does print a name here, the run says so
+  # instead of quietly finding nothing.
+  cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
+ps = " 51000 _jcode_+ T        sudo -u _jcode_w01 %s R c\n" % WRAPPER
+strays, status = b.find_stray_processes((), ps)
+assert status == "ok", status
+assert len(strays) == 1, strays
+assert strays[0]["slot"] == "unparseable-uid", strays
+print("truncated name in the uid column reported as:", strays[0]["slot"])
+PY
+  run _py "$BATS_TEST_TMPDIR/t.py"
+  echo "$output"; [ "$status" -eq 0 ]
+}
+
+@test "stray-processes: a root process merely naming the wrapper is not a stray" {
+  # Round-2, non-blocking, taken anyway: an operator reading the wrapper is not
+  # a worker launch, and reporting it as an unattributed stray would wedge the
+  # pool on ordinary debugging. argv[0] must be sudo.
+  cat > "$BATS_TEST_TMPDIR/t.py" <<'PY'
+for cmd in ("/bin/cat %s" % WRAPPER,
+            "/usr/bin/vim %s" % WRAPPER,
+            "grep -n foo %s" % WRAPPER):
+    ps = " 52000 0        S        %s\n" % cmd
+    strays, status = b.find_stray_processes((), ps)
+    assert status == "ok" and strays == [], (cmd, strays)
+# But a sudo-shaped launch that cannot be attributed is still reported.
+ps = " 52001 0        S        sudo -n %s x\n" % WRAPPER
+strays, _ = b.find_stray_processes((), ps)
+assert len(strays) == 1 and strays[0]["slot"] == "unattributed", strays
+print("three root readers ignored; the sudo-shaped one still reported")
+PY
+  run _py "$BATS_TEST_TMPDIR/t.py"
   echo "$output"; [ "$status" -eq 0 ]
 }
