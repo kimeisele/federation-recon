@@ -1,0 +1,154 @@
+{
+  "note": "Expected outcome per vector. Written before the validator existed. See ../CONTRACT.md.",
+  "reject": {
+    "01-oversize.json": {
+      "code": "E_SIZE",
+      "why": "70 kB of payload. The size check must fire before the parser sees a byte, so this must NOT be reported as E_SCHEMA for the unknown 'note' field."
+    },
+    "02-duplicate-keys.json": {
+      "code": "E_JSON",
+      "why": "run_id appears twice. json.load silently keeps the last one, so a validator using it without object_pairs_hook accepts an order whose identity is ambiguous — two readers can disagree about which run this is."
+    },
+    "03-nan.json": {
+      "code": "E_JSON",
+      "why": "NaN is not JSON. Python's json accepts it by default; the C parser in another language does not. A document two implementations read differently is not canonical."
+    },
+    "04-trailing-data.json": {
+      "code": "E_JSON",
+      "why": "Two documents in one file. A reader that stops at the first close brace never sees the second, which is how a smuggled second order travels."
+    },
+    "05-root-array.json": {
+      "code": "E_JSON",
+      "why": "An array at the root, holding one valid order. A validator that indexes into the document rather than checking its type reads element 0 and proceeds — and an array can hold a second element that nothing looks at."
+    },
+    "06-empty.json": {
+      "code": "E_JSON",
+      "why": "Zero bytes. Not E_SIZE: the size check has an upper bound, not a lower one, and an empty file is a parse failure."
+    },
+    "07-deep-nesting.json": {
+      "code": "E_JSON",
+      "why": "40 levels of nesting against a depth limit of 8. Depth is a parser resource limit, so it is E_JSON and not E_SCHEMA — it must be enforced during parsing, before any field is examined."
+    },
+    "08-allowed-paths.json": {
+      "code": "E_SCHEMA",
+      "why": "allowed_paths. Dropped in every form (ADR §14) after failing twice under two names. It must be rejected as an unknown field with no special case, and this vector exists so that a future revival is a test failure."
+    },
+    "09-absolute-limits.json": {
+      "code": "E_SCHEMA",
+      "why": "A plain limits object asking for ten times the policy wall clock. This is the central structural claim of §11.2: it is rejected because 'limits' is not a field of the schema, NOT because a comparison found 600 > 60."
+    },
+    "10-negative-reduction.json": {
+      "code": "E_SCHEMA",
+      "why": "A negative reduction, the only way to write a looser limit in the reduction encoding. minimum: 0 makes it unrepresentable."
+    },
+    "11-unknown-limit-key.json": {
+      "code": "E_SCHEMA",
+      "why": "A reduction against a limit that does not exist in policy.json. Silently ignoring it would let an order appear to constrain something it does not."
+    },
+    "12-invented-capability.json": {
+      "code": "E_SCHEMA",
+      "why": "A capability name that appears nowhere in policy.json. Invention is a schema failure; an unclaimed-but-known capability is E_CAPABILITY_UNPROVEN. Collapsing the two hides which one happened."
+    },
+    "13-duplicate-capability.json": {
+      "code": "E_SCHEMA",
+      "why": "Duplicate items. Harmless alone, but a set built by counting is a set that can be gamed by repetition."
+    },
+    "14-empty-capabilities.json": {
+      "code": "E_SCHEMA",
+      "why": "An order requiring nothing. Not an unconstrained run — an order that declines to say what it needs cannot be checked against what is proven."
+    },
+    "15-run-id-traversal.json": {
+      "code": "E_SCHEMA",
+      "why": "run_id names a directory under the run root. Anything not a UUID is a path, and this one leaves the run root entirely."
+    },
+    "16-short-base-sha.json": {
+      "code": "E_SCHEMA",
+      "why": "39 hex characters. An abbreviated sha is ambiguous by construction, and the base commit is what the whole verification run is anchored to."
+    },
+    "17-issue-zero.json": {
+      "code": "E_SCHEMA",
+      "why": "Issue 0. It is what an absent value becomes after passing through a C int, a shell arithmetic expansion, or a truthiness test, so accepting it means accepting orders whose issue reference was silently lost rather than never given."
+    },
+    "18-intent-empty.json": {
+      "code": "E_SCHEMA",
+      "why": "No stated intent. The one field a human reads to judge whether the result is the right thing; empty makes ADR §3.5's 'semantic correctness remains human reading' unperformable."
+    },
+    "19-intent-control-char.json": {
+      "code": "E_SCHEMA",
+      "why": "A NUL inside intent. It truncates the string in C-based readers and makes the whole file invisible to grep -I, so text after it is present but unreadable in exactly the tools a human reviews with."
+    },
+    "20-missing-bundle.json": {
+      "code": "E_SCHEMA",
+      "why": "No acceptance bundle. Without one the verification run has no oracle it did not get from the builder (ADR §10)."
+    },
+    "21-bundle-no-digest.json": {
+      "code": "E_SCHEMA",
+      "why": "A bundle with a location but no digest — the bytes at that path could be swapped between validation and use."
+    },
+    "22-bundle-weak-digest.json": {
+      "code": "E_SCHEMA",
+      "why": "An MD5 digest. Collidable, and the whole point of the digest is that the bundle cannot be substituted."
+    },
+    "23-bundle-no-approval.json": {
+      "code": "E_SCHEMA",
+      "why": "No approver recorded. ADR §10 requires author and approval in the run record; unrecorded approval is indistinguishable from none."
+    },
+    "24-wrong-schema-version.json": {
+      "code": "E_SCHEMA",
+      "why": "A version this validator has never seen. Accepting an unknown future version is accepting whatever it turns out to mean."
+    },
+    "25-unproven-mem-limit.json": {
+      "code": "E_CAPABILITY_UNPROVEN",
+      "why": "mem_limit is named in policy.json under unclaimable_capabilities: RLIMIT_AS raises ValueError on macOS, so a watchdog can detect but not prevent. §7.1 defines mem_limit as prevention. The order is well-formed; the backend cannot honour it."
+    },
+    "26-unproven-package-network.json": {
+      "code": "E_CAPABILITY_UNPROVEN",
+      "why": "The pip-install case. ADR §2 calls it excluded, not deferred — this is the vector that keeps it excluded."
+    },
+    "27-unproven-disk-quota.json": {
+      "code": "E_CAPABILITY_UNPROVEN",
+      "why": "RLIMIT_FSIZE caps one file, not total written volume. Two proven capabilities and one unproven must still refuse: the refusal is per capability, not a majority vote."
+    },
+    "28-reduction-to-zero.json": {
+      "code": "E_LIMIT",
+      "why": "Reduces the 60 s wall clock to exactly 0. Non-negative and inside the schema, yet unrunnable — every run would be killed at once, which reads in the record as a failing builder rather than an impossible order."
+    },
+    "29-reduction-past-zero.json": {
+      "code": "E_LIMIT",
+      "why": "Reduces 64 processes by 100. Well-typed, arithmetically negative."
+    },
+    "30-bundle-authored-by-builder.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "The builder wrote the bundle it will be graded by. This is #103 as a single field, and everything else in the order is impeccable."
+    },
+    "31-bundle-author-builder-substring.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A human-looking author containing 'Builder'. Deliberately harsh: the check is a substring match, so this is a false positive by design. A provenance rule that a rename defeats is not a rule, and a wrongly-refused order costs one edit while a wrongly-accepted one costs the oracle."
+    },
+    "32-bundle-inside-repo.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A bundle inside the patch tree, where the patch under test can modify it. ADR §10 requires it outside; the absolute-prefix rule is what enforces it."
+    },
+    "33-bundle-traversal.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "The required prefix is present and the path still leaves the bundle root. A prefix test alone passes this, which is why it is here."
+    }
+  },
+  "accept": {
+    "01-minimal.json": {
+      "why": "The smallest admissible order: no reductions, policy limits apply unchanged, both required capabilities proven."
+    },
+    "02-with-reductions.json": {
+      "why": "Narrower than policy on two axes. Reductions are the only way to ask for anything, and asking for less must work or the encoding is unusable."
+    },
+    "03-all-claimed-capabilities.json": {
+      "why": "Every capability the backend claims, at once. If the capability check has an off-by-one or an accidental all-of vs any-of, this is where it shows."
+    },
+    "04-intent-at-limit.json": {
+      "why": "Exactly 200 characters. Boundaries are where inclusive and exclusive comparisons diverge, and this one must be accepted."
+    },
+    "05-reduction-to-one.json": {
+      "why": "Leaves an effective wall clock of exactly 1 second. Absurd as an order, correct as a boundary: E_LIMIT fires at zero, not at one."
+    }
+  }
+}
