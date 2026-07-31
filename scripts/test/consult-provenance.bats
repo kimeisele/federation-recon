@@ -170,3 +170,65 @@ _log_for() {
   echo "$output"
   [ -z "$output" ]
 }
+
+@test "consult: a large window is searched to the end" {
+  # The regression for the defect that shipped in the first version and was
+  # found on its first real dispatch.
+  #
+  # The extraction was `printf '%s\n' "$window" | grep -q …` under
+  # `set -o pipefail`. grep -q exits at its first match, printf takes SIGPIPE,
+  # the pipeline reports 141, and the `&&` never fires — so every provider came
+  # back unmatched and a real twenty-minute review was deleted as
+  # unattributable. It failed safe and it was useless.
+  #
+  # Every other test here passed throughout, because their fixtures are one or
+  # two lines: printf finishes before grep can exit. **The tests passed because
+  # the input was small.** This one is two thousand lines, which is the size of
+  # a real window, and it is the only test that would have caught it.
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  {
+    for i in $(seq 1 2000); do
+      printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] line %d\n' "$now" "$i"
+    done
+  } > "$LOG"
+  echo "REPORT BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -f "$OUT" ]
+  grep -q "served_provider: openai" "$OUT"
+}
+
+@test "consult: a large window still catches the WRONG provider" {
+  # The counterpart. A large window must not merely stop failing — it must
+  # still refuse when the wrong provider answered, which is the case that
+  # matters.
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  {
+    for i in $(seq 1 2000); do
+      printf '[%s] [INFO] [ses:x|prv:OpenRouter|mod:deepseek] line %d\n' "$now" "$i"
+    done
+  } > "$LOG"
+  echo "REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"served:    deepseek"* ]]
+  [ ! -f "$OUT" ]
+}
+
+@test "consult: extraction uses no pipe into a short-circuiting reader" {
+  # The property, not the symptom. Under `set -o pipefail` any
+  # `... | grep -q ...` can report failure for a reason that has nothing to do
+  # with whether the pattern matched. Stated as a check so the next person to
+  # reach for a pipe here finds out immediately.
+  # Comments stripped first. The block above explains the defect by quoting the
+  # broken construct, so a grep over the whole file matches the explanation —
+  # the third time today a test has been satisfied by prose describing the
+  # mechanism instead of by the mechanism.
+  run bash -c "sed 's/#.*//' '$CONSULT' | grep -nE '\\| *grep -q'"
+  echo "$output"
+  [ -z "$output" ]
+}

@@ -75,18 +75,34 @@ served_provider() {
   window="$(awk -v m="[$mark" '$0 >= m {print}' "$log" 2>/dev/null)"
   [ -n "$window" ] || { echo "no-log-activity"; return; }
 
-  printf '%s\n' "$window" | grep -q "endpoint: https://api\.openai\.com"   && seen="$seen openai"
-  printf '%s\n' "$window" | grep -q "endpoint: https://api\.deepseek\.com" && seen="$seen deepseek"
-  printf '%s\n' "$window" | grep -q "endpoint: https://api\.anthropic\.com" && seen="$seen claude"
-  printf '%s\n' "$window" | grep -q "endpoint: https://api\.moonshot\.ai"  && seen="$seen moonshot"
+  # HERESTRINGS, not pipes.
+  #
+  # This was `printf '%s\n' "$window" | grep -q …` and it found nothing on any
+  # real log. `set -o pipefail` is in force; `grep -q` exits at its first
+  # match; printf then takes SIGPIPE; the pipeline reports 141; the `&&` never
+  # fires. Every provider came back unmatched, the answer was "undetermined",
+  # and a twenty-minute review was deleted as unattributable.
+  #
+  # It failed safe, and it was useless.
+  #
+  # **The unit tests passed because their fixture logs are one or two lines** —
+  # printf finishes writing before grep can exit, so no SIGPIPE. A control that
+  # only works on inputs too small to occur is the exact failure this script
+  # exists to prevent, found inside the script, on its first real dispatch.
+  # Test "a large window is searched to the end" is the regression.
+  grep -q  "endpoint: https://api\.openai\.com"    <<< "$window" && seen="$seen openai"
+  grep -q  "endpoint: https://api\.deepseek\.com"  <<< "$window" && seen="$seen deepseek"
+  grep -q  "endpoint: https://api\.anthropic\.com" <<< "$window" && seen="$seen claude"
+  grep -q  "endpoint: https://api\.moonshot\.ai"   <<< "$window" && seen="$seen moonshot"
   # Provider tags catch the OAuth paths, which open no logged endpoint.
-  printf '%s\n' "$window" | grep -qi "prv:OpenAI|"    && seen="$seen openai"
-  printf '%s\n' "$window" | grep -qi "prv:Anthropic|" && seen="$seen claude"
-  printf '%s\n' "$window" | grep -qi "mod:deepseek"   && seen="$seen deepseek"
+  grep -qi "prv:OpenAI|"    <<< "$window" && seen="$seen openai"
+  grep -qi "prv:Anthropic|" <<< "$window" && seen="$seen claude"
+  grep -qi "mod:deepseek"   <<< "$window" && seen="$seen deepseek"
 
   # Deduplicate, then insist on exactly one.
   seen="$(printf '%s\n' $seen | sort -u | tr '\n' ' ' | sed 's/ *$//')"
-  case "$(printf '%s\n' $seen | grep -c .)" in
+  local n_seen; n_seen="$(printf '%s\n' $seen | grep -c . || true)"
+  case "$n_seen" in
     0) echo "undetermined" ;;
     1) echo "$seen" ;;
     *) echo "ambiguous:$(printf '%s' "$seen" | tr ' ' ',')" ;;
