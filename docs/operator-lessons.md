@@ -174,3 +174,41 @@ both times the error message named the wrong thing.
 **When a credential error names the wrong actor, ask which credential the tool
 actually picked up before adjusting permissions.** Permissions were never the
 problem in either case.
+
+## A search that skips a file reports the same thing as a search that finds nothing
+
+While writing `core/orders/CONTRACT.md` I put a literal NUL byte into it — a
+markdown line describing forbidden control characters, written with the
+character instead of its name. Then:
+
+```
+grep -c intent core/orders/CONTRACT.md    → no output, exit 1
+/usr/bin/grep -c intent CONTRACT.md       → 2
+grep -ac intent CONTRACT.md               → 2
+```
+
+`grep` in this environment is a shell function wrapping ugrep with `-I`, which
+skips files it classifies as binary. One NUL byte makes a 7 kB markdown file
+binary. The file was skipped **silently**: no warning, no diagnostic, exit 1 —
+byte-identical to the answer for a file that was read and did not match.
+
+The same byte made an `Edit` on that line fail to match, and the two symptoms
+looked like two unrelated tool problems.
+
+**A zero-result search establishes nothing until you know the file was read.**
+The failure mode is not "the tool lied" — it is that *not looked at* and *looked
+at, absent* are the same output, and only one of them is evidence. The general
+form is the one this document keeps recording under different names: an absence
+that could be either a measurement or a gap, treated as a measurement.
+
+Three habits, in order of cost:
+
+- When a search of a file you just wrote comes back empty, suspect the search
+  before the file.
+- `/usr/bin/grep` and `grep -a` are the cross-checks, and they cost one command.
+- Never write a control character into a text file to describe one. Write
+  `U+0000`. The file that documents the hazard is the file that had it.
+
+Related: the `sh -n` on a bash script, and the grep pipeline that counted
+itself — three instances in which the *instrument*, not the code under test,
+produced the wrong answer. The instrument is not outside the system.
