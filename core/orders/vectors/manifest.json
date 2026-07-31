@@ -160,6 +160,30 @@
     "40-bundle-location-is-the-directory.json": {
       "code": "E_BUNDLE_PROVENANCE",
       "why": "The bundles directory itself as the bundle location. It satisfies the required prefix and names nothing, and was admitted."
+    },
+    "41-identity-with-combining-mark.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A combining acute inside a builder name. It survived the first fix: NFKC COMPOSES, so the mark became a single precomposed character whose category is a letter, and the mark-stripping never saw it. Found by re-reviewing the fix rather than the original code."
+    },
+    "42-identity-fullwidth.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "Fullwidth letters spelling the builder's name. A compatibility form that looks different and reads the same, which is the whole class the fold exists for."
+    },
+    "43-bundle-location-dot-segment.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "The bundles directory addressed as `bundles/.`. It satisfied the required prefix, differed from it as a string, contained no `..` segment, and resolved to the directory itself — admitted by the first version of the directory check, found by reviewing that check."
+    },
+    "44-bundle-location-double-slash.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "The bundles directory written with a doubled slash. No dot segment, not string-equal to the prefix, so ONLY the normpath comparison refuses it. Added because mutation testing showed the two directory guards were masking each other: removing either alone left every vector green."
+    },
+    "45-bundle-location-dot-in-path.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A dot segment in the middle of an otherwise valid path. normpath resolves it to a real bundle, so ONLY the dot-segment rule refuses it. The counterpart to vector 44: between them, removing either guard turns exactly one vector red."
+    },
+    "46-huge-digit-run-inside-a-string.json": {
+      "code": "E_JSON",
+      "why": "Five thousand digits inside a STRING. The parser would accept it, so the ValueError backstop never fires and only the raw-text pre-filter refuses it. Added because mutation testing showed the backstop was masking the guard: disabling the pre-filter left vector 38 green, since the backstop produced the same code for the same input. Two mechanisms that yield one verdict need a vector each, or one of them is decoration."
     }
   },
   "accept": {

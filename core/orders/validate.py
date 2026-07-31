@@ -21,7 +21,19 @@ import unicodedata
 
 SIZE_LIMIT = 65536
 DEPTH_LIMIT = 8
-_MAX_INT_DIGITS = 4300   # CPython's sys.set_int_max_str_digits default
+def _max_int_digits():
+    """CPython's integer-string conversion limit, READ rather than assumed.
+
+    This was the constant 4300. It is configurable via
+    sys.set_int_max_str_digits and PYTHONINTMAXSTRDIGITS, so a hardcoded copy
+    is a guess about the interpreter the code is running in — and guessing a
+    constant is what put a 24 where a 20 belonged elsewhere tonight.
+    """
+    try:
+        n = sys.get_int_max_str_digits()
+        return n if n > 0 else 10 ** 9      # 0 means "no limit"
+    except AttributeError:
+        return 4300
 
 UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -150,11 +162,15 @@ def _parse_canonical(text):
     #
     # Checked before parsing, because that is where it fires, and rejected as
     # E_JSON: a number that cannot be read is a parse failure, not a schema one.
-    if re.search(r'[0-9]{%d,}' % _MAX_INT_DIGITS, text):
+    _limit = _max_int_digits()
+    if re.search(r'[0-9]{%d,}' % _limit, text):
         _refuse('E_JSON',
                 'A numeric literal of %d digits or more appears in the document. '
-                'CPython refuses to convert it and the failure would surface as '
-                'a traceback rather than as a verdict.' % _MAX_INT_DIGITS)
+                'This interpreter refuses to convert it, and the failure would '
+                'surface as a traceback rather than as a verdict. (The check is '
+                'over the raw text, so a long digit run inside a string is also '
+                'refused — over-refusal, on purpose: the alternative is parsing '
+                'first, which is the thing being prevented.)' % _limit)
 
     if not _check_depth(text):
         _refuse('E_JSON',
@@ -183,6 +199,21 @@ def _parse_canonical(text):
         obj, idx = decoder.raw_decode(text)
     except json.JSONDecodeError as exc:
         _refuse('E_JSON', f'Invalid JSON: {exc}')
+    except ValueError as exc:
+        # Backstop, and UNTESTED — recorded as such rather than pretended.
+        #
+        # Mutation testing removed this clause and every test stayed green,
+        # because the raw-text digit pre-filter above catches everything that
+        # would reach it. I could not construct an input that evades the
+        # pre-filter and still raises here: JSON numbers admit no separators,
+        # and exponent forms become floats, which have no digit limit.
+        #
+        # So this is not "defence in depth nobody got round to testing". It is
+        # a clause I could not reach, kept because the pre-filter is a regex
+        # over text and a regex over text is the kind of thing that turns out
+        # to have an exception. If someone finds the input, it belongs here as
+        # a vector and this comment should go.
+        _refuse('E_JSON', f'The document could not be parsed as a value: {exc}')
 
     # Trailing data after the document
     remaining = text[idx:].strip()
@@ -434,9 +465,24 @@ def _fold_identity(value):
     Comparing identities as raw text is defeated by one invisible codepoint.
     This removes that bypass; it does not make the comparison sound.
     """
-    folded = unicodedata.normalize('NFKC', value)
-    folded = folded.translate({ord(c): None for c in _INVISIBLE})
-    return folded.lower()
+    # NFKD first — DEcompose.
+    #
+    # NFKC composes, so `deep` + combining-acute became a single precomposed
+    # `ṕ` whose category is Ll, and the mark-stripping below never saw it.
+    # That bypass survived the first fix and was found by re-reviewing it.
+    # Decomposing turns the same input back into a base letter plus a mark,
+    # and the mark is then removed as a class.
+    folded = unicodedata.normalize('NFKD', value)
+    # Cf "format" covers zero-width, directional and joiner characters as a
+    # CLASS; the first version listed thirteen codepoints by hand, and a list
+    # is a guess about which invisible characters exist. Cc is control, Mn is
+    # a non-spacing mark — another way to spell a name without changing how it
+    # looks.
+    folded = ''.join(c for c in folded
+                     if unicodedata.category(c) not in ('Cf', 'Cc', 'Mn'))
+    # Then compatibility-fold what remains, so fullwidth and other variants
+    # collapse onto the same ASCII.
+    return unicodedata.normalize('NFKC', folded).lower()
 
 
 def _validate_bundle_provenance(order):
@@ -463,7 +509,11 @@ def _validate_bundle_provenance(order):
     #
     # `/usr/local/var/jcode-runs/bundles/` satisfies the prefix and was
     # admitted (#141). The final segment must name something.
-    if location == BUNDLE_PREFIX or location.rstrip('/') == BUNDLE_PREFIX.rstrip('/'):
+    # normpath, not string equality. `bundles/.` and `bundles/./` satisfied the
+    # prefix, differed from it as strings, contained no `..` segment, and
+    # resolved to the directory itself. Both were admitted (found by the
+    # cross-provider review of this very fix).
+    if os.path.normpath(location) == os.path.normpath(BUNDLE_PREFIX):
         _refuse(
             'E_BUNDLE_PROVENANCE',
             'acceptance_bundle.location is the bundles directory itself, not a '
@@ -472,7 +522,7 @@ def _validate_bundle_provenance(order):
 
     # Path‑traversal check — a prefix match alone passes "../" escapes.
     segments = location.split('/')
-    if '..' in segments:
+    if '..' in segments or '.' in segments:
         _refuse(
             'E_BUNDLE_PROVENANCE',
             f'acceptance_bundle.location contains path traversal: '

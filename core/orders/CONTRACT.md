@@ -144,6 +144,20 @@ Checked: `core/policy.json` is a plain committed file with no gate in
 for it. So an order cannot ask for a looser limit than the policy allows, and
 the policy is exactly as hard to change as any other file in the repository.
 
+**And this is not only about limits.** A second reviewer widened it:
+
+> "`claimed_capabilities` admission *also* rests entirely on the same
+> unguarded, operator-writable file, read via a `__file__`-relative path (a
+> relocated validator copy reads a different policy). If the corrected
+> sentence only scopes the caveat to `limit_reductions`, it still overstates."
+
+So, plainly: **every verdict this validator reaches is exactly as strong as
+`core/policy.json`.** Limits and capabilities both. `E_CAPABILITY_UNPROVEN`
+means "the policy does not claim it", not "the backend cannot do it", and
+moving a name into `claimed_capabilities` is one line in an unguarded file.
+
+The validator is a faithful reader of a document nothing protects.
+
 Both earlier reviews of this design praised the reduction encoding. Neither
 asked where the number it subtracts from comes from — and both were served, it
 turned out, by the same provider as the builder. What binds the policy is
