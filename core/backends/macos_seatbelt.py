@@ -696,6 +696,19 @@ def _slot_of_sudo_parent(command):
     return None
 
 
+# The production ps invocation, as a constant.
+#
+# It was written inline, and the tests declared their own column list in
+# fixtures. A red-team mutated the production command in two ways — removed
+# ELAPSED, and swapped uid= for ppid= — and BOTH stayed green at 19/19, because
+# no test ever ran the command the code runs.
+#
+# docs/operator-lessons.md: "If a test re-declares a pattern, constant or
+# command line that production also declares, it passes when production
+# breaks." The real-ps test now imports this.
+PS_COMMAND = ["/bin/ps", "-eo", "pid=,uid=,etime=,state=,command="]
+
+
 def _etime_seconds(etime):
     """Seconds from a ps ELAPSED field: [[dd-]hh:]mm:ss. None if unparseable."""
     try:
@@ -739,8 +752,7 @@ def find_stray_processes(claimed_slots=(), ps_output=None, claim_ages=None):
     if ps_output is None:
         try:
             result = subprocess.run(
-                ["/bin/ps", "-eo", "pid=,uid=,etime=,state=,command="],
-                capture_output=True, text=True, timeout=10,
+                PS_COMMAND, capture_output=True, text=True, timeout=10,
             )
         except Exception as exc:
             return [], "unknown: cannot run ps: %s" % exc

@@ -361,8 +361,17 @@ import subprocess, sys
 sys.path.insert(0, sys.argv[1] + "/core")
 import backends.macos_seatbelt as b
 
-r = subprocess.run(["/bin/ps", "-eo", "pid=,uid=,state=,command="],
-                   capture_output=True, text=True, timeout=10)
+# The PRODUCTION command, imported rather than re-declared.
+#
+# This test wrote its own column list. A red-team then mutated the production
+# invocation twice — removed ELAPSED, swapped uid= for ppid= — and BOTH stayed
+# green at 19/19, because no test ran the command the code runs.
+#
+# docs/operator-lessons.md: "If a test re-declares a pattern, constant or
+# command line that production also declares, it passes when production
+# breaks."
+r = subprocess.run(b.PS_COMMAND, capture_output=True, text=True, timeout=10)
+print("production command:", " ".join(b.PS_COMMAND))
 assert r.returncode == 0, (r.returncode, r.stderr[:200])
 lines = [l for l in r.stdout.splitlines() if l.strip()]
 assert len(lines) > 5, "implausibly small process table: %d" % len(lines)
@@ -378,9 +387,26 @@ for l in lines:
         bad.append(l[:80])
 assert not bad, "uid column is not numeric on this host:\n  " + "\n  ".join(bad[:5])
 
-uids = {int(l.strip().split(None, 3)[1]) for l in lines
-        if len(l.strip().split(None, 3)) >= 4}
+uids = {int(l.strip().split(None, 4)[1]) for l in lines
+        if len(l.strip().split(None, 4)) >= 4}
 assert 0 in uids, "no root processes — the uid column is not what it claims"
+
+# Column 2 must be a UID, not another number that happens to parse. Every uid
+# on this host exists in the passwd database; a ppid column would be full of
+# pids that do not.
+import pwd
+known = {pw.pw_uid for pw in pwd.getpwall()}
+unknown = sorted(uids - known)
+assert len(unknown) <= 2, (
+    "column 2 does not look like a uid column — %d of %d values are absent "
+    "from the passwd database: %s" % (len(unknown), len(uids), unknown[:8]))
+
+# Column 3 must be an ELAPSED time, not a state or a command.
+bad_etime = [l for l in lines[:60]
+             if len(l.strip().split(None, 4)) >= 4
+             and b._etime_seconds(l.strip().split(None, 4)[2]) is None]
+assert not bad_etime, ("column 3 does not parse as ELAPSED: %s"
+                       % [x[:60] for x in bad_etime[:3]])
 
 # And the function itself must survive the real table without choking.
 strays, status = b.find_stray_processes(())
