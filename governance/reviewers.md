@@ -1,5 +1,12 @@
 # Independent reviewers
 
+> The **builder** is documented separately in `governance/builders.md`. It is
+> not a reviewer and must never be counted as one: it produces the work under
+> review, and its output is untrusted by construction (`docs/execution-core-adr.md`
+> §3.2). Both files live outside `CLAUDE.md` for the same reason — a model name
+> is a vendor snapshot and will rot.
+
+
 Concrete roster for the independence requirement in `CLAUDE.md` → Delegated
 judgment. Kept out of the constitution on purpose: model names are a vendor
 snapshot and will rot, while the *property* they have to satisfy does not.
