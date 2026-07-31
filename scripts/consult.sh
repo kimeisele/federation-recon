@@ -42,7 +42,7 @@
 # occupies the place where a real one would have gone.
 #
 # Usage:
-#   scripts/consult.sh <provider> <model> <output.md> <prompt-file>
+#   scripts/consult.sh <provider> <model> <output.md> <prompt-file> [workdir]
 #
 # Environment:
 #   CONSULT_LOG       — override the log path (tests drive fixtures with it)
@@ -50,7 +50,7 @@
 
 set -uo pipefail
 
-PROVIDER="${1:-}"; MODEL="${2:-}"; OUTPUT="${3:-}"; PROMPT="${4:-}"
+PROVIDER="${1:-}"; MODEL="${2:-}"; OUTPUT="${3:-}"; PROMPT="${4:-}"; WORKDIR="${5:-}"
 if [ -z "$PROVIDER" ] || [ -z "$MODEL" ] || [ -z "$OUTPUT" ] || [ -z "$PROMPT" ]; then
   echo "Usage: $0 <provider> <model> <output.md> <prompt-file>" >&2
   exit 2
@@ -97,8 +97,13 @@ MARK="$(date '+%Y-%m-%d %H:%M:%S')"
 
 if [ -z "${CONSULT_SKIP_RUN:-}" ]; then
   # shellcheck disable=SC2086
-  jcode run -p "$PROVIDER" -m "$MODEL" --no-update --quiet "$(cat "$PROMPT")" \
-    > "${OUTPUT}.stdout" 2>&1
+  if [ -n "$WORKDIR" ]; then
+    jcode run -p "$PROVIDER" -m "$MODEL" -C "$WORKDIR" --no-update --quiet "$(cat "$PROMPT")" \
+      > "${OUTPUT}.stdout" 2>&1
+  else
+    jcode run -p "$PROVIDER" -m "$MODEL" --no-update --quiet "$(cat "$PROMPT")" \
+      > "${OUTPUT}.stdout" 2>&1
+  fi
   rc=$?
 else
   rc=0
