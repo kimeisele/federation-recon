@@ -144,6 +144,22 @@
     "36-bundle-approved-by-builder.json": {
       "code": "E_BUNDLE_PROVENANCE",
       "why": "A human author and a builder approver. Found by an independent red-team, which put the builder name in the field the rule did not cover and got exit 0 with silent stderr in about a minute. Vector 30 covers the same rule on `author`; a rule enforced on one of two adjacent fields is an invitation to use the other, and the approval is the field that actually decides whether the order proceeds."
+    },
+    "37-identity-with-zero-width-space.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "A builder name with a zero-width space inside it. Six ASCII bytes in the file, one invisible codepoint after decoding, and the substring never matched: this order was ADMITTED by merged code while the same order with a plain 'deepseek' was refused. Found by the cross-provider re-review #127 never had, and it is the reason identity is now folded rather than compared raw. It does not make identity-as-text sound."
+    },
+    "38-huge-integer-literal.json": {
+      "code": "E_JSON",
+      "why": "An issue number of 5000 digits. CPython caps integer-string conversion at 4300 and raises inside the parser, so merged code put 'Traceback (most recent call last):' where CONTRACT.md §1 promises a bare reason code — the exact breach vector 34 pins, one field over."
+    },
+    "39-unicode-digits-in-created-at.json": {
+      "code": "E_SCHEMA",
+      "why": "An Arabic-Indic timestamp. In Python `\\d` matches every Unicode decimal digit, so this passed the date format and would have crashed a downstream strptime far from the cause. The pattern is [0-9] now."
+    },
+    "40-bundle-location-is-the-directory.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "The bundles directory itself as the bundle location. It satisfies the required prefix and names nothing, and was admitted."
     }
   },
   "accept": {

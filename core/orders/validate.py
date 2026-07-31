@@ -15,18 +15,23 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SIZE_LIMIT = 65536
 DEPTH_LIMIT = 8
+_MAX_INT_DIGITS = 4300   # CPython's sys.set_int_max_str_digits default
 
 UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 )
 SHA40_RE = re.compile(r'^[0-9a-f]{40}$')
 SHA256_DIGEST_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
-DATETIME_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+# [0-9], not \d. In Python `\d` matches every Unicode decimal digit, so an
+# Arabic-Indic timestamp passed this and would crash a downstream strptime far
+# from the cause. Executed and confirmed against merged code — see #141.
+DATETIME_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')
 
 BUILDER_NAMES = ('jcode', 'deepseek', 'builder', 'worker')
 BUNDLE_PREFIX = '/usr/local/var/jcode-runs/bundles/'
@@ -136,6 +141,20 @@ def _parse_canonical(text):
     """
     if not text.strip():
         _refuse('E_JSON', 'Empty input is not valid JSON')
+
+    # CPython caps integer-string conversion at 4300 digits and raises
+    # ValueError inside the parser. A long `issue` therefore put
+    # "Traceback (most recent call last):" on the first line of stderr — the
+    # exact contract breach vector 34 pins, one field over, found by a
+    # re-review of already-merged code (#141).
+    #
+    # Checked before parsing, because that is where it fires, and rejected as
+    # E_JSON: a number that cannot be read is a parse failure, not a schema one.
+    if re.search(r'[0-9]{%d,}' % _MAX_INT_DIGITS, text):
+        _refuse('E_JSON',
+                'A numeric literal of %d digits or more appears in the document. '
+                'CPython refuses to convert it and the failure would surface as '
+                'a traceback rather than as a verdict.' % _MAX_INT_DIGITS)
 
     if not _check_depth(text):
         _refuse('E_JSON',
@@ -403,6 +422,23 @@ def _validate_limits(order, policy):
 # ── Bundle provenance ────────────────────────────────────────────────────────
 
 
+_INVISIBLE = ''.join(chr(c) for c in (
+    0x00AD, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060, 0xFEFF,
+    0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+))
+
+
+def _fold_identity(value):
+    """Lowercase, NFKC-normalise, and remove zero-width and directional marks.
+
+    Comparing identities as raw text is defeated by one invisible codepoint.
+    This removes that bypass; it does not make the comparison sound.
+    """
+    folded = unicodedata.normalize('NFKC', value)
+    folded = folded.translate({ord(c): None for c in _INVISIBLE})
+    return folded.lower()
+
+
 def _validate_bundle_provenance(order):
     """Check bundle provenance rules (ADR §10, CONTRACT.md §5).
 
@@ -423,6 +459,17 @@ def _validate_bundle_provenance(order):
             f'{BUNDLE_PREFIX!r}, got {location!r}',
         )
 
+    # A bare directory is not a bundle.
+    #
+    # `/usr/local/var/jcode-runs/bundles/` satisfies the prefix and was
+    # admitted (#141). The final segment must name something.
+    if location == BUNDLE_PREFIX or location.rstrip('/') == BUNDLE_PREFIX.rstrip('/'):
+        _refuse(
+            'E_BUNDLE_PROVENANCE',
+            'acceptance_bundle.location is the bundles directory itself, not a '
+            'bundle within it: %r' % location,
+        )
+
     # Path‑traversal check — a prefix match alone passes "../" escapes.
     segments = location.split('/')
     if '..' in segments:
@@ -441,7 +488,19 @@ def _validate_bundle_provenance(order):
     # field that decides whether the order proceeds. A rule enforced on one of
     # two adjacent fields is an invitation to use the other one.
     for field in ('author', 'approved_by'):
-        value_lower = bundle[field].lower()
+        # Normalise before comparing.
+        #
+        # This compared `bundle[field].lower()` directly, and a re-review put a
+        # zero-width space inside the name: `deep\u200bseek` was ADMITTED while
+        # `deepseek` was refused. Six ASCII bytes in the file, one invisible
+        # codepoint after decoding, and the substring never matched.
+        #
+        # NFKC folds compatibility forms; the explicit strip removes the
+        # zero-width and directional characters NFKC keeps. This does not make
+        # identity-as-text sound — the reviewer is right that it is theatre —
+        # but it removes the one-codepoint bypass while the real answer, which
+        # is a signed or externally attested approval, is decided (#141).
+        value_lower = _fold_identity(bundle[field])
         for name in BUILDER_NAMES:
             if name in value_lower:
                 _refuse(

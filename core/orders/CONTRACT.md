@@ -127,6 +127,28 @@ compared numbers.
 large enough to leave an effective limit of zero or less. That is defence in
 depth, not the primary mechanism.
 
+### What this does NOT establish, added after a cross-provider re-review
+
+The impossibility is about the **order**, and the sentence above was written as
+though it were about the system. It is not.
+
+> "`limit_reductions` makes a looser limit inexpressible *in the order* — but
+> the minuend lives in `core/policy.json`, an in-repo file reachable through
+> the same PR pipeline the builder exists to use. One merged PR changes
+> `wall_clock_seconds: 60 → 86400` […] The validator binds order→policy;
+> **nothing binds policy→operator**. The type-level claim is true and
+> irrelevant."
+
+Checked: `core/policy.json` is a plain committed file with no gate in
+`scripts/ci-checks.sh`, no integrity anchor, and no check anywhere that greps
+for it. So an order cannot ask for a looser limit than the policy allows, and
+the policy is exactly as hard to change as any other file in the repository.
+
+Both earlier reviews of this design praised the reduction encoding. Neither
+asked where the number it subtracts from comes from — and both were served, it
+turned out, by the same provider as the builder. What binds the policy is
+open as #141 and is not decided here.
+
 Keys are restricted to those present in `policy.json`'s `limits` object.
 
 ## 5. Bundle provenance
