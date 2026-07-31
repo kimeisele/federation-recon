@@ -220,6 +220,18 @@ def _validate_schema(order, policy):
     if not isinstance(caps, list) or len(caps) == 0:
         _refuse('E_SCHEMA',
                 'required_capabilities must be a non-empty array')
+
+    # Item types BEFORE the duplicate check. set() over the raw list raised
+    # TypeError on an unhashable item — a nested array — and the traceback
+    # became the first line of stderr where the reason code belongs. Exit 1
+    # was still fail-closed, but a caller reading line one for the code got a
+    # stack frame. Vector 34 pins this order of operations.
+    for cap in caps:
+        if not isinstance(cap, str):
+            _refuse('E_SCHEMA',
+                    f'Each capability must be a string, '
+                    f'got {type(cap).__name__}')
+
     if len(set(caps)) != len(caps):
         _refuse('E_SCHEMA',
                 'required_capabilities contains duplicate items')
@@ -230,10 +242,6 @@ def _validate_schema(order, policy):
     all_cap_names = claimed | unclaimable_keys
 
     for cap in caps:
-        if not isinstance(cap, str):
-            _refuse('E_SCHEMA',
-                    f'Each capability must be a string, '
-                    f'got {type(cap).__name__}')
         if cap not in all_cap_names:
             _refuse('E_SCHEMA',
                     f'Capability {cap!r} is not present in the policy '

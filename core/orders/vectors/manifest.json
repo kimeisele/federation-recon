@@ -132,6 +132,14 @@
     "33-bundle-traversal.json": {
       "code": "E_BUNDLE_PROVENANCE",
       "why": "The required prefix is present and the path still leaves the bundle root. A prefix test alone passes this, which is why it is here."
+    },
+    "34-capability-not-a-string.json": {
+      "code": "E_SCHEMA",
+      "why": "A nested array where a capability name belongs. Added after the first implementation crashed on it with a Python traceback as the first line of stderr instead of a reason code: the duplicate-item check built a set before anything checked the items were strings, and a list is not hashable. Exit 1 was still fail-closed, but a supervisor reading line one for the code gets a stack frame."
+    },
+    "35-capability-is-a-number.json": {
+      "code": "E_SCHEMA",
+      "why": "A number where a capability name belongs. Hashable, so it survives the set() that vector 34 crashes on and reaches the enum check by a different path — the two together pin the order of the checks, not just their presence."
     }
   },
   "accept": {
