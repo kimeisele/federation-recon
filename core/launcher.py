@@ -242,8 +242,32 @@ def main(argv=None):
     if reconcile_result["errors"]:
         print(f"[launcher] reconcile: {reconcile_result['errors']} error(s) during reconciliation",
               file=sys.stderr)
+
+    # "zero orphans" used to be printed here whenever no directory had to be
+    # cleaned up. reconcile() counts directories; the line reads as a statement
+    # about processes, and on 2026-07-31 it was printed while a root-owned
+    # worker from a killed run was still alive. Seven hours. See #129.
+    #
+    # Each dimension now reports itself, and "could not look" never renders as
+    # "nothing there".
+    strays = reconcile_result.get("stray_processes", [])
+    status = reconcile_result.get("stray_status", "not checked")
+    dirs_clean = not reconcile_result["removed_runs"] and not reconcile_result["released_slots"]
+    if dirs_clean:
+        print("reconcile(): no orphan run directories or slot claims")
+    if status != "ok":
+        print(f"reconcile(): process check did NOT run — {status}", file=sys.stderr)
+    elif strays:
+        print(f"reconcile(): {len(strays)} process(es) outlived their run and "
+              f"are not accounted for by any claimed slot:", file=sys.stderr)
+        for p_ in strays:
+            print(f"  pid {p_['pid']} user {p_['user']} state {p_['state']}: "
+                  f"{p_['command'][:120]}", file=sys.stderr)
+        print("  A process owned by root cannot be killed from here — kill_slot "
+              "acts as the slot user. Reaping needs an owner decision (#129).",
+              file=sys.stderr)
     else:
-        print("reconcile(): zero orphans")
+        print("reconcile(): no processes outlived their run")
     print()
 
     # ── Check for degraded pool ─────────────────────────────────────

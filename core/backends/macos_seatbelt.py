@@ -621,6 +621,71 @@ def kill_slot(slot_name, slot_uid):
 
 # ── Reconcile ──────────────────────────────────────────────────────────────
 
+# ── Stray process detection ────────────────────────────────────────────────
+#
+# reconcile() below counts DIRECTORIES. That is all it ever counted, and the
+# launcher printed its result as "zero orphans", which reads as a statement
+# about processes. On 2026-07-31 a root-owned `sudo` from a killed run
+# survived seven hours while exactly that line was printed. See #129.
+#
+# The gap is structural rather than accidental. A worker is launched as
+#   sudo -u <slot> <wrapper> ...
+# and the sudo process itself runs as ROOT until it drops privileges. So it
+# cannot appear in `pgrep -u <slot_uid>` — the emptiness proof used by
+# _release_slot — and cannot be killed by kill_slot, which kills *as* the slot
+# user. Both existing controls are scoped to a uid the survivor does not have.
+#
+# This function looks at the process table instead, which needs no privilege.
+# It reports; it does not kill. Reaping a root-owned process needs a sudoers
+# rule, and permission changes are OWNER-ONLY under CLAUDE.md — and detection
+# has to come first anyway: a reaper that kills what it cannot reliably
+# identify is worse than a report.
+
+def find_stray_processes(claimed_run_ids=(), ps_output=None):
+    """Processes referencing the sandbox root that no claimed run accounts for.
+
+    Returns (strays, status) where *strays* is a list of dicts with pid, user,
+    state and command, and *status* is "ok" or "unknown".
+
+    **"unknown" is not "none".** If the process table cannot be read, the
+    answer is that we do not know, and the caller must not render that as a
+    clean result. That distinction is the entire point of this function: the
+    defect it exists for was a clean-looking line printed by a check that had
+    not looked.
+
+    *ps_output* is injectable so the tests can drive real fixtures without
+    needing a sandbox host or privileges.
+    """
+    if ps_output is None:
+        try:
+            result = subprocess.run(
+                ["/bin/ps", "-eo", "pid=,user=,state=,command="],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception as exc:
+            return [], "unknown: cannot run ps: %s" % exc
+        if result.returncode != 0:
+            return [], "unknown: ps exit %d: %s" % (
+                result.returncode, result.stderr.strip())
+        ps_output = result.stdout
+
+    strays = []
+    for line in ps_output.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid, user, state, command = parts
+        if _SANDBOX_BASE not in command:
+            continue
+        # A process belonging to a run whose slot is still claimed is doing its
+        # job, not surviving one.
+        if any(rid in command for rid in claimed_run_ids):
+            continue
+        strays.append({"pid": pid, "user": user, "state": state,
+                       "command": command})
+    return strays, "ok"
+
+
 def reconcile():
     """Reconcile runs directory with slot state.
 
@@ -635,7 +700,11 @@ def reconcile():
     Returns dict with counts: {removed_runs, released_slots, errors}.
     Errors are reported, never swallowed.
     """
-    result = {"removed_runs": 0, "released_slots": 0, "errors": 0}
+    # removed_runs and released_slots count DIRECTORIES. stray_processes
+    # counts processes, and stray_status records whether we were able to look
+    # at all — a caller that renders "unknown" as "none" reintroduces #129.
+    result = {"removed_runs": 0, "released_slots": 0, "errors": 0,
+              "stray_processes": [], "stray_status": "not checked"}
 
     # ── Collect currently claimed slot names and their run_ids ──────
     claimed_slots = set()
@@ -743,6 +812,11 @@ def reconcile():
                 )
                 result["errors"] += 1
 
+    # The process table, which nothing above looked at. Done last so it sees
+    # the state reconcile leaves behind rather than the state it inherited.
+    strays, status = find_stray_processes(claimed_run_ids)
+    result["stray_processes"] = strays
+    result["stray_status"] = status
     return result
 
 
