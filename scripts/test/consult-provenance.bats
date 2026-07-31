@@ -1,0 +1,172 @@
+#!/usr/bin/env bats
+# consult-provenance.bats — a consultation that cannot be attributed must not exist.
+#
+# On 2026-07-31 three consultations were filed as independent cross-provider
+# reviews and none of them were. `jcode run -p openai -m gpt-5.6-sol` returned
+# a plausible report with exit 0 while the log showed the request had been
+# served by DeepSeek — the same provider as the builder whose code was under
+# review. The flags are discarded whenever the configured default provider uses
+# an API key, and resolution slides to the default model.
+#
+# That is fail-open. Nothing looked broken. It was caught by a human noticing
+# that an untouched subscription quota contradicted two reviews supposedly run
+# against it, not by any check in this repository.
+#
+# governance/reviewers.md already carried the rule — "a tool with silent
+# provider failover cannot be the control that guarantees provider
+# independence" — and the rule was applied to the provider called by direct API
+# and not to the one called through the tool that has the failover. A rule that
+# depends on remembering to apply it is not a control, which is why it is now
+# a script that deletes its own output rather than a paragraph.
+#
+# Every test drives a fixture log. Verification must be testable without
+# spending a token, or it will be tested rarely and trusted anyway.
+
+setup() {
+  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
+  CONSULT="$REPO_ROOT/scripts/consult.sh"
+  LOG="$BATS_TEST_TMPDIR/fake.log"
+  OUT="$BATS_TEST_TMPDIR/out.md"
+  PROMPT="$BATS_TEST_TMPDIR/prompt.txt"
+  echo "irrelevant" > "$PROMPT"
+}
+
+# A log window that looks like the named provider served the request.
+#
+# The timestamp is deliberately in the FUTURE. consult.sh takes its mark after
+# this file is written and selects log lines >= that mark, so a fixture stamped
+# "now" loses the race whenever a second ticks between the two calls — which
+# made this suite fail roughly one run in ten and pass the rest.
+#
+# That is the same defect repaired in state-gate.bats hours earlier: a test
+# whose outcome is decided by the clock rather than by its subject. In a real
+# run the log lines are always written after the mark, so a future stamp is the
+# faithful simulation rather than a workaround.
+_log_for() {
+  local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
+  case "$1" in
+    openai)   printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] API stream opened in 0.03s\n' "$now" ;;
+    deepseek) printf '[%s] [INFO] API stream attempt 1/3 (model: deepseek-v4-flash, endpoint: https://api.deepseek.com)\n' "$now"
+              printf '[%s] [INFO] [ses:x|prv:OpenRouter|mod:deepseek] API stream opened in 0.03s\n' "$now" ;;
+    both)     printf '[%s] [INFO] [ses:x|prv:OpenAI|mod:gpt-5.6-sol] opened\n' "$now"
+              printf '[%s] [INFO] [ses:y|prv:OpenRouter|mod:deepseek] opened\n' "$now" ;;
+    empty)    : ;;
+  esac > "$LOG"
+}
+
+@test "consult: the requested provider actually serving is accepted" {
+  _log_for openai
+  echo "REPORT BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -f "$OUT" ]
+  grep -q "served_provider: openai" "$OUT"
+  grep -q "REPORT BODY" "$OUT"
+}
+
+@test "consult: a different provider serving is REFUSED and the output deleted" {
+  # The 2026-07-31 failure, exactly. Asked for openai, deepseek answered, the
+  # tool exited 0. This is the test the repository did not have.
+  _log_for deepseek
+  echo "PLAUSIBLE REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CONSULT REFUSED"* ]]
+  [[ "$output" == *"served:    deepseek"* ]]
+  [ ! -f "$OUT" ]
+  [ ! -f "$OUT.stdout" ]
+}
+
+@test "consult: two providers in the window is ambiguous, not a pass" {
+  # A consultation that cannot be pinned to one model is not a second opinion,
+  # even when the one asked for is among them.
+  _log_for both
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ambiguous"* ]]
+  [ ! -f "$OUT" ]
+}
+
+@test "consult: nothing in the log is UNDETERMINED, never a pass" {
+  # Not measured must never produce the same outcome as measured-and-fine.
+  _log_for empty
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no-log-activity"* || "$output" == *"undetermined"* ]]
+  [ ! -f "$OUT" ]
+}
+
+@test "consult: an unreadable log is a refusal, not a shrug" {
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$BATS_TEST_TMPDIR/does-not-exist.log" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unreadable-log"* ]]
+  [ ! -f "$OUT" ]
+}
+
+@test "consult: deepseek asked for and deepseek serving is accepted" {
+  # The check must not simply prefer one provider — it compares.
+  _log_for deepseek
+  echo "BUILD REPORT" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" deepseek deepseek-v4-flash "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "served_provider: deepseek" "$OUT"
+}
+
+@test "consult: there is no flag that skips verification" {
+  # The one property that cannot be left to discipline. If a bypass is ever
+  # added, this test is where it becomes visible.
+  run bash -c "grep -nE 'skip.?(verify|check)|--force|--no-verify|SKIP_VERIFY' '$CONSULT' | grep -v CONSULT_SKIP_RUN"
+  echo "$output"
+  [ -z "$output" ]
+}
+
+@test "consult: refusing leaves no partial artifact behind" {
+  _log_for deepseek
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  [ "$status" -eq 1 ]
+  run bash -c "ls '$BATS_TEST_TMPDIR' | grep -c 'out.md'"
+  echo "files matching out.md: $output"
+  [ "$output" = "0" ]
+}
+
+# ── The builder's own invocation ───────────────────────────────────────────
+
+@test "consult: the builder passes provider AND model as flags" {
+  # It used to set JCODE_PROVIDER as an environment variable, which `jcode run`
+  # does not read, and to pass no model at all — so it took the configured
+  # default. That default now names the reviewer model, because an OAuth
+  # provider must be the default for -p/-m to be honoured. The old line would
+  # have built with the model meant to review the build.
+  #
+  # Comments are stripped before matching: this file explains the flags in
+  # prose directly above the line that uses them, and a grep over the whole
+  # file would be satisfied by the explanation.
+  run bash -c "sed 's/#.*//' '$REPO_ROOT/operator/builders/jcode.sh' | grep -E 'jcode run .*-p .*-m '"
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "consult: the builder does not rely on JCODE_PROVIDER reaching jcode" {
+  # Reading the variable to compute a default is fine. Passing it as the
+  # mechanism is not, because jcode run ignores it.
+  run bash -c "sed 's/#.*//' '$REPO_ROOT/operator/builders/jcode.sh' | grep -E '^ *JCODE_(PROVIDER|MODEL)=.*jcode run'"
+  echo "$output"
+  [ -z "$output" ]
+}

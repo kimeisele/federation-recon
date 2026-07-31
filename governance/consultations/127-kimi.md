@@ -1,3 +1,11 @@
+<!-- provenance
+requested_provider: moonshot
+served_provider: moonshot
+model: kimi-k3
+verified_by: direct API call, model field read from the response body
+log: not applicable — no tool with failover in the path
+-->
+
 # Judgment — Kimi K3 on red-team condition 3 (PR #127)
 
 **Question put:** should S2 merge with the missing caller tracked as an issue and
