@@ -22,19 +22,67 @@ setup() {
   [ -z "$output" ]
 }
 
-@test "tree_diff: record added in after returns 1 and prints the new record" {
+@test "tree_diff: record added in after returns 1 and prints it with a + prefix" {
   before="?? foo"
   after="$(printf '?? foo\n?? baz')"
   run tree_diff "$before" "$after"
   [ "$status" -eq 1 ]
-  [ "$output" = "?? baz" ]
+  [ "$output" = "+ ?? baz" ]
 }
 
-@test "tree_diff: record removed in after returns 1" {
+# This test used to assert the exit status and stop there, and that silence is
+# exactly what #121 was: tree_diff failed the gate for a removal and printed
+# nothing, so the gate blocked with a blank list of what it had seen. A test
+# that checks a function refuses without checking what it says is half a test.
+@test "tree_diff: record removed in after returns 1 and prints it with a - prefix" {
   before="$(printf '?? foo\n?? bar')"
   after="?? foo"
   run tree_diff "$before" "$after"
   [ "$status" -eq 1 ]
+  [ "$output" = "- ?? bar" ]
+}
+
+@test "tree_diff: an addition and a removal at once are both reported" {
+  before="$(printf '?? foo\n?? bar')"
+  after="$(printf '?? foo\n?? baz')"
+  run tree_diff "$before" "$after"
+  [ "$status" -eq 1 ]
+  printf '%s\n' "$output" | grep -qx '+ ?? baz'
+  # `--` before the pattern: it starts with a dash, and grep reads that as an
+  # option before it ever reads it as a pattern.
+  printf '%s\n' "$output" | grep -qx -- '- ?? bar'
+}
+
+@test "tree_diff: a refusal is never silent" {
+  # The property #121 is about, stated directly and independently of which
+  # direction caused it: if tree_diff returns 1, it printed something.
+  for pair in "a|b" "a|" "|b" "$(printf 'a\nb')|a"; do
+    before="${pair%%|*}"; after="${pair##*|}"
+    run tree_diff "$before" "$after"
+    [ "$status" -eq 1 ]
+    [ -n "$output" ]
+  done
+}
+
+# ---------------------------------------------------------------------------
+# tree_change_kind — naming which of the two events happened
+# ---------------------------------------------------------------------------
+
+@test "tree_change_kind: names additions, removals, and both" {
+  [ "$(tree_change_kind "+ ?? a")" = "left records behind" ]
+  [ "$(tree_change_kind "- ?? a")" = "removed records it did not create" ]
+  [ "$(tree_change_kind "$(printf -- '+ ?? a\n- ?? b')")" = "left records behind and removed others" ]
+}
+
+@test "tree_change_kind: prints nothing for no change" {
+  [ -z "$(tree_change_kind "")" ]
+}
+
+@test "tree_change_kind: a path containing a prefix mid-line is not a direction" {
+  # Only the first two columns say which way a record went. A filename such as
+  # `?? notes + drafts` must not register as an addition.
+  [ -z "$(tree_change_kind "?? notes + drafts")" ]
+  [ "$(tree_change_kind "$(printf -- '- ?? notes + drafts')")" = "removed records it did not create" ]
 }
 
 @test "tree_diff: reordered but equal content returns 0" {
@@ -51,8 +99,8 @@ setup() {
   run tree_diff "$before" "$after"
   [ "$status" -eq 1 ]
   [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 2 ]
-  echo "$output" | grep -q '?? alpha'
-  echo "$output" | grep -q '?? beta'
+  printf '%s\n' "$output" | grep -qx '+ ?? alpha'
+  printf '%s\n' "$output" | grep -qx '+ ?? beta'
 }
 
 # ---------------------------------------------------------------------------
