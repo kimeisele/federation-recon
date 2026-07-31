@@ -164,7 +164,7 @@ set -m
     suite_failed "$LOGDIR/bats.log" "test suite"
   fi
   if ! new_records="$(tree_diff "$snap_pre_suite" "$(tree_snapshot)")"; then
-    bad "the test suite modified the working tree"
+    bad "the test suite $(tree_change_kind "$new_records")"
     printf '%s\n' "$new_records" | sed 's/^/    /'
   fi
 
@@ -205,7 +205,7 @@ set -m
     elif [ "$before" != "$a" ]; then
       bad "committed artifacts are not the fixpoint — regenerate and commit"
     elif ! new_records="$(tree_diff "$snap_pre_reproduce" "$(tree_snapshot)")"; then
-      bad "the reproduce run left the tree dirty"
+      bad "the reproduce run $(tree_change_kind "$new_records")"
       printf '%s\n' "$new_records" | sed 's/^/    /'
     else
       good "committed == run1 == run2, tree clean"
