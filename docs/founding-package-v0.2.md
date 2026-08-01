@@ -182,9 +182,66 @@ It is not:
 - a registry owner,
 - an executor,
 - a healer,
+  <!-- decidable form: see §5.1 -->
+
 - a public projection layer,
 - a legislature,
 - or a canonical source of domain truth.
+
+## 5.1 "Executor" and "healer", made decidable
+
+Added 2026-08-01 (amendment 3). The list above is a list of **federation
+roles** — peer, router, registry owner, trust authority. Read that way,
+"executor" and "healer" have always meant *toward the federation*. Read
+literally, they were argued to forbid Recon from running any program at all,
+which would forbid `git`, `bats` and the census, and therefore forbid nothing.
+A prohibition that everything violates discriminates nothing.
+
+The line is drawn by **whose repository the effect lands in**, not by whether a
+process starts:
+
+| | Permitted | Prohibited |
+|---|---|---|
+| Observed repositories other than this one | reading at a pin | **any** write, patch, PR, merge, remediation, or process |
+| This repository's own working tree | building, testing, sandboxed execution of a builder against an order, producing a patch | **merging that patch** — Phase 4 stays unimplemented (`CLAUDE.md`) |
+| Federation runtime | nothing | acting as executor or healer for any peer, router, or service |
+
+So: **Recon may operate a toolchain on its own work. It may not execute
+anything on anyone else's behalf, and it may not integrate its own output.**
+Supervision of a sandboxed builder — process lifecycle, limits, reaping,
+orphan reconciliation — falls on the permitted side, and is what #83 §21.2–21.4
+requires and §22 delimits: *"recon baut keinen Coding-Agenten. recon baut die
+Aufsicht um einen vorhandenen."*
+
+**This is a widening, and it is labelled as one.** An earlier draft of this
+section called itself a clarification, on the evidence that it also forbids
+something previously arguable — Recon merging its own builder's patch. A
+reviewer refused the argument, correctly: *"Making decidable is legislation. A
+clarification discovers a line that existed; this one stipulates a line —
+'whose repository the effect lands in' — that appears nowhere in the prior
+text."* And the same PR could not call amendment 2 the largest change of
+direction since founding while calling the section that constitutionalises it
+weightless. The narrowing is real and the widening is real; the net is a
+widening, and pretending otherwise is how a constitution is drafted around
+instead of amended.
+
+**The execution layer stays in this repository** (owner, 2026-08-01, #148).
+Extraction into a second repository was considered and declined: the coupling
+is zero today, so the boundary is enforced by a check rather than a wall —
+`scripts/test/layer-boundary.bats` fails when `core/` references the evidence
+layer or the evidence layer references `core/`, in either direction, at any
+depth. That check is the compensating control this section depends on, and it
+exists rather than being promised.
+
+**Open contradiction, recorded rather than smoothed over.** This section
+permits orphan reconciliation; the FR-CON-002 carve-out below forbids Recon
+from healing itself in response to its own observations. A supervisor that
+detects an orphan of its own run and reaps it satisfies both descriptions. The
+two sections disagree, the disagreement was found by review rather than by
+argument here, and it is left visible until it is settled on its own — see
+#148. The carve-out's rationale is narrow (never alter or suppress the
+*record* of a Finding); its enacted text is broad. That gap is the thing to
+fix, and fixing it is a separate constitutional act.
 
 ---
 
@@ -197,6 +254,26 @@ Recon may observe claims and differences but may not create normative federation
 ## FR-CON-002 — No autonomous remediation
 
 Recon may not modify observed repositories, open remediation pull requests, merge changes, or execute healing actions.
+
+**Self-observation carve-out** (added 2026-08-01, amendment 3). `federation-recon`
+observes itself: it holds its own pins at `pins/v1-census/federation-recon.json`
+and `pins/v0-boundary-drift/federation-recon.json`. Under the sentence above,
+read literally, **this repository may not modify itself** — which every commit
+since founding has violated, including the census that writes the pins and the
+procedure by which this invariant is amended.
+
+The invariant governs **other people's repositories**. For this one:
+
+- Recon modifies its own tree only through the protected PR path, and never
+  as remediation of one of its own Findings. A Finding about
+  `federation-recon` is treated exactly like a Finding about any other node:
+  observed, recorded, **not acted on** by the observatory.
+- The census writing `pins/`, `evidence/`, `findings/` is production of
+  evidence, not remediation, and is bounded by FR-CON-007 reproducibility.
+
+The distinction is *remediation*, not *modification*. Recon may maintain
+itself; it may not heal itself in response to its own observations, because a
+node that repairs what it reports has no independent record of the defect.
 
 ## FR-CON-003 — No active public projection
 
