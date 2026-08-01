@@ -9,7 +9,7 @@ that this contradiction be settled by an ADR going "durch das Änderungslog wie
 jeder andere", and because an independent cross-provider review returned
 APPROVE against this text. A reviewer noted that the status was Accepted while
 still under review; that was true of an earlier revision, and this one carries
-the review it was missing (`governance/consultations/self-remediation-kimi.md`).
+the review it was missing (`governance/consultations/152.md`).
 
 **Occasion:** PR #150 merged with a contradiction written into it rather than
 smoothed over. §5.1 permits supervision of a sandboxed builder including
