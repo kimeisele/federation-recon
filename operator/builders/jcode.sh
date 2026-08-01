@@ -90,7 +90,16 @@ Complete the task described by the issue."
 # -----------------------------------------------------------------
 # 4. Provider
 # -----------------------------------------------------------------
+# Provider AND model, both passed as flags on the command line.
+#
+# This used to set JCODE_PROVIDER as an environment variable and pass no model
+# at all. Measured on 2026-07-31: `jcode run` does not read those variables,
+# and with no -m it uses [provider] default_model from ~/.jcode/config.toml.
+# That default now names the REVIEWER model, because an OAuth provider has to
+# be the default for -p/-m to be honoured at all (governance/reviewers.md).
+# So the old line would have built with the model meant to review the build.
 PROVIDER="${JCODE_PROVIDER:-deepseek}"
+MODEL="${JCODE_MODEL:-deepseek-v4-flash}"
 
 # -----------------------------------------------------------------
 # 5. Usage before
@@ -101,7 +110,7 @@ USAGE_BEFORE=$(jcode usage 2>&1 || true)
 # 6. Invoke jcode
 # -----------------------------------------------------------------
 set +o errexit
-JCODE_PROVIDER="$PROVIDER" jcode run --quiet -C "$WORKTREE" "$PROMPT" >/dev/null 2>&1
+jcode run -p "$PROVIDER" -m "$MODEL" --quiet -C "$WORKTREE" "$PROMPT" >/dev/null 2>&1
 JCODE_EXIT=$?
 set -o errexit
 

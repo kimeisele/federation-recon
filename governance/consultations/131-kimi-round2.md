@@ -1,8 +1,9 @@
 <!-- provenance
 requested_provider: moonshot
 served_provider: moonshot
+reviewer_claim: moonshot
 model: kimi-k3
-verified_by: direct API call, model field read from the response body
+consistency_check: direct API call, model field read from the response body
 log: not applicable — no tool with failover in the path
 -->
 

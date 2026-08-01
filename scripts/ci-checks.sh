@@ -117,6 +117,22 @@ else
   fail=1
 fi
 
+# ---- Consultation provenance -----------------------------------------------
+# A consultation may not claim a provider it cannot prove served it. On
+# 2026-07-31 three artifacts named a provider that had not answered, and the
+# repository read them as independent judgments through a merge decision. See
+# scripts/lib/consultation-provenance.sh.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/consultation-provenance.sh"
+
+echo
+echo "== [4b/6] consultation provenance =="
+if check_consultation_provenance "governance/consultations"; then
+  :
+else
+  fail=1
+fi
+
 # ---- Suite inventory --------------------------------------------------------
 # shellcheck disable=SC1091
 source "$(dirname "$0")/lib/suite-inventory.sh"

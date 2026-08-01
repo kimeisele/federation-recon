@@ -12,15 +12,25 @@ output** (`docs/execution-core-adr.md` §3.2) regardless of which model it is.
 |---|---|
 | Model | `deepseek-v4-flash` |
 | Provider | DeepSeek, API key in `~/.config/secrets/env` |
-| Where it is set | `~/.jcode/config.toml` → `[provider] default_model` |
+| How it is selected | **explicit `-p deepseek -m deepseek-v4-flash` on every call** |
 | Adopted | 2026-07-31 |
 
-`operator/builders/jcode.sh` pins the **provider** (`JCODE_PROVIDER`, default
-`deepseek`) and deliberately does not pin the model, so the line above is the
-single place that decides. Nothing in this repository names a builder model —
-the one occurrence of `deepseek-v4-pro` under `core/orders/vectors/` is a
-frozen test fixture in the acceptance oracle and must not be edited to match
-reality.
+**Corrected the same day it was written.** This file first said the model came
+from `[provider] default_model` in `~/.jcode/config.toml` and that the config
+was the single place that decided. Hours later the default had to become an
+**OAuth provider** — otherwise `jcode run` silently discards `-p`/`-m` and
+serves everything from the default, which is how three reviews came to be
+answered by the builder's own provider (`governance/reviewers.md`). So the
+default now names a *reviewer*, and a bare `jcode run` would build with the
+model meant to review the build.
+
+`operator/builders/jcode.sh` therefore passes both flags explicitly. It used to
+set `JCODE_PROVIDER` as an environment variable, which `jcode run` does not
+read, and to pass no model at all.
+
+Nothing in this repository hardcodes a builder model name — the one occurrence
+of `deepseek-v4-pro` under `core/orders/vectors/` is a frozen test fixture in
+the acceptance oracle and must not be edited to match reality.
 
 ## Why Flash rather than Pro
 
