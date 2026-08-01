@@ -453,17 +453,50 @@ def _validate_limits(order, policy):
 # ── Bundle provenance ────────────────────────────────────────────────────────
 
 
-_INVISIBLE = ''.join(chr(c) for c in (
-    0x00AD, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060, 0xFEFF,
-    0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
-))
+# Removed as a CLASS, not as a list. Three versions of this guard were written
+# by naming codepoints, and each one was defeated by a codepoint nobody named:
+#
+#   v1  thirteen literal codepoints        →  U+061C, U+FFF9, U+180E, U+034F
+#   v2  NFKC then strip Cf/Cc/Mn           →  a combining acute composed away
+#   v3  NFKD then strip Cf/Cc/Mn           →  U+2004, U+00A0, U+2028, U+20DD
+#
+# The categories below are the answer to v3, found by a reviewer and confirmed
+# by running it. `Zs` is the one that matters and the one that is easy to get
+# wrong: NFKD applies compatibility decompositions, so U+2004 THREE-PER-EM
+# SPACE becomes an ordinary U+0020 *before* the strip runs — and U+0020 is Zs,
+# which the previous set did not remove. The fix for "NFKC opens a space" was
+# to strip spaces; instead the normalisation order was changed, which moved
+# the bypass without closing it.
+_STRIPPED_CATEGORIES = (
+    'Cf',   # format: zero-width, directional, joiners, tag characters
+    # Cc is defence in depth and nothing more: the schema's no-control-character
+    # rule fires before the fold is reached, so through the current callers this
+    # entry can never decide anything. Vector 55 proves it — it was written to
+    # exercise Cc here and comes back E_SCHEMA. Kept because the cost is one
+    # tuple entry and the guarantee it would otherwise rest on is "the checks
+    # stay in this order".
+    'Cc',   # control
+    'Mn',   # non-spacing mark (combining acute, CGJ)
+    'Me',   # enclosing mark (U+20DD COMBINING ENCLOSING CIRCLE)
+    'Zs',   # space separator, incl. plain U+0020 after NFKD compat-folding
+    'Zl',   # line separator U+2028 — no decomposition, no category above
+    'Zp',   # paragraph separator U+2029
+)
 
 
 def _fold_identity(value):
-    """Lowercase, NFKC-normalise, and remove zero-width and directional marks.
+    """Fold an identity for comparison: decompose, strip invisibles, lowercase.
 
     Comparing identities as raw text is defeated by one invisible codepoint.
-    This removes that bypass; it does not make the comparison sound.
+    This removes that bypass; it does not make the comparison sound. The real
+    answer is a signed attestation (#141) — this is a refuse-list, and a
+    refuse-list is a claim about what an attacker will think of.
+
+    Deliberately asymmetric: it may fold together strings a human would call
+    different (`José` → `jose`, `deep seek` → `deepseek`). Every caller uses
+    the result to *refuse*, so over-folding produces more refusals and never
+    fewer. If this is ever used to admit something, that property inverts and
+    this function is the wrong tool.
     """
     # NFKD first — DEcompose.
     #
@@ -473,15 +506,14 @@ def _fold_identity(value):
     # Decomposing turns the same input back into a base letter plus a mark,
     # and the mark is then removed as a class.
     folded = unicodedata.normalize('NFKD', value)
-    # Cf "format" covers zero-width, directional and joiner characters as a
-    # CLASS; the first version listed thirteen codepoints by hand, and a list
-    # is a guess about which invisible characters exist. Cc is control, Mn is
-    # a non-spacing mark — another way to spell a name without changing how it
-    # looks.
     folded = ''.join(c for c in folded
-                     if unicodedata.category(c) not in ('Cf', 'Cc', 'Mn'))
+                     if unicodedata.category(c) not in _STRIPPED_CATEGORIES)
     # Then compatibility-fold what remains, so fullwidth and other variants
     # collapse onto the same ASCII.
+    #
+    # What this still does NOT catch, stated rather than implied: homoglyphs.
+    # `dеepsееk` with Cyrillic е is visually identical, fold-stable, and
+    # admitted. No normalisation closes that; only an attestation does.
     return unicodedata.normalize('NFKC', folded).lower()
 
 

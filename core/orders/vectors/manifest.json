@@ -184,6 +184,42 @@
     "46-huge-digit-run-inside-a-string.json": {
       "code": "E_JSON",
       "why": "Five thousand digits inside a STRING. The parser would accept it, so the ValueError backstop never fires and only the raw-text pre-filter refuses it. Added because mutation testing showed the backstop was masking the guard: disabling the pre-filter left vector 38 green, since the backstop produced the same code for the same input. Two mechanisms that yield one verdict need a vector each, or one of them is decoration."
+    },
+    "47-identity-with-three-per-em-space.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+2004 THREE-PER-EM SPACE. NFKD compat-decomposes it to a plain U+0020 *before* the strip, and U+0020 is Zs. The Cf/Cc/Mn set did not remove Zs, so this was ADMITTED on the first fix for exactly the bypass that fix was written for. Round 1 named this codepoint; round 2 found it still open."
+    },
+    "48-identity-with-enclosing-mark.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+20DD COMBINING ENCLOSING CIRCLE, category Me. Round 1's fix text said Cf/Mn/Me; Cc was shipped in place of Me. No decomposition, NFKC no-op, lowercase no-op — it passed straight through."
+    },
+    "49-identity-with-line-separator.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+2028 LINE SEPARATOR, category Zl. Unlike the Zs cases it has no decomposition at all, so it survives every normalisation and is only removed by naming its category. Zp (U+2029) is the same shape and covered by the same rule."
+    },
+    "50-identity-with-arabic-letter-mark.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+061C ARABIC LETTER MARK, Cf. One of five codepoints round 1 named explicitly and required as vectors 'regardless' of the class fix — the class fix catches it, and a class fix with no vector is a claim about a category rather than a test of one."
+    },
+    "51-identity-with-interlinear-annotation.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+FFF9 INTERLINEAR ANNOTATION ANCHOR, Cf. Second of the five named codepoints."
+    },
+    "52-identity-with-tag-character.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+E0065 TAG LATIN SMALL LETTER E, Cf. Third of the five: a plane-14 tag character, outside the BMP, which a codepoint list assembled from BMP examples will never contain."
+    },
+    "53-identity-with-mongolian-vowel-separator.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+180E MONGOLIAN VOWEL SEPARATOR, Cf since Unicode 6.3. Fourth of the five, and the one whose category changed between Unicode versions — which is the argument against hand-written lists in one codepoint. (U+034F CGJ, the fifth, is already covered by vector 41's Mn path.)"
+    },
+    "54-identity-with-paragraph-separator.json": {
+      "code": "E_BUNDLE_PROVENANCE",
+      "why": "U+2029 PARAGRAPH SEPARATOR, category Zp. Added because per-category mutation showed Zp was the only stripped category carrying no vector — in the set on the strength of resembling Zl, which is exactly how the original thirteen-codepoint list was assembled. Zl and Zp now each fail alone."
+    },
+    "55-identity-with-escaped-control-char.json": {
+      "code": "E_SCHEMA",
+      "why": "U+0001 written as a \\u escape in `author`, category Cc. Added to exercise the Cc entry in the fold's stripped-category set, and it established the opposite: the schema's no-control-characters rule fires FIRST, so the code is E_SCHEMA and the fold never sees the value. That is the honest record — Cc is unreachable through this field, the vector pins which guard actually decides, and a later reordering of the two checks turns this vector red instead of passing silently with a different mechanism."
     }
   },
   "accept": {

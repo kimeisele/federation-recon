@@ -199,6 +199,19 @@ approval is genuine. Those belong to S3, where the supervisor has the bundle in
 hand. A green validator establishes that the order *claims* a well-formed
 provenance — per ADR §3.3, a claim, not a finding.
 
+**`location` is never checked for existence, and never can be.** The question
+"can a location still name nothing while passing?" has one honest answer:
+**always.** This validator is pure — it reads the order and `core/policy.json`
+and touches no other path — so `location` is checked for *shape* only: the
+required absolute prefix, not equal to the bundles directory itself after
+`normpath`, and no `.` or `..` segment. A syntactically perfect path to a file
+that was never written passes every one of those and is admitted.
+
+The shape rules exist to stop a `location` from *denoting* something outside
+the bundle tree, not to establish that it denotes anything at all. Reading the
+bytes is S3's job, and until S3 exists, "the order passed validation" says
+nothing whatever about whether an acceptance bundle is on disk.
+
 ## 6. The vectors
 
 `vectors/reject/` — each file must be refused with the code recorded for it in
