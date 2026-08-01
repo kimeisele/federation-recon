@@ -635,23 +635,8 @@ def _validate_bundle_provenance(order):
 # ── Main entry ───────────────────────────────────────────────────────────────
 
 
-# Module-level, deliberately: validate() communicates its verdict by exiting,
-# so a return value cannot carry the parsed order out. A caller that wants the
-# bytes it validated — rather than the bytes at that path afterwards — reads
-# them from here after catching SystemExit(0). See validated_order().
-_validated_order = {}
-
-
-def validated_order():
-    """The order dict that the last successful validate() actually inspected.
-
-    Returns None when the last call did not reach a verdict of admissible.
-    """
-    return _validated_order.get("order")
-
-
-def validate(order_path):
-    """Run the full validation pipeline on *order_path*.
+def run_checks(order_path):
+    """Run the full validation pipeline on *order_path* and RETURN the order.
 
     Checks are ordered per CONTRACT.md §2 (earlier row wins):
       1. E_SIZE  — byte limit
@@ -660,12 +645,19 @@ def validate(order_path):
       4. E_CAPABILITY_UNPROVEN — unclaimed capability
       5. E_LIMIT — non‑positive effective limit
       6. E_BUNDLE_PROVENANCE — bundle provenance
-    """
 
-    # A previous call's result must never be readable as this call's. Cleared
-    # before anything else, so every early refusal leaves validated_order()
-    # returning None rather than the last order that happened to pass.
-    _validated_order.clear()
+    Refusal still leaves through `_refuse`, which exits 1 after printing the
+    reason code — that is the contract and it does not change. What changes is
+    the success path: the parsed order is *returned* rather than deposited in a
+    module global for a caller to fetch afterwards.
+
+    The first version of #128 used a global. A reviewer refused it, and was
+    right: it makes the validator stateful for the benefit of one caller, so
+    two callers in one process — a test harness running vectors in a loop, a
+    future supervisor validating two orders — read each other's results, and
+    the guard against that is a `.clear()` that has to be remembered. A value
+    that travels by return cannot be read by the wrong caller at all.
+    """
 
     # 1. Read raw bytes ──────────────────────────────────────────────────
     try:
@@ -702,7 +694,7 @@ def validate(order_path):
     # 8. Bundle provenance ───────────────────────────────────────────────
     _validate_bundle_provenance(order)
 
-    # The parsed order survives the verdict.
+    # The parsed order survives the verdict, by being returned.
     #
     # A caller used to learn only the exit status and then RE-OPEN the file
     # with a plain json.load — no size check, no canonicity, no schema, no
@@ -714,8 +706,16 @@ def validate(order_path):
     # nothing, because the dict is already in memory here, and the alternative
     # is a rule that holds only as long as nobody adds a field to the second
     # read. See #128.
-    _validated_order["order"] = order
+    return order
 
+
+def validate(order_path):
+    """CLI behaviour: run the checks, then exit 0 on success.
+
+    A thin wrapper so the command-line contract — exit 0, silent stderr — is
+    unchanged while in-process callers use run_checks() and get the order.
+    """
+    run_checks(order_path)
     # Admissible — silent exit 0
     sys.exit(0)
 

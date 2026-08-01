@@ -58,6 +58,7 @@ EXECUTION_LAYER_OUTSIDE_CORE = {
     'scripts/test/seatbelt-unit.bats',
     'scripts/test/stray-processes.bats',
     'scripts/test/worker-limits.bats',
+    'scripts/test/order-reread.bats',
     'scripts/test/layer-boundary.bats',        # this file names both sides
 }
 

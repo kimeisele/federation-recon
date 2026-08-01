@@ -77,43 +77,68 @@ PY
   [ "$status" -eq 0 ]
 }
 
-@test "order-reread: validate() exposes the order it inspected" {
-  run python3 - "$REPO_ROOT" <<'PY'
+@test "order-reread: run_checks() returns the order it inspected" {
+  run python3 - "$REPO_ROOT" <<'EOPY'
 import sys
 root = sys.argv[1]; sys.path.insert(0, root + "/core")
 import orders.validate as v
-try:
-    v.validate(root + "/core/orders/vectors/accept/01-minimal.json")
-except SystemExit as e:
-    assert e.code == 0, e.code
-o = v.validated_order()
+o = v.run_checks(root + "/core/orders/vectors/accept/01-minimal.json")
 assert o is not None and o["schema"] == "execution-core/order/v1", o
-print("validated_order() returned the order, issue", o["issue"])
-PY
+print("run_checks() returned the order, issue", o["issue"])
+EOPY
   echo "$output"; [ "$status" -eq 0 ]
 }
 
-@test "order-reread: a refused order leaves no readable order behind" {
-  # Without the clear, a caller that ignored the exit status could read the
-  # PREVIOUS run's order and act on it — a stale success masquerading as this
-  # one, which is worse than the window being closed at all.
-  run python3 - "$REPO_ROOT" <<'PY'
+@test "order-reread: a refusal binds nothing, and no module state survives" {
+  # The first version of this fix deposited the order in a module global and
+  # cleared it at the top of every call. A reviewer refused that shape, and was
+  # right: it makes the validator stateful for one caller's benefit, so two
+  # callers in one process read each other's results, and the only guard is a
+  # .clear() somebody has to remember to keep first.
+  #
+  # With a return value there is nothing to leave behind. This asserts the
+  # property rather than trusting the argument — including that the global and
+  # its accessor are gone, so the old shape cannot quietly come back.
+  run python3 - "$REPO_ROOT" <<'EOPY'
 import sys
 root = sys.argv[1]; sys.path.insert(0, root + "/core")
 import orders.validate as v
 vec = root + "/core/orders/vectors"
+good = v.run_checks(vec + "/accept/01-minimal.json")
+assert good is not None
+leaked = "sentinel"
 try:
-    v.validate(vec + "/accept/01-minimal.json")
-except SystemExit:
-    pass
-assert v.validated_order() is not None
-try:
-    v.validate(vec + "/reject/25-unproven-mem-limit.json")
+    leaked = v.run_checks(vec + "/reject/25-unproven-mem-limit.json")
 except SystemExit as e:
     assert e.code == 1, e.code
-assert v.validated_order() is None, "a refusal left the previous order readable"
-print("refusal cleared the previous result")
-PY
+else:
+    raise AssertionError("a refused order returned instead of exiting")
+assert leaked == "sentinel", "the refusal bound a value"
+assert not hasattr(v, "_validated_order"), "the module global is back"
+assert not hasattr(v, "validated_order"), "the accessor is back"
+print("a refusal exits and binds nothing; no module state remains")
+EOPY
+  echo "$output"; [ "$status" -eq 0 ]
+}
+
+@test "order-reread: two callers in one process do not see each other's order" {
+  # The concrete failure the module global permitted, as a test. Under the old
+  # shape this was only safe because every call began with .clear(); under a
+  # return value it cannot be expressed.
+  run python3 - "$REPO_ROOT" <<'EOPY'
+import sys
+root = sys.argv[1]; sys.path.insert(0, root + "/core")
+import orders.validate as v
+vec = root + "/core/orders/vectors"
+a = v.run_checks(vec + "/accept/01-minimal.json")
+b = v.run_checks(vec + "/accept/02-with-reductions.json")
+assert a is not b, "the two calls returned the same object"
+assert a["run_id"] != b["run_id"] or a != b, "the second call overwrote the first"
+# a must still be the order the FIRST call inspected, after the second ran
+again = v.run_checks(vec + "/accept/01-minimal.json")
+assert a == again, "the first result changed when another order was validated"
+print("each caller holds its own order")
+EOPY
   echo "$output"; [ "$status" -eq 0 ]
 }
 

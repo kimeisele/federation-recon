@@ -145,10 +145,10 @@ def validate_order(order_path):
     Returns (returncode, stderr_text, order). *order* is the parsed dict the
     validator actually inspected, or None when the verdict was not admissible.
 
-    Runs in-process: no subprocess, no shell. The validator signals its verdict
-    by exiting, so SystemExit is caught here and read as the status — which is
-    the supervisor measuring the exit status itself rather than believing a
-    reported one (ADR §6).
+    Runs in-process: no subprocess, no shell. A refusal signals itself by
+    exiting, so SystemExit is caught here and read as the status — the
+    supervisor measuring the exit status itself rather than believing a
+    reported one (ADR §6). Admission returns the order.
 
     The order comes back with the verdict because the launcher used to re-open
     the file afterwards with a plain json.load, and everything the validator
@@ -162,12 +162,16 @@ def validate_order(order_path):
     buf = io.StringIO()
     try:
         with contextlib.redirect_stderr(buf):
-            order_validate.validate(order_path)
+            order = order_validate.run_checks(order_path)
     except SystemExit as exc:
+        # Only refusals leave this way now. A SystemExit(0) would mean the
+        # validator exited successfully without returning the order, which is
+        # a contract change and is reported as a refusal rather than admitted.
         rc = exc.code if isinstance(exc.code, int) else 1
-        return rc, buf.getvalue(), (order_validate.validated_order() if rc == 0 else None)
-    # validate() always exits; reaching here means its contract changed.
-    return 1, buf.getvalue() + "validator returned without a verdict\n", None
+        if rc == 0:
+            return 1, buf.getvalue() + "validator exited 0 without returning an order\n", None
+        return rc, buf.getvalue(), None
+    return 0, buf.getvalue(), order
 
 
 def main(argv=None):
