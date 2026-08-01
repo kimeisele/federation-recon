@@ -453,6 +453,35 @@ def _validate_limits(order, policy):
 # ── Bundle provenance ────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS GUARD IS FROZEN. Owner decision, 2026-08-01.
+#
+# What it does: makes the builder-identity check survive the *typographic*
+# rewriting of a name — invisible insertions, combining marks, compatibility
+# variants, width and space variants. Four rounds of adversarial review, seven
+# stripped categories, each one carrying its own vector.
+#
+# What it explicitly does NOT do, and no further round will change:
+#
+#   - Homoglyphs. `dеepsееk` with Cyrillic е is visually identical,
+#     fold-stable, and ADMITTED. No normalisation closes this.
+#   - Transliteration, abbreviation, or any name the builder simply does not
+#     write down. `d33pseek` is not a Unicode problem.
+#   - Establishing that the named party authored or approved anything. That is
+#     an attestation, and it is #141.
+#
+# The guard is a refuse-list, and a refuse-list is a claim about what an
+# attacker will think of. It raises the cost of one specific evasion; it is not
+# the control that makes provenance sound.
+#
+# **A newly discovered codepoint class is an ordinary issue, not a blocker.**
+# Three rounds of this repository's attention went into one comparison of two
+# strings that the architecture already documents as advisory. File it, fix it
+# when it is the most valuable thing to fix, and do not hold a pull request for
+# it. If the strings need to be trustworthy, the answer is #141, not an eighth
+# category.
+# ─────────────────────────────────────────────────────────────────────────────
+#
 # Removed as a CLASS, not as a list. Three versions of this guard were written
 # by naming codepoints, and each one was defeated by a codepoint nobody named:
 #
