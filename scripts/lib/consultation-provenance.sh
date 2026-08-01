@@ -61,8 +61,11 @@
 #   models.
 #
 # REFUSED OUTRIGHT
-#   The quarantine sentinel anywhere in the file; a SELFTEST marker, which
-#   records that no provider was contacted; more than one provenance opener.
+#   The quarantine sentinel anywhere in the file, where it appears the way a
+#   quarantine writes it: at the start of a line. A review that QUOTES the
+#   sentinel while describing this attack is not a quarantine, and the
+#   committed one must keep passing. A SELFTEST marker, which records that
+#   no provider was contacted; more than one provenance opener.
 
 _CP_QUARANTINE_SENTINEL="UNATTRIBUTED CONSULTATION OUTPUT"
 
@@ -74,6 +77,39 @@ _CP_QUARANTINE_SENTINEL="UNATTRIBUTED CONSULTATION OUTPUT"
 _cp_inventory() {
   local dir="$1"
   find "$dir" \( -iname '*.md' -o -iname '*.markdown' \) -print0 2>/dev/null
+}
+
+# _cp_unreadable_dirs <dir> — directories the enumeration cannot see into.
+#
+# `find` still lists a directory it may not read — the entry is visible from
+# its parent — but it cannot descend into it, so with stderr discarded it
+# prints nothing for whatever is inside and reports nothing at all. A file
+# hidden that way is invisible, and invisible is the one thing this gate
+# exists to prevent. Every directory the enumeration cannot look through is
+# named, and a single one is a failure: the inventory is incomplete, full
+# stop.
+_cp_unreadable_dirs() {
+  local dir="$1" d
+  while IFS= read -r -d '' d; do
+    if [[ ! -r "$d" || ! -x "$d" ]]; then
+      printf '%s\0' "$d"
+    fi
+  done < <(find "$dir" -type d -print0 2>/dev/null)
+}
+
+# _cp_dir_symlinks <dir> — symlinks that are directories, outside *.md names.
+#
+# The file loop refuses symlinks whose names match the consultation globs; a
+# symlinked DIRECTORY under any other name never reaches that loop, so it is
+# refused here. A consultation must be the bytes at the consultation path,
+# and a path that reaches content through a link is not that.
+_cp_dir_symlinks() {
+  local dir="$1" d
+  while IFS= read -r -d '' d; do
+    if [[ -L "$d" && -d "$d" ]]; then
+      printf '%s\0' "$d"
+    fi
+  done < <(find "$dir" -type l ! -iname '*.md' ! -iname '*.markdown' -print0 2>/dev/null)
 }
 
 # _cp_register_reason <register> <name> — true when the entry, or the run of
@@ -106,9 +142,43 @@ check_consultation_provenance() {
     return 1
   fi
 
+  # The enumeration must be complete before its emptiness or its success can
+  # be believed. find cannot see into a directory it may not read, and a
+  # symlink to a directory is refused, not traversed. Either makes the
+  # inventory incomplete, and an incomplete inventory reporting success is
+  # the defect this file exists to catch.
+  local d
+  while IFS= read -r -d '' d; do
+    echo "FAIL — cannot read directory ${d#"$dir"/}. Whatever it holds is" >&2
+    echo "       invisible to the enumeration, and invisible is not a pass." >&2
+    rc=1
+  done < <(_cp_unreadable_dirs "$dir")
+  while IFS= read -r -d '' d; do
+    echo "FAIL — ${d#"$dir"/} is a symlink to a directory. A consultation" >&2
+    echo "       must be the bytes at the consultation path; following a" >&2
+    echo "       link certifies content stored elsewhere." >&2
+    rc=1
+  done < <(_cp_dir_symlinks "$dir")
+
   while IFS= read -r -d '' f; do
     base="${f#"$dir"/}"
     checked=$((checked + 1))
+
+    # ── a path with a newline in it is refused, not split ────────────────
+    #
+    # find -print0 and `read -d ''` carry the name whole, but every reader
+    # downstream of this loop is line-based: the register is one name per
+    # line, and a multi-line name handed to grep arrives split into separate
+    # patterns — a register entry for the first half of the name admits the
+    # file. A path that splits mid-name either escapes the check or produces
+    # a nonsense one, and both are worse than an error, so this is an error.
+    if [[ "$base" == *$'\n'* ]]; then
+      echo "FAIL — $base: the filename contains a newline. It cannot be" >&2
+      echo "       enumerated, registered or named as one path, so it is" >&2
+      echo "       refused rather than split." >&2
+      rc=1
+      continue
+    fi
 
     # ── symlinks are refused, not followed and not skipped ───────────────
     if [[ -L "$f" ]]; then
@@ -126,11 +196,18 @@ check_consultation_provenance() {
 
     # ── a quarantined body must never be admitted by renaming it ─────────
     #
-    # Anchored to the first lines, where the quarantine writer puts its header.
-    # Searching the whole file rejected a review that QUOTED the sentinel while
-    # describing this very attack — the same shape as a test satisfied by a
-    # comment explaining the mechanism, met three times in one day.
-    if grep -qF "$_CP_QUARANTINE_SENTINEL" <<< "$(head -3 "$f" 2>/dev/null)"; then
+    # Policy: the sentinel anywhere in the file. The check used to look at the
+    # first three lines, and Round 3 put the sentinel on line five, past it.
+    # The sentinel is now refused anywhere in the file in the form a quarantine
+    # writes it: as the start of a line. Prose that QUOTES the sentinel while
+    # describing this very attack is not a header — the committed review in
+    # governance/consultations/137-sol-round2.md quotes it mid-sentence and
+    # must keep passing — so the match is anchored to the start of a line,
+    # not to any substring.
+    if awk -v s="$_CP_QUARANTINE_SENTINEL" '
+        { line = $0; sub(/^[[:space:]]+/, "", line); if (index(line, s) == 1) found = 1 }
+        END { exit !found }
+      ' "$f" 2>/dev/null; then
       echo "FAIL — $base carries the quarantine sentinel. It is a body whose" >&2
       echo "       provider could not be determined; renaming it does not" >&2
       echo "       change that." >&2
@@ -216,15 +293,23 @@ check_consultation_provenance() {
 
     # ── no record: the register may admit it, literally ──────────────────
     #
-    # `grep -Fqx --`. It was `grep -qx`, which treats the filename as a basic
-    # regular expression, so a register line `attackXmd` admitted `attack.md`.
+    # The match is whole-line and literal: awk compares $0 == want, with no
+    # regex anywhere. It was `grep -qx` — the filename as a basic regular
+    # expression, so a register line `attackXmd` admitted `attack.md` — and
+    # then `grep -Fqx` in a pipeline, which is grep -q under pipefail. The
+    # lookup is also where a multi-line name would split into alternatives,
+    # which is why names containing a newline are refused before this point.
     # An entry must carry a reason. Round 3 registered an unproven file with no
     # reason at all and the gate admitted it — the register is a list of claims
     # the repository has stopped making, and a bare filename makes no claim
     # about anything. The grammar is checked here rather than only in a test
     # over today's register, because a test over today's data is not a rule.
     if [[ -f "$register" ]] && \
-       grep -v '^[[:space:]]*#' "$register" | grep -Fqx -- "$base"; then
+       awk -v want="$base" '
+         /^[[:space:]]*#/ { next }
+         $0 == want { found = 1; exit }
+         END { exit !found }
+       ' "$register"; then
       if ! _cp_register_reason "$register" "$base"; then
         echo "FAIL — $base is listed in $register with no reason." >&2
         echo "       An entry without one is an allowlist, which is what the" >&2
