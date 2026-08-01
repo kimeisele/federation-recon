@@ -35,3 +35,4 @@ suite-inventory.bats
 test-runner.bats
 tree-state.bats
 validate-artifacts.bats
+worker-limits.bats
