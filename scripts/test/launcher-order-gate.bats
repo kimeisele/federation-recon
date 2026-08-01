@@ -145,12 +145,17 @@ root = sys.argv[1]
 sys.path.insert(0, root + "/core")
 sys.path.insert(0, root)
 import launcher
-rc, err = launcher.validate_order(root + "/core/orders/vectors/accept/01-minimal.json")
+rc, err, order = launcher.validate_order(root + "/core/orders/vectors/accept/01-minimal.json")
 loaded = [m for m in sys.modules if m.startswith("backends")]
-print("rc=%s stderr=%r backend_modules=%s" % (rc, err, loaded))
+print("rc=%s stderr=%r order_issue=%s backend_modules=%s"
+      % (rc, err, (order or {}).get("issue"), loaded))
 assert rc == 0, (rc, err)
 assert err == "", err
 assert not loaded, loaded
+# validate_order now carries the parsed order out with the verdict, so the
+# launcher never re-reads the file (#128). Asserted here too, because this is
+# the test that pins the function's contract.
+assert order is not None and order["schema"] == "execution-core/order/v1", order
 PY
   echo "$output"
   [ "$status" -eq 0 ]

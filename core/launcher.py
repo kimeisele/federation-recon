@@ -142,10 +142,19 @@ def _run_canary_suite():
 def validate_order(order_path):
     """Run the S2 order validator on *order_path*.
 
-    Returns (returncode, stderr_text). Runs in-process: no subprocess, no
-    shell. The validator signals its verdict by exiting, so SystemExit is
-    caught here and read as the status — which is the supervisor measuring the
-    exit status itself rather than believing a reported one (ADR §6).
+    Returns (returncode, stderr_text, order). *order* is the parsed dict the
+    validator actually inspected, or None when the verdict was not admissible.
+
+    Runs in-process: no subprocess, no shell. A refusal signals itself by
+    exiting, so SystemExit is caught here and read as the status — the
+    supervisor measuring the exit status itself rather than believing a
+    reported one (ADR §6). Admission returns the order.
+
+    The order comes back with the verdict because the launcher used to re-open
+    the file afterwards with a plain json.load, and everything the validator
+    established was assumed to hold for whatever bytes were at that path a
+    moment later. ADR §5 requires a size check before EVERY read; the second
+    read had none. See #128.
     """
     sys.path.insert(0, _CORE_DIR)
     import orders.validate as order_validate
@@ -153,11 +162,16 @@ def validate_order(order_path):
     buf = io.StringIO()
     try:
         with contextlib.redirect_stderr(buf):
-            order_validate.validate(order_path)
+            order = order_validate.run_checks(order_path)
     except SystemExit as exc:
-        return (exc.code if isinstance(exc.code, int) else 1), buf.getvalue()
-    # validate() always exits; reaching here means its contract changed.
-    return 1, buf.getvalue() + "validator returned without a verdict\n"
+        # Only refusals leave this way now. A SystemExit(0) would mean the
+        # validator exited successfully without returning the order, which is
+        # a contract change and is reported as a refusal rather than admitted.
+        rc = exc.code if isinstance(exc.code, int) else 1
+        if rc == 0:
+            return 1, buf.getvalue() + "validator exited 0 without returning an order\n", None
+        return rc, buf.getvalue(), None
+    return 0, buf.getvalue(), order
 
 
 def main(argv=None):
@@ -189,7 +203,7 @@ def main(argv=None):
         return 2
 
     order_path = argv[0]
-    rc, verr = validate_order(order_path)
+    rc, verr, order = validate_order(order_path)
     if rc != 0:
         code = (verr.strip().splitlines() or ["E_UNKNOWN"])[0]
         print(f"ORDER REFUSED: {code}", file=sys.stderr)
@@ -198,10 +212,14 @@ def main(argv=None):
               file=sys.stderr)
         return 1
 
-    # Canonicity was established by the validator; this second read is a plain
-    # load of bytes already proven to parse exactly one way.
-    with open(order_path) as f:
-        order = json.load(f)
+    # No second read. `order` is the dict the validator inspected — the same
+    # bytes its verdict was about, not the bytes at that path now.
+    if order is None:
+        print("REFUSED: the validator reported admissible without returning the "
+              "order it inspected. Its contract changed; refusing rather than "
+              "re-reading the file, because re-reading is the defect (#128).",
+              file=sys.stderr)
+        return 1
 
     print("=== Execution Core S1 — Canary Suite (per-run uid pool) ===")
     print(f"Order {order['run_id']} admitted for issue #{order['issue']}")

@@ -26,6 +26,7 @@ helpers.bats
 launcher-order-gate.bats
 layer-boundary.bats
 manifest-gate.bats
+order-reread.bats
 order-validator.bats
 order-vectors.bats
 pin-gate.bats
