@@ -95,7 +95,7 @@ _proven() {
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"3 with a provenance record"* ]]
+  [[ "$output" == *"3 carrying a consistency record"* ]]
 }
 
 @test "provenance: files naming no provider are checked too, and must be registered" {
@@ -453,5 +453,13 @@ name.md"
   run check_consultation_provenance "$D"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"proven"* ]]
+  # The POSITIVE claim, not the substring. This first asserted that "proven"
+  # did not appear at all, which also forbids "registered as unproven" — the
+  # honest half of the sentence. The test was wrong and the implementation was
+  # right; a blunt assertion that rejects the correct wording is a test that
+  # would have driven the code somewhere worse.
+  [[ "$output" != *"with a provenance record"* ]]
+  ! [[ "$output" =~ [0-9]+\ proven ]]
+  # and it must still say the honest half
+  [[ "$output" == *"unproven"* || "$output" == *"unverified"* ]]
 }

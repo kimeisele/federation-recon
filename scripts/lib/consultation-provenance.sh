@@ -134,7 +134,7 @@ _cp_register_reason() {
 check_consultation_provenance() {
   local dir="${1:-governance/consultations}"
   local register="$dir/UNVERIFIED"
-  local rc=0 checked=0 proven=0 registered=0
+  local rc=0 checked=0 consistent=0 registered=0
   local f base served claim model openers
 
   if [[ ! -d "$dir" ]]; then
@@ -305,7 +305,7 @@ check_consultation_provenance() {
         rc=1
         continue
       fi
-      proven=$((proven + 1))
+      consistent=$((consistent + 1))
       continue
     fi
 
@@ -368,7 +368,7 @@ check_consultation_provenance() {
   fi
 
   if [[ "$rc" -eq 0 ]]; then
-    echo "OK — $checked consultation(s): $proven with a provenance record," \
+    echo "OK — $checked consultation(s): $consistent carrying a consistency record," \
          "$registered registered as unproven"
   fi
   return "$rc"
