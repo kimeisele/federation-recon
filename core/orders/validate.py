@@ -458,8 +458,16 @@ def _validate_limits(order, policy):
 #
 # What it does: makes the builder-identity check survive the *typographic*
 # rewriting of a name — invisible insertions, combining marks, compatibility
-# variants, width and space variants. Four rounds of adversarial review, seven
-# stripped categories, each one carrying its own vector.
+# variants, width and space variants. Three rounds of adversarial review; seven
+# stripped categories, six of which carry a vector that fails alone.
+#
+# The seventh is Cc, and it is named rather than counted in: vector 55 was
+# written to exercise it and returns E_SCHEMA, because the schema's
+# no-control-character rule fires first. Cc is defence in depth against a
+# reordering of those two checks, not a guard that has ever decided anything.
+# The first draft of this banner said "seven ... each one carrying its own
+# vector", which the PR's own mutation table contradicts. A frozen comment that
+# overclaims is worse than none: nobody re-measures a settled question.
 #
 # What it explicitly does NOT do, and no further round will change:
 #
@@ -475,8 +483,8 @@ def _validate_limits(order, policy):
 # the control that makes provenance sound.
 #
 # **A newly discovered codepoint class is an ordinary issue, not a blocker.**
-# Three rounds of this repository's attention went into one comparison of two
-# strings that the architecture already documents as advisory. File it, fix it
+# Three rounds went into one comparison of two strings that CONTRACT.md §5
+# itself calls a claim rather than a finding. File it, fix it
 # when it is the most valuable thing to fix, and do not hold a pull request for
 # it. If the strings need to be trustworthy, the answer is #141, not an eighth
 # category.
