@@ -380,3 +380,51 @@ print('every register entry carries a reason')
   echo "$output"
   [ -z "$output" ]
 }
+
+# ── Round-3 conditions still open: written first, builder implements ───────
+
+@test "provenance: markdown under an unreadable directory is not silently skipped" {
+  # Round 3, executed: `find` cannot descend into a directory it may not read,
+  # and printed nothing while the gate reported success. Files hidden that way
+  # are invisible, and invisible is the one thing this gate exists to prevent.
+  mkdir -p "$D/locked"
+  printf 'unproven\n' > "$D/locked/hidden.md"
+  chmod 000 "$D/locked"
+  run check_consultation_provenance "$D"
+  chmod 755 "$D/locked"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"locked"* ]]
+}
+
+@test "provenance: a symlinked directory is refused, not traversed" {
+  mkdir -p "$D/real"
+  printf 'unproven\n' > "$D/real/inside.md"
+  ln -s "$D/real" "$D/linked"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"linked"* ]]
+}
+
+@test "provenance: the quarantine sentinel is refused anywhere in the header region" {
+  # The policy header says "anywhere in the file"; the implementation checks
+  # the first three lines. Round 3 put it on line four and it passed. Either
+  # the check or the policy has to move — the test says which.
+  printf 'x\n\n\n\nUNATTRIBUTED CONSULTATION OUTPUT — NOT A CONSULTATION\n\nbody\n' > "$D/60-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quarantine sentinel"* ]]
+}
+
+@test "provenance: a filename containing a newline is handled, not split" {
+  # find -print0 exists for this. A path that splits mid-name either escapes
+  # the check or produces a nonsense one, and both are worse than an error.
+  printf 'unproven\n' > "$D/weird
+name.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"weird"* ]]
+}
