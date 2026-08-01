@@ -14,6 +14,33 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 | # | Date | PR | Change | Consultation |
 |---|---|---|---|---|
 | 1 | 2026-07-25 | **#53** | Delegated judgment section; ENVELOPE risk tier; consultation machinery — **NOT VALIDLY ADOPTED**, see below | [governance/consultations/53.md](../governance/consultations/53.md) |
+| 2 | 2026-07-30 | **#107** | `docs/execution-core-adr.md` accepted — Recon gains an execution layer over its own working tree. **Recorded 2026-08-01, two days late**, see below | [107-sol.md](../governance/consultations/107-sol.md), [107-kimi-architecture.md](../governance/consultations/107-kimi-architecture.md), [107-kimi-adoption.md](../governance/consultations/107-kimi-adoption.md) |
+| 3 | 2026-08-01 | *this PR* | §5 and FR-CON-002 made decidable for the execution layer and for self-observation | pending — see PR |
+
+> **Amendment 2 was accepted on 2026-07-30 and entered here on 2026-08-01.**
+>
+> This log declares accepted ADRs to be its own subject matter, in its second
+> sentence. `docs/execution-core-adr.md` has read **Status: Accepted** since
+> 2026-07-30 and appeared nowhere in this table until an external reviewer
+> asked which invariant permits process supervision (#148) and the honest
+> answer required looking.
+>
+> Nothing was concealed and nothing was disputed: the ADR is in the tree, it
+> carries four review rounds from a second provider and two opinions from a
+> third, and PR #107 is public. What failed is narrower and worse. **The one
+> mechanism this repository has for making constitutional drift countable was
+> not operated during the largest change of direction since founding** — not
+> bypassed, not overruled, simply not thought of, because an ADR feels like a
+> design document and the log is filed under governance.
+>
+> That is the same defect as amendment 1 one level up. #53 walked a
+> constitutional change through a door nobody was watching; this walked one
+> through a door nobody had counted as a door. A log that depends on someone
+> remembering to write in it records exactly the changes made by people who
+> remember.
+>
+> The gap is now closed by more than intent: `check_amendment_log` fails CI
+> when an ADR reaches `Status: Accepted` without a line here.
 
 > **Amendment 1 is on `main` but was never validly adopted.** This log previously
 > recorded it as arriving through PR #42. It did not. #42 correctly held it back

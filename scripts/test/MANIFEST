@@ -1,9 +1,10 @@
+
+#
+# Enforced by scripts/ci-checks.sh, the required 'invariants' check.
 # Every test file that must be present. The runner reports what it ran;
 # only this file records what was supposed to run. Adding or removing a
 # test is a deliberate act — record it here in the same commit.
-#
-# Enforced by scripts/ci-checks.sh, the required 'invariants' check.
-
+amendment-log.bats
 boundary-agreement.bats
 budget-cap.bats
 budget.bats
