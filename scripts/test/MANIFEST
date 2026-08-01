@@ -30,6 +30,7 @@ pin-gate.bats
 schedule-watchdog.bats
 seatbelt-unit.bats
 state-gate.bats
+stray-processes.bats
 suite-inventory.bats
 test-runner.bats
 tree-state.bats
