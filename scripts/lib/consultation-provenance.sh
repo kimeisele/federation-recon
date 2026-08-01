@@ -160,6 +160,24 @@ check_consultation_provenance() {
     rc=1
   done < <(_cp_dir_symlinks "$dir")
 
+  # The inventory must be a STABLE SNAPSHOT, not one streaming `find`.
+  #
+  # Round 3 executed it and round 4 kept it blocking: 1,200 files were checked
+  # while `late.md` was created mid-scan, and the gate exited 0 having never
+  # looked at it. A single `find` is a snapshot of a moment that ends before
+  # the loop does; a file that arrives while the gate runs is omitted from a
+  # green run — the defect this gate exists for. So the enumeration is taken
+  # twice and the sets compared: if the tree changed while it was being
+  # checked, the gate refuses rather than reporting success about a set it did
+  # not finish observing. Nothing is locked; the second observation is the
+  # check. (Only the first snapshot is processed, so the second `find` runs
+  # after every file has been examined — a change that lands anywhere during
+  # the loop shows up in the comparison.)
+  local inventory inventory2
+  inventory="$(mktemp "${TMPDIR:-/tmp}/cp-inventory.XXXXXX")" || return 1
+  inventory2="$(mktemp "${TMPDIR:-/tmp}/cp-inventory2.XXXXXX")" || return 1
+  _cp_inventory "$dir" | sort -z > "$inventory"
+
   while IFS= read -r -d '' f; do
     base="${f#"$dir"/}"
     checked=$((checked + 1))
@@ -325,7 +343,23 @@ check_consultation_provenance() {
     echo "       Produce it with scripts/consult.sh, or register it with a" >&2
     echo "       reason if its attribution is not establishable." >&2
     rc=1
-  done < <(_cp_inventory "$dir")
+  done < "$inventory"
+
+  # ── the second observation ────────────────────────────────────────────────
+  #
+  # The loop above examined the first snapshot. A file created while it ran
+  # was never in that snapshot, so every check passed and the gate would have
+  # reported success about a set it did not finish observing. Enumerate again
+  # and compare: any difference means the tree changed mid-scan, and the
+  # answer is a refusal, not a summary.
+  _cp_inventory "$dir" | sort -z > "$inventory2"
+  if ! cmp -s "$inventory" "$inventory2"; then
+    echo "FAIL — the consultation inventory changed while it was being checked." >&2
+    echo "       A file was added, removed or renamed mid-scan; the gate will" >&2
+    echo "       not report success about a set it did not finish observing." >&2
+    rc=1
+  fi
+  rm -f "$inventory" "$inventory2"
 
   if [[ "$checked" -eq 0 ]]; then
     echo "FAIL — no consultation files found under $dir. An empty inventory is" >&2

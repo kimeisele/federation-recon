@@ -90,6 +90,12 @@ if [ -d "$OUTPUT" ]; then
   echo "  pass while the requested artifact did not exist." >&2
   exit 2
 fi
+if [ -L "${OUTPUT}.tmp" ] || { [ -e "${OUTPUT}.tmp" ] && [ ! -f "${OUTPUT}.tmp" ]; }; then
+  echo "consult: refusing — ${OUTPUT}.tmp is not a regular file." >&2
+  echo "  A redirect follows a symlink and overwrites whatever it points at," >&2
+  echo "  certifying content stored elsewhere. Nothing is written." >&2
+  exit 2
+fi
 
 LOG="${CONSULT_LOG:-$HOME/.jcode/logs/jcode-$(date '+%Y-%m-%d').log}"
 
@@ -216,6 +222,16 @@ served_provider() {
 quarantine_output() {
   [ -f "${OUTPUT}.stdout" ] || return 0
   local q="${OUTPUT}.unattributed"
+  # A red-team planted a symlink at the quarantine path. `> "$q"` follows it,
+  # writes the header and body wherever it points, the size check passes, and
+  # then the ONLY copy of the body is deleted under "Body kept". Refuse before
+  # the redirect: a quarantine must be the bytes at the quarantine path, and a
+  # finding must not be deleted for a quarantine that was never written.
+  if [ -L "$q" ] || { [ -e "$q" ] && [ ! -f "$q" ]; }; then
+    echo "  QUARANTINE FAILED — $q is not a regular file; refusing to write through it" >&2
+    echo "  The body is left at ${OUTPUT}.stdout rather than deleted." >&2
+    return 1
+  fi
   {
     echo "UNATTRIBUTED CONSULTATION OUTPUT — NOT A CONSULTATION"
     echo
