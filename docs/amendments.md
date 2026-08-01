@@ -15,7 +15,8 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 |---|---|---|---|---|
 | 1 | 2026-07-25 | **#53** | Delegated judgment section; ENVELOPE risk tier; consultation machinery — **NOT VALIDLY ADOPTED**, see below | [governance/consultations/53.md](../governance/consultations/53.md) |
 | 2 | 2026-07-30 | **#107** | `docs/execution-core-adr.md` accepted — Recon gains an execution layer over its own working tree. **Recorded 2026-08-01, two days late**, see below | [107-sol.md](../governance/consultations/107-sol.md), [107-kimi-architecture.md](../governance/consultations/107-kimi-architecture.md), [107-kimi-adoption.md](../governance/consultations/107-kimi-adoption.md) |
-| 3 | 2026-08-01 | *this PR* | §5 and FR-CON-002 made decidable for the execution layer and for self-observation | pending — see PR |
+| 3 | 2026-08-01 | **#150** | §5 and FR-CON-002 made decidable for the execution layer and for self-observation | pending — see PR |
+| 4 | 2026-08-01 | *this PR* | `docs/self-remediation-adr.md` accepted — FR-CON-002 exempts Recon's own runtime state; the carve-out narrowed to the *record* of a Finding rather than its repair | [152.md](../governance/consultations/152.md) |
 
 > **Amendment 2 was accepted on 2026-07-30 and entered here on 2026-08-01.**
 >

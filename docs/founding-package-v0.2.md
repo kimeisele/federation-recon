@@ -233,15 +233,13 @@ layer or the evidence layer references `core/`, in either direction, at any
 depth. That check is the compensating control this section depends on, and it
 exists rather than being promised.
 
-**Open contradiction, recorded rather than smoothed over.** This section
-permits orphan reconciliation; the FR-CON-002 carve-out below forbids Recon
-from healing itself in response to its own observations. A supervisor that
-detects an orphan of its own run and reaps it satisfies both descriptions. The
-two sections disagree, the disagreement was found by review rather than by
-argument here, and it is left visible until it is settled on its own — see
-#148. The carve-out's rationale is narrow (never alter or suppress the
-*record* of a Finding); its enacted text is broad. That gap is the thing to
-fix, and fixing it is a separate constitutional act.
+**The contradiction this section carried is settled.** It permitted orphan
+reconciliation while the FR-CON-002 carve-out forbade Recon from healing itself
+in response to its own observations, and a supervisor cleaning up after its own
+crash satisfied both descriptions. Resolved by `docs/self-remediation-adr.md`
+(amendment 4): the line is **where the effect lands**, not which file recorded
+the observation — Recon's own runtime bookkeeping is exempt, committed content
+is not, and killing a process is covered by neither (#134 stays OWNER-ONLY).
 
 ---
 
@@ -271,9 +269,29 @@ The invariant governs **other people's repositories**. For this one:
 - The census writing `pins/`, `evidence/`, `findings/` is production of
   evidence, not remediation, and is bounded by FR-CON-007 reproducibility.
 
-The distinction is *remediation*, not *modification*. Recon may maintain
-itself; it may not heal itself in response to its own observations, because a
-node that repairs what it reports has no independent record of the defect.
+The distinction is *remediation*, not *modification*, and amendment 4
+(`docs/self-remediation-adr.md`) makes it decidable rather than arguable:
+
+- **Runtime state is exempt.** The sandbox's own bookkeeping — `runs/`,
+  `slots/`, claim files, worktrees under `operator/.runs/` — may be created,
+  mutated and deleted without an owner decision, including in response to
+  Recon's own observation that it is stale. That is bookkeeping, not healing,
+  and the exempt set is precisely the set that is not committed.
+- **Committed content is not exempt.** It changes through the protected PR
+  path, as everything does.
+- **A Finding about Recon may be fixed.** What may not be altered, suppressed
+  or retracted is the *record* — the Finding, its evidence, its lifecycle
+  state. The rationale is that a node repairing what it reports keeps no
+  independent record of the defect, and that rationale is satisfied by the
+  record surviving, not by the defect surviving. A repository that cannot
+  repair its own security bugs is not the thing this clause was protecting.
+- **Killing a process is covered by none of the above.** #134 remains
+  OWNER-ONLY / STOP.
+
+An earlier version drew the line at whether the observation was written down
+as a Finding. A reviewer showed that this discriminates by paperwork: route the
+observation through another channel and remediation becomes maintenance. The
+line above discriminates by effect instead.
 
 ## FR-CON-003 — No active public projection
 
