@@ -15,18 +15,35 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SIZE_LIMIT = 65536
 DEPTH_LIMIT = 8
+def _max_int_digits():
+    """CPython's integer-string conversion limit, READ rather than assumed.
+
+    This was the constant 4300. It is configurable via
+    sys.set_int_max_str_digits and PYTHONINTMAXSTRDIGITS, so a hardcoded copy
+    is a guess about the interpreter the code is running in — and guessing a
+    constant is what put a 24 where a 20 belonged elsewhere tonight.
+    """
+    try:
+        n = sys.get_int_max_str_digits()
+        return n if n > 0 else 10 ** 9      # 0 means "no limit"
+    except AttributeError:
+        return 4300
 
 UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 )
 SHA40_RE = re.compile(r'^[0-9a-f]{40}$')
 SHA256_DIGEST_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
-DATETIME_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+# [0-9], not \d. In Python `\d` matches every Unicode decimal digit, so an
+# Arabic-Indic timestamp passed this and would crash a downstream strptime far
+# from the cause. Executed and confirmed against merged code — see #141.
+DATETIME_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')
 
 BUILDER_NAMES = ('jcode', 'deepseek', 'builder', 'worker')
 BUNDLE_PREFIX = '/usr/local/var/jcode-runs/bundles/'
@@ -137,6 +154,24 @@ def _parse_canonical(text):
     if not text.strip():
         _refuse('E_JSON', 'Empty input is not valid JSON')
 
+    # CPython caps integer-string conversion at 4300 digits and raises
+    # ValueError inside the parser. A long `issue` therefore put
+    # "Traceback (most recent call last):" on the first line of stderr — the
+    # exact contract breach vector 34 pins, one field over, found by a
+    # re-review of already-merged code (#141).
+    #
+    # Checked before parsing, because that is where it fires, and rejected as
+    # E_JSON: a number that cannot be read is a parse failure, not a schema one.
+    _limit = _max_int_digits()
+    if re.search(r'[0-9]{%d,}' % _limit, text):
+        _refuse('E_JSON',
+                'A numeric literal of %d digits or more appears in the document. '
+                'This interpreter refuses to convert it, and the failure would '
+                'surface as a traceback rather than as a verdict. (The check is '
+                'over the raw text, so a long digit run inside a string is also '
+                'refused — over-refusal, on purpose: the alternative is parsing '
+                'first, which is the thing being prevented.)' % _limit)
+
     if not _check_depth(text):
         _refuse('E_JSON',
                 f'Nesting depth exceeds the limit of {DEPTH_LIMIT}')
@@ -164,6 +199,21 @@ def _parse_canonical(text):
         obj, idx = decoder.raw_decode(text)
     except json.JSONDecodeError as exc:
         _refuse('E_JSON', f'Invalid JSON: {exc}')
+    except ValueError as exc:
+        # Backstop, and UNTESTED — recorded as such rather than pretended.
+        #
+        # Mutation testing removed this clause and every test stayed green,
+        # because the raw-text digit pre-filter above catches everything that
+        # would reach it. I could not construct an input that evades the
+        # pre-filter and still raises here: JSON numbers admit no separators,
+        # and exponent forms become floats, which have no digit limit.
+        #
+        # So this is not "defence in depth nobody got round to testing". It is
+        # a clause I could not reach, kept because the pre-filter is a regex
+        # over text and a regex over text is the kind of thing that turns out
+        # to have an exception. If someone finds the input, it belongs here as
+        # a vector and this comment should go.
+        _refuse('E_JSON', f'The document could not be parsed as a value: {exc}')
 
     # Trailing data after the document
     remaining = text[idx:].strip()
@@ -403,6 +453,107 @@ def _validate_limits(order, policy):
 # ── Bundle provenance ────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS GUARD IS FROZEN. Owner decision, 2026-08-01.
+#
+# What it does: makes the builder-identity check survive the *typographic*
+# rewriting of a name — invisible insertions, combining marks, compatibility
+# variants, width and space variants. Three rounds of adversarial review; seven
+# stripped categories, six of which carry a vector that fails alone.
+#
+# The seventh is Cc, and it is named rather than counted in: vector 55 was
+# written to exercise it and returns E_SCHEMA, because the schema's
+# no-control-character rule fires first. Cc is defence in depth against a
+# reordering of those two checks, not a guard that has ever decided anything.
+# The first draft of this banner said "seven ... each one carrying its own
+# vector", which the PR's own mutation table contradicts. A frozen comment that
+# overclaims is worse than none: nobody re-measures a settled question.
+#
+# What it explicitly does NOT do, and no further round will change:
+#
+#   - Homoglyphs. `dеepsееk` with Cyrillic е is visually identical,
+#     fold-stable, and ADMITTED. No normalisation closes this.
+#   - Transliteration, abbreviation, or any name the builder simply does not
+#     write down. `d33pseek` is not a Unicode problem.
+#   - Establishing that the named party authored or approved anything. That is
+#     an attestation, and it is #141.
+#
+# The guard is a refuse-list, and a refuse-list is a claim about what an
+# attacker will think of. It raises the cost of one specific evasion; it is not
+# the control that makes provenance sound.
+#
+# **A newly discovered codepoint class is an ordinary issue, not a blocker.**
+# Three rounds went into one comparison of two strings that CONTRACT.md §5
+# itself calls a claim rather than a finding. File it, fix it
+# when it is the most valuable thing to fix, and do not hold a pull request for
+# it. If the strings need to be trustworthy, the answer is #141, not an eighth
+# category.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Removed as a CLASS, not as a list. Three versions of this guard were written
+# by naming codepoints, and each one was defeated by a codepoint nobody named:
+#
+#   v1  thirteen literal codepoints        →  U+061C, U+FFF9, U+180E, U+034F
+#   v2  NFKC then strip Cf/Cc/Mn           →  a combining acute composed away
+#   v3  NFKD then strip Cf/Cc/Mn           →  U+2004, U+00A0, U+2028, U+20DD
+#
+# The categories below are the answer to v3, found by a reviewer and confirmed
+# by running it. `Zs` is the one that matters and the one that is easy to get
+# wrong: NFKD applies compatibility decompositions, so U+2004 THREE-PER-EM
+# SPACE becomes an ordinary U+0020 *before* the strip runs — and U+0020 is Zs,
+# which the previous set did not remove. The fix for "NFKC opens a space" was
+# to strip spaces; instead the normalisation order was changed, which moved
+# the bypass without closing it.
+_STRIPPED_CATEGORIES = (
+    'Cf',   # format: zero-width, directional, joiners, tag characters
+    # Cc is defence in depth and nothing more: the schema's no-control-character
+    # rule fires before the fold is reached, so through the current callers this
+    # entry can never decide anything. Vector 55 proves it — it was written to
+    # exercise Cc here and comes back E_SCHEMA. Kept because the cost is one
+    # tuple entry and the guarantee it would otherwise rest on is "the checks
+    # stay in this order".
+    'Cc',   # control
+    'Mn',   # non-spacing mark (combining acute, CGJ)
+    'Me',   # enclosing mark (U+20DD COMBINING ENCLOSING CIRCLE)
+    'Zs',   # space separator, incl. plain U+0020 after NFKD compat-folding
+    'Zl',   # line separator U+2028 — no decomposition, no category above
+    'Zp',   # paragraph separator U+2029
+)
+
+
+def _fold_identity(value):
+    """Fold an identity for comparison: decompose, strip invisibles, lowercase.
+
+    Comparing identities as raw text is defeated by one invisible codepoint.
+    This removes that bypass; it does not make the comparison sound. The real
+    answer is a signed attestation (#141) — this is a refuse-list, and a
+    refuse-list is a claim about what an attacker will think of.
+
+    Deliberately asymmetric: it may fold together strings a human would call
+    different (`José` → `jose`, `deep seek` → `deepseek`). Every caller uses
+    the result to *refuse*, so over-folding produces more refusals and never
+    fewer. If this is ever used to admit something, that property inverts and
+    this function is the wrong tool.
+    """
+    # NFKD first — DEcompose.
+    #
+    # NFKC composes, so `deep` + combining-acute became a single precomposed
+    # `ṕ` whose category is Ll, and the mark-stripping below never saw it.
+    # That bypass survived the first fix and was found by re-reviewing it.
+    # Decomposing turns the same input back into a base letter plus a mark,
+    # and the mark is then removed as a class.
+    folded = unicodedata.normalize('NFKD', value)
+    folded = ''.join(c for c in folded
+                     if unicodedata.category(c) not in _STRIPPED_CATEGORIES)
+    # Then compatibility-fold what remains, so fullwidth and other variants
+    # collapse onto the same ASCII.
+    #
+    # What this still does NOT catch, stated rather than implied: homoglyphs.
+    # `dеepsееk` with Cyrillic е is visually identical, fold-stable, and
+    # admitted. No normalisation closes that; only an attestation does.
+    return unicodedata.normalize('NFKC', folded).lower()
+
+
 def _validate_bundle_provenance(order):
     """Check bundle provenance rules (ADR §10, CONTRACT.md §5).
 
@@ -423,9 +574,24 @@ def _validate_bundle_provenance(order):
             f'{BUNDLE_PREFIX!r}, got {location!r}',
         )
 
+    # A bare directory is not a bundle.
+    #
+    # `/usr/local/var/jcode-runs/bundles/` satisfies the prefix and was
+    # admitted (#141). The final segment must name something.
+    # normpath, not string equality. `bundles/.` and `bundles/./` satisfied the
+    # prefix, differed from it as strings, contained no `..` segment, and
+    # resolved to the directory itself. Both were admitted (found by the
+    # cross-provider review of this very fix).
+    if os.path.normpath(location) == os.path.normpath(BUNDLE_PREFIX):
+        _refuse(
+            'E_BUNDLE_PROVENANCE',
+            'acceptance_bundle.location is the bundles directory itself, not a '
+            'bundle within it: %r' % location,
+        )
+
     # Path‑traversal check — a prefix match alone passes "../" escapes.
     segments = location.split('/')
-    if '..' in segments:
+    if '..' in segments or '.' in segments:
         _refuse(
             'E_BUNDLE_PROVENANCE',
             f'acceptance_bundle.location contains path traversal: '
@@ -441,7 +607,19 @@ def _validate_bundle_provenance(order):
     # field that decides whether the order proceeds. A rule enforced on one of
     # two adjacent fields is an invitation to use the other one.
     for field in ('author', 'approved_by'):
-        value_lower = bundle[field].lower()
+        # Normalise before comparing.
+        #
+        # This compared `bundle[field].lower()` directly, and a re-review put a
+        # zero-width space inside the name: `deep\u200bseek` was ADMITTED while
+        # `deepseek` was refused. Six ASCII bytes in the file, one invisible
+        # codepoint after decoding, and the substring never matched.
+        #
+        # NFKC folds compatibility forms; the explicit strip removes the
+        # zero-width and directional characters NFKC keeps. This does not make
+        # identity-as-text sound — the reviewer is right that it is theatre —
+        # but it removes the one-codepoint bypass while the real answer, which
+        # is a signed or externally attested approval, is decided (#141).
+        value_lower = _fold_identity(bundle[field])
         for name in BUILDER_NAMES:
             if name in value_lower:
                 _refuse(

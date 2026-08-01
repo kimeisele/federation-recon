@@ -17,6 +17,18 @@
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
   VEC="$REPO_ROOT/core/orders/vectors"
+
+  # Vectors 38 and 46 depend on CPython's integer-string conversion limit, and
+  # that limit is settable from the environment. `PYTHONINTMAXSTRDIGITS=0` is
+  # legal and means *no limit*: the validator then computes a threshold of 10^9,
+  # the pre-filter can never match inside a 64 KiB document, the parser raises
+  # nothing, and both vectors are admitted — correct behaviour for the code,
+  # and a red suite for a reason that has nothing to do with a regression.
+  #
+  # Unset rather than pinned to 4300: the default is what production runs with,
+  # and hardcoding the number here would make the suite carry its own copy of
+  # the constant it is meant to be checking. See #144 for what that costs.
+  unset PYTHONINTMAXSTRDIGITS
 }
 
 # Run the validator on one vector. Prints "<exit>|<first stderr line>".

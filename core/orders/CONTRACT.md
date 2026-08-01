@@ -127,6 +127,42 @@ compared numbers.
 large enough to leave an effective limit of zero or less. That is defence in
 depth, not the primary mechanism.
 
+### What this does NOT establish, added after a cross-provider re-review
+
+The impossibility is about the **order**, and the sentence above was written as
+though it were about the system. It is not.
+
+> "`limit_reductions` makes a looser limit inexpressible *in the order* — but
+> the minuend lives in `core/policy.json`, an in-repo file reachable through
+> the same PR pipeline the builder exists to use. One merged PR changes
+> `wall_clock_seconds: 60 → 86400` […] The validator binds order→policy;
+> **nothing binds policy→operator**. The type-level claim is true and
+> irrelevant."
+
+Checked: `core/policy.json` is a plain committed file with no gate in
+`scripts/ci-checks.sh`, no integrity anchor, and no check anywhere that greps
+for it. So an order cannot ask for a looser limit than the policy allows, and
+the policy is exactly as hard to change as any other file in the repository.
+
+**And this is not only about limits.** A second reviewer widened it:
+
+> "`claimed_capabilities` admission *also* rests entirely on the same
+> unguarded, operator-writable file, read via a `__file__`-relative path (a
+> relocated validator copy reads a different policy). If the corrected
+> sentence only scopes the caveat to `limit_reductions`, it still overstates."
+
+So, plainly: **every verdict this validator reaches is exactly as strong as
+`core/policy.json`.** Limits and capabilities both. `E_CAPABILITY_UNPROVEN`
+means "the policy does not claim it", not "the backend cannot do it", and
+moving a name into `claimed_capabilities` is one line in an unguarded file.
+
+The validator is a faithful reader of a document nothing protects.
+
+Both earlier reviews of this design praised the reduction encoding. Neither
+asked where the number it subtracts from comes from — and both were served, it
+turned out, by the same provider as the builder. What binds the policy is
+open as #141 and is not decided here.
+
 Keys are restricted to those present in `policy.json`'s `limits` object.
 
 ## 5. Bundle provenance
@@ -162,6 +198,19 @@ bytes at `location`, that those bytes predate the build run, or that the
 approval is genuine. Those belong to S3, where the supervisor has the bundle in
 hand. A green validator establishes that the order *claims* a well-formed
 provenance — per ADR §3.3, a claim, not a finding.
+
+**`location` is never checked for existence, and never can be.** The question
+"can a location still name nothing while passing?" has one honest answer:
+**always.** This validator is pure — it reads the order and `core/policy.json`
+and touches no other path — so `location` is checked for *shape* only: the
+required absolute prefix, not equal to the bundles directory itself after
+`normpath`, and no `.` or `..` segment. A syntactically perfect path to a file
+that was never written passes every one of those and is admitted.
+
+The shape rules exist to stop a `location` from *denoting* something outside
+the bundle tree, not to establish that it denotes anything at all. Reading the
+bytes is S3's job, and until S3 exists, "the order passed validation" says
+nothing whatever about whether an acceptance bundle is on disk.
 
 ## 6. The vectors
 
