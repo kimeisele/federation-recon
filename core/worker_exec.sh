@@ -78,6 +78,12 @@ CANARY_SCRIPT="$CANARY_DIR/${CANARY_NAME}.py"
 # Note: RLIMIT_NPROC is per-uid on macOS.  With per-run uids (slot pool)
 # this limit is now per-RUN, which is what bounds the kill protocol's
 # convergence — with a shared uid it bounded nothing.
+#
+# The values below are GENERATED from core/policy.json (its "limits" object)
+# by scripts/gen-worker-limits.sh.  This wrapper runs as the sandboxed worker
+# under sudo and must not read repository files at runtime, so the numbers are
+# baked in here; scripts/gen-worker-limits.sh --check turns drift into a red
+# build.  `ulimit -f` counts 512-byte blocks: 20480 blocks = 10 MiB.
 ulimit -u 64  2>/dev/null || {
     echo "worker_exec.sh: FAILED to set RLIMIT_NPROC (ulimit -u 64)" >&2
     exit 1
@@ -86,8 +92,8 @@ ulimit -t 30  2>/dev/null || {
     echo "worker_exec.sh: FAILED to set RLIMIT_CPU (ulimit -t 30)" >&2
     exit 1
 }
-ulimit -f 10240  2>/dev/null || {
-    echo "worker_exec.sh: FAILED to set RLIMIT_FSIZE (ulimit -f 10240)" >&2
+ulimit -f 20480  2>/dev/null || {
+    echo "worker_exec.sh: FAILED to set RLIMIT_FSIZE (ulimit -f 20480)" >&2
     exit 1
 }
 
