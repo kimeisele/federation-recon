@@ -428,3 +428,30 @@ name.md"
   [ "$status" -eq 1 ]
   [[ "$output" == *"weird"* ]]
 }
+
+@test "provenance: a file added during the scan is not silently omitted" {
+  # Round 3 executed it and round 4 kept it blocking: 1,200 files were checked
+  # while `late.md` was created mid-scan, and the gate exited 0 having never
+  # looked at it. An enumeration that reports success about a set it did not
+  # finish observing is the defect this whole gate exists for.
+  for i in $(seq 1 60); do _proven openai "bulk-$i-sol.md"; done
+  ( sleep 0.3; printf 'unproven\n' > "$D/late.md" ) &
+  run check_consultation_provenance "$D"
+  wait
+  echo "$output"
+  [ "$status" -eq 1 ]
+}
+
+@test "provenance: the OK line does not use the word the repository renounced" {
+  # Round 4: "the downgrade is incomplete where the gate speaks — the library's
+  # own OK line prints '$proven with a provenance record', and the variable and
+  # the word the repository renounced still mint the summary."
+  #
+  # The header says this is a consistency alarm and not proof of independence.
+  # The success line has to say the same thing.
+  _proven openai "70-sol.md"
+  run check_consultation_provenance "$D"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"proven"* ]]
+}

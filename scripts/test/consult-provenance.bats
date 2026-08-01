@@ -392,3 +392,37 @@ _log_for() {
   [ "$status" -eq 0 ]
   grep -q "the only output there was" "$OUT"
 }
+
+# ── Round-4 blocking conditions ────────────────────────────────────────────
+
+@test "consult: a symlinked .tmp is refused, not written through" {
+  # Round 4: "the material new defect — same class as round 1's destruction, on
+  # the two redirect paths nobody guarded." Both `> ${OUTPUT}.tmp` and the
+  # quarantine redirect follow a symlink and write wherever it points.
+  _log_for openai
+  printf 'AGENT REPORT\n' > "$OUT"
+  printf 'transcript\n' > "$OUT.stdout"
+  target="$BATS_TEST_TMPDIR/elsewhere.txt"
+  printf 'DO NOT OVERWRITE ME\n' > "$target"
+  ln -s "$target" "$OUT.tmp"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -ne 0 ]
+  grep -q "DO NOT OVERWRITE ME" "$target"
+}
+
+@test "consult: a symlinked quarantine path is refused, not written through" {
+  _log_for deepseek
+  printf 'FINDINGS\n' > "$OUT.stdout"
+  target="$BATS_TEST_TMPDIR/quarantine-elsewhere.txt"
+  printf 'DO NOT OVERWRITE ME EITHER\n' > "$target"
+  ln -s "$target" "$OUT.unattributed"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  grep -q "DO NOT OVERWRITE ME EITHER" "$target"
+  # and the body is not destroyed by a quarantine that could not be written
+  [ -f "$OUT.stdout" ] || [ -f "$OUT.unattributed" ]
+}
