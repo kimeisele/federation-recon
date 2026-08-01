@@ -1,9 +1,10 @@
 <!-- provenance
 requested_provider: openai
 served_provider: openai
+reviewer_claim: openai
 model: gpt-5.6-sol
 session: session_peacock_1785528433873_159efc10f0e3b94c
-verified_by: read from the log by hand after scripts/consult.sh refused it
+consistency_check: read from the log by hand after scripts/consult.sh refused it
 log: /Users/ss/.jcode/logs/jcode-2026-07-31.log
 evidence: 529 log lines carry ses:session_peacock_1785, every one tagged prv:OpenAI|mod:gpt, no other provider
 -->

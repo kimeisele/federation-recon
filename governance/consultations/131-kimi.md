@@ -1,3 +1,12 @@
+<!-- provenance
+requested_provider: moonshot
+served_provider: moonshot
+reviewer_claim: moonshot
+model: kimi-k3
+consistency_check: direct API call, model field read from the response body — no tool with silent failover in the path
+log: not applicable
+-->
+
 # Red-team — PR #131, stray process detection
 
 **Reviewer:** Kimi K3 (Moonshot), direct API. **Verdict: REJECT**, four blocking conditions.
