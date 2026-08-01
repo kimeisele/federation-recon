@@ -213,16 +213,35 @@ orphan reconciliation — falls on the permitted side, and is what #83 §21.2–
 requires and §22 delimits: *"recon baut keinen Coding-Agenten. recon baut die
 Aufsicht um einen vorhandenen."*
 
-**This is a clarification of a boundary that was never decidable, not a
-widening.** The evidence that it is not a widening: it forbids something that
-was previously arguable — Recon merging its own builder's patch — and it is
-the reason #134 (a root-privileged reaper) remains an owner decision rather
-than an operator one.
+**This is a widening, and it is labelled as one.** An earlier draft of this
+section called itself a clarification, on the evidence that it also forbids
+something previously arguable — Recon merging its own builder's patch. A
+reviewer refused the argument, correctly: *"Making decidable is legislation. A
+clarification discovers a line that existed; this one stipulates a line —
+'whose repository the effect lands in' — that appears nowhere in the prior
+text."* And the same PR could not call amendment 2 the largest change of
+direction since founding while calling the section that constitutionalises it
+weightless. The narrowing is real and the widening is real; the net is a
+widening, and pretending otherwise is how a constitution is drafted around
+instead of amended.
 
-**Adopted alongside a decision to move the execution layer out of this
-repository entirely** (#148). Once it is out, this section governs a capability
-Recon no longer holds, and the clause becomes what it should have been from the
-start: a statement about what an observatory is not.
+**The execution layer stays in this repository** (owner, 2026-08-01, #148).
+Extraction into a second repository was considered and declined: the coupling
+is zero today, so the boundary is enforced by a check rather than a wall —
+`scripts/test/layer-boundary.bats` fails when `core/` references the evidence
+layer or the evidence layer references `core/`, in either direction, at any
+depth. That check is the compensating control this section depends on, and it
+exists rather than being promised.
+
+**Open contradiction, recorded rather than smoothed over.** This section
+permits orphan reconciliation; the FR-CON-002 carve-out below forbids Recon
+from healing itself in response to its own observations. A supervisor that
+detects an orphan of its own run and reaps it satisfies both descriptions. The
+two sections disagree, the disagreement was found by review rather than by
+argument here, and it is left visible until it is settled on its own — see
+#148. The carve-out's rationale is narrow (never alter or suppress the
+*record* of a Finding); its enacted text is broad. That gap is the thing to
+fix, and fixing it is a separate constitutional act.
 
 ---
 

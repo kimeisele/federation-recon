@@ -45,25 +45,41 @@
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. See #75.
 
-# _adr_status <file> — echo the status word from the ADR's first Status line.
+# _adr_status <file> — echo the status word from the file's first Status line.
 #
-# The two ADRs in the tree write it differently:
-#   **Status:** **Accepted** (2026-07-30, nach S1). …
-#   **Status:** PROPOSED — 2026-07-24
-# so asterisks are stripped and the first word after the colon is taken.
+# The status line is written differently by different authors, and the first
+# version of this required the line to *begin with* `**Status`. A reviewer
+# pointed out what that costs: a plain `Status: Accepted`, which is the common
+# ADR format, returned failure — and the caller's `|| continue` then skipped
+# the file **silently**. An accepted ADR would have passed CI by not being
+# bold. That is worse than the omission this whole file exists to prevent,
+# because a silent skip looks exactly like a clean result.
+#
+# Accepted now: optional leading `#`/`>`/whitespace, optional bold or italic
+# markers, the word Status in any case, optional bold on the value.
 _adr_status() {
     local line
-    line="$(grep -m1 -i '^\*\*Status' "$1" 2>/dev/null)" || true
+    line="$(grep -m1 -iE '^[[:space:]]*[#>*_[:space:]]*status[*_[:space:]]*:' "$1" 2>/dev/null)" || true
     [ -z "$line" ] && return 1
     printf '%s' "$line" \
         | sed 's/^[^:]*://' \
-        | tr -d '*' \
+        | tr -d '*_' \
         | awk '{print tolower($1)}'
+}
+
+# _is_log_entry <log> <path> — true iff *path* appears in a TABLE ROW.
+#
+# `grep -F` anywhere in the file was satisfied by a prose footnote — "see
+# docs/foo-adr.md, still under review" — with no row, no date and no PR, which
+# is a mention rather than an entry and carries none of the countability the
+# log exists for. A row starts with `|`.
+_is_log_entry() {
+    grep -F "$2" "$1" 2>/dev/null | grep -qE '^[[:space:]]*\|'
 }
 
 check_amendment_log() {
     local docs_dir="${1:-docs}" log="${2:-docs/amendments.md}"
-    local rc=0 found=0 accepted=0
+    local rc=0 found=0 accepted=0 statusless=0
 
     if [ ! -f "$log" ]; then
         echo "amendment-log: the log itself is missing: $log" >&2
@@ -80,7 +96,12 @@ check_amendment_log() {
         found=$((found + 1))
 
         local adr_status
-        adr_status="$(_adr_status "$f")" || continue
+        # No status line at all: not an ADR, and not a silent skip either —
+        # counted below so "nothing to check" cannot masquerade as "checked".
+        if ! adr_status="$(_adr_status "$f")" || [ -z "$adr_status" ]; then
+            statusless=$((statusless + 1))
+            continue
+        fi
         [ "$adr_status" = "accepted" ] || continue
         accepted=$((accepted + 1))
 
@@ -98,13 +119,19 @@ check_amendment_log() {
         parent="$(dirname "$docs_dir")"
         rel="${f#"$parent"/}"
         rel="${rel#./}"
-        if grep -Fq "$rel" "$log"; then
+        if _is_log_entry "$log" "$rel"; then
             printf '  OK   %s — accepted, recorded\n' "$rel"
         else
             printf '  FAIL %s — Status: Accepted, absent from %s\n' "$rel" "$log" >&2
             rc=1
         fi
-    done < <(find "$docs_dir" -type f -name '*adr*.md' 2>/dev/null | sort)
+        # Every markdown file under docs/, not just `*adr*.md`. The first
+        # version matched on the filename, so `docs/decisions/003-execution-
+        # layer.md` would never have entered the inventory — and because other
+        # ADRs existed, `found` stayed above zero, no rc=2 fired, and CI went
+        # green with nothing recorded. A check that guards the door it counted
+        # as a door is the exact failure this file was written about.
+    done < <(find "$docs_dir" -type f -name '*.md' 2>/dev/null | sort)
 
     # An empty inventory is a failure, not a pass. "No ADR reached Accepted
     # without a line" and "the finder looked in the wrong place" produce the
@@ -114,6 +141,7 @@ check_amendment_log() {
         return 2
     fi
 
-    printf '  %d ADR(s), %d accepted\n' "$found" "$accepted"
+    printf '  %d markdown file(s) under %s, %d with a status line, %d accepted\n' \
+        "$found" "$docs_dir" "$((found - statusless))" "$accepted"
     return "$rc"
 }

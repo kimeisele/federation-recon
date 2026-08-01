@@ -25,6 +25,12 @@ write_log() {
     } > "$FIX/log.md"
 }
 
+# A log whose only reference to the path is prose, not a table row.
+write_prose_log() {
+    printf '# Amendment log\n\n| # | Date | PR | Change |\n|---|---|---|---|\n\nSee %s, still under review.\n' \
+        "$1" > "$FIX/log.md"
+}
+
 @test "an accepted ADR that is recorded passes" {
     write_adr alpha Accepted
     write_log 'see docs/alpha-adr.md'
@@ -109,4 +115,46 @@ write_log() {
     cd /
     run check_amendment_log "$REPO/docs" "$REPO/docs/amendments.md"
     [ "$status" -eq 0 ]
+}
+
+# ── The three bypasses a reviewer found in the first version ───────────────
+
+@test "an accepted ADR not named *adr*.md is still required" {
+    mkdir -p "$FIX/docs/decisions"
+    printf '# Execution layer\n\n**Status:** **Accepted**\n' > "$FIX/docs/decisions/003-execution-layer.md"
+    write_adr alpha PROPOSED           # keeps the inventory non-empty, as in the real tree
+    write_log 'nothing relevant'
+    run check_amendment_log "$FIX/docs" "$FIX/log.md"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"003-execution-layer.md"* ]]
+}
+
+@test "an unbolded status label is read, not silently skipped" {
+    # The first version required the line to begin with `**Status`. A plain
+    # `Status: Accepted` returned failure, and the caller skipped the file
+    # without a word — an accepted ADR passing CI by not being bold.
+    printf '# ADR\n\nStatus: Accepted\n' > "$FIX/docs/plain-adr.md"
+    write_log 'nothing relevant'
+    run check_amendment_log "$FIX/docs" "$FIX/log.md"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plain-adr.md"* ]]
+}
+
+@test "a prose mention is not an entry" {
+    # `grep -F` anywhere in the file was satisfied by a footnote with no row,
+    # no date and no PR — a mention, carrying none of the countability the log
+    # exists for.
+    write_adr alpha Accepted
+    write_prose_log 'docs/alpha-adr.md'
+    run check_amendment_log "$FIX/docs" "$FIX/log.md"
+    [ "$status" -eq 1 ]
+}
+
+@test "a file with no status line is not an ADR and is not counted as checked" {
+    printf '# Just a document\n\nNo status here.\n' > "$FIX/docs/notes.md"
+    write_adr alpha Accepted
+    write_log 'docs/alpha-adr.md'
+    run check_amendment_log "$FIX/docs" "$FIX/log.md"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"with a status line"* ]]
 }

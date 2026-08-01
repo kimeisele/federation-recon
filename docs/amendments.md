@@ -39,8 +39,19 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 > remembering to write in it records exactly the changes made by people who
 > remember.
 >
-> The gap is now closed by more than intent: `check_amendment_log` fails CI
-> when an ADR reaches `Status: Accepted` without a line here.
+> `check_amendment_log` now fails CI when a file under `docs/` reaches
+> `Status: Accepted` without a table row here. **That is not "the gap is
+> closed", which is what this note said first.** An independent reviewer found
+> three ways through the first version — a filename outside `*adr*.md`, an
+> unbolded `Status:` label that was skipped in silence, and a prose mention
+> that satisfied a `grep` with no row, no date and no PR. All three are fixed
+> and each is a regression test.
+>
+> What remains open by design: **edits to `CLAUDE.md` and to the founding
+> package are still logged from memory.** That is the larger category, and it
+> includes amendment 3 in the row above. Extending the check there means
+> deciding which edits are constitutional, and that judgment does not belong
+> in a grep. Stated here rather than left for the next reviewer to find.
 
 > **Amendment 1 is on `main` but was never validly adopted.** This log previously
 > recorded it as arriving through PR #42. It did not. #42 correctly held it back
