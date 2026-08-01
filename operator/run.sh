@@ -6,10 +6,23 @@
 # Usage:
 #   bash operator/run.sh <work-order.json> [--resume]
 #
+# --resume CONTINUES an interrupted run. It does not merely report on one.
+# Every step that recorded its completion event in the ledger is skipped and
+# its result re-read from disk; the run picks up at the first step that did
+# not. Acceptance commands resume per command, not per phase, so a run killed
+# after the third of five commands runs exactly two.
+#
+# What makes this safe rather than clever: nothing is recomputed from memory.
+# The ledger is append-only and fsynced per line (see _event_append), and every
+# step writes its output to a file before recording that it finished. So the
+# state a resumed run reads is the state the crashed run wrote, not a
+# reconstruction of it. A step whose event is present but whose output file is
+# missing is treated as NOT done — the event is a claim, the file is the thing.
+#
 # Exit codes:
 #   0 — run completed (verdict may be "accepted" or "rejected"; see result.json)
 #   1 — usage or pre-flight error
-#   2 — --resume and the run is incomplete
+#   2 — --resume asked for, and the run cannot be resumed
 #
 # Boundaries: MUST NOT push, open a PR, merge, or write outside operator/.runs/
 # and its own worktree. Slice 1a stops at result.json.
@@ -73,8 +86,42 @@ for item in json.load(open('$WO_FILE'))[sys.argv[1]]:
 " "$1"
 }
 
+# _completed <event> [file …] — did this step finish, and is its output there?
+#
+# Both halves are load-bearing. The event alone is a claim the crashed run made
+# about itself, and this repository's standing rule is that a claim is not a
+# finding; a file alone cannot say whether it was complete when the process
+# died. Requiring both means a step interrupted between writing its output and
+# recording the event re-runs, which is the safe direction: these steps are
+# idempotent, and re-running one costs time while skipping one loses work.
+_completed() {
+  local event="$1"; shift
+  [ -f "${EVENTS_FILE:-/nonexistent}" ] || return 1
+  grep -q "\"event\":\"${event}\"" "$EVENTS_FILE" || return 1
+  local f
+  for f in "$@"; do
+    [ -s "$f" ] || return 1
+  done
+  return 0
+}
+
+# _skip <step> — announce a step that is not being re-run.
+_skip() {
+  echo "  resume: $1 already done, not re-running"
+}
+
 # ---- cleanup trap ----------------------------------------------------------
+#
+# On a run that finished, the worktree is removed in step 10 and this is a
+# no-op. On a run that did not, the worktree is KEPT: it holds the builder's
+# work, and removing it would make --resume a synonym for --restart. That is
+# the difference between a ledger that records a crash and one that survives
+# it.
 _cleanup_worktree() {
+  if [ -n "${_WT_CREATED:-}" ] && [ -n "${WORKTREE:-}" ] && [ -z "${_RUN_FINISHED:-}" ]; then
+    echo "  worktree kept for --resume: $WORKTREE" >&2
+    return 0
+  fi
   if [ -n "${_WT_CREATED:-}" ] && [ -n "${WORKTREE:-}" ]; then
     git worktree remove --force "$WORKTREE" 2>/dev/null || true
     git worktree prune 2>/dev/null || true
@@ -99,11 +146,13 @@ if $RESUME; then
   if grep -q '"run_finished"' "$EVENTS_FILE" 2>/dev/null; then
     echo "COMPLETE: last event $LAST_EVENT at $LAST_TS"
     exit 0
-  else
-    echo "INCOMPLETE: last event $LAST_EVENT at $LAST_TS"
-    exit 2
   fi
+
+  echo "INCOMPLETE: last event $LAST_EVENT at $LAST_TS"
+  echo "RESUMING from there — completed steps will not be re-run"
+  RESUMING=true
 fi
+RESUMING="${RESUMING:-false}"
 
 # ---- pre-flight: cd to repo root -------------------------------------------
 cd "$REPO_ROOT"
@@ -196,9 +245,26 @@ PATCH_FILE="$RUN_DIR/changes.patch"
 
 # ---- step 2: create run dir -------------------------------------------------
 mkdir -p "$RUN_DIR"
-> "$EVENTS_FILE"
+
+# The ledger is truncated only for a fresh run. Truncating it on resume would
+# destroy the very record the resume is reading, and the second run would then
+# look like a first one that had simply never got far — the failure mode being
+# that a crash becomes invisible after one retry.
+if ! $RESUMING; then
+  > "$EVENTS_FILE"
+fi
 
 # ---- record event: run_started ----------------------------------------------
+if $RESUMING; then
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'run_resumed',
+    'work_order_id': '$WO_ID'
+}, separators=(',', ':')))
+")"
+else
 _event_append "$(python3 -c "
 import json
 print(json.dumps({
@@ -210,28 +276,36 @@ print(json.dumps({
     'builder': '$BUILDER'
 }, separators=(',', ':')))
 ")"
+fi
 
 # ---- step 3: git worktree add (idempotent) ----------------------------------
 WORKTREE="$RUN_DIR/wt"
 
-# Prune stale registrations first, then remove any existing worktree at this path
-git worktree prune 2>/dev/null || true
-if git worktree list --porcelain 2>/dev/null | grep -q "worktree $(cd "$RUN_DIR" 2>/dev/null && pwd -P)/wt$"; then
-  git worktree remove --force "$WORKTREE" 2>/dev/null || true
+if $RESUMING && [ -d "$WORKTREE" ]; then
+  # The builder's work is in here. Re-creating it from base_sha would discard
+  # exactly what the resume exists to preserve.
+  _skip "worktree"
+  _WT_CREATED=1
+  trap _cleanup_worktree EXIT
+else
+  # Prune stale registrations first, then remove any existing worktree at this path
   git worktree prune 2>/dev/null || true
-fi
-if [ -d "$WORKTREE" ]; then
-  rm -rf "$WORKTREE"
-fi
+  if git worktree list --porcelain 2>/dev/null | grep -q "worktree $(cd "$RUN_DIR" 2>/dev/null && pwd -P)/wt$"; then
+    git worktree remove --force "$WORKTREE" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+  fi
+  if [ -d "$WORKTREE" ]; then
+    rm -rf "$WORKTREE"
+  fi
 
-git worktree add --detach "$WORKTREE" "$BASE_SHA" >/dev/null 2>&1 || {
-  echo "FATAL: failed to create worktree at $WORKTREE for sha $BASE_SHA" >&2
-  exit 1
-}
-_WT_CREATED=1
-trap _cleanup_worktree EXIT
+  git worktree add --detach "$WORKTREE" "$BASE_SHA" >/dev/null 2>&1 || {
+    echo "FATAL: failed to create worktree at $WORKTREE for sha $BASE_SHA" >&2
+    exit 1
+  }
+  _WT_CREATED=1
+  trap _cleanup_worktree EXIT
 
-_event_append "$(python3 -c "
+  _event_append "$(python3 -c "
 import json
 print(json.dumps({
     'ts': '$(utc_ts)',
@@ -239,8 +313,12 @@ print(json.dumps({
     'path': '$WORKTREE'
 }, separators=(',', ':')))
 ")"
+fi
 
 # ---- step 4: before snapshot ------------------------------------------------
+if _completed before_snapshot "$RUN_DIR/before_snapshot.json"; then
+  _skip "before-snapshot"
+else
 python3 -c "
 import json, hashlib, os, subprocess, sys
 wt = '$WORKTREE'
@@ -266,8 +344,34 @@ print(json.dumps({
     'file_count': $SNAP_COUNT
 }, separators=(',', ':')))
 ")"
+fi
 
 # ---- step 5: invoke builder -------------------------------------------------
+BUILDER_STDOUT_FILE="$RUN_DIR/builder_stdout.txt"
+BUILDER_STDERR_FILE="$RUN_DIR/builder_stderr.txt"
+
+if _completed builder_finished "$BUILDER_STDOUT_FILE"; then
+  # This is the step that must never run twice. A builder is not idempotent —
+  # it appends, commits, calls a model, spends money. Its verdict is read back
+  # out of the ledger it wrote at the time, not re-derived.
+  _skip "builder"
+  BUILDER_EXIT=$(python3 -c "
+import json
+for line in open('$EVENTS_FILE'):
+    d = json.loads(line)
+    if d['event'] == 'builder_finished':
+        print(d['exit_status'])
+        break
+")
+  REPORTED_OUTCOME=$(python3 -c "
+import json
+for line in open('$EVENTS_FILE'):
+    d = json.loads(line)
+    if d['event'] == 'builder_finished':
+        print(d['reported_outcome'])
+        break
+")
+else
 _event_append "$(python3 -c "
 import json
 print(json.dumps({
@@ -275,9 +379,6 @@ print(json.dumps({
     'event': 'builder_started'
 }, separators=(',', ':')))
 ")"
-
-BUILDER_STDOUT_FILE="$RUN_DIR/builder_stdout.txt"
-BUILDER_STDERR_FILE="$RUN_DIR/builder_stderr.txt"
 
 set +o errexit
 WORK_ORDER="$WO_FILE" "$BUILDER" "$WORKTREE" >"$BUILDER_STDOUT_FILE" 2>"$BUILDER_STDERR_FILE"
@@ -303,10 +404,15 @@ print(json.dumps({
     'reported_outcome': '$REPORTED_OUTCOME'
 }, separators=(',', ':')))
 ")"
+fi
 
 # ---- step 6: compute changed paths ------------------------------------------
 CHANGED_PATHS_FILE="$RUN_DIR/changed_paths.txt"
 
+if _completed paths_checked "$CHANGED_PATHS_FILE" "$RUN_DIR/path_check_result.json"; then
+  _skip "path check"
+  PATH_CHECK_RESULT="$(cat "$RUN_DIR/path_check_result.json")"
+else
 {
   # Unstaged/staged working-tree changes
   git -C "$WORKTREE" status --porcelain 2>/dev/null | while IFS= read -r line; do
@@ -367,6 +473,7 @@ print(json.dumps({
     'forbidden_hits': $FORBIDDEN_JSON
 }, separators=(',', ':')))
 ")"
+fi
 
 # ---- step 8: acceptance commands --------------------------------------------
 ACCEPTANCE_COMMANDS_FILE="$RUN_DIR/acceptance_commands.txt"
@@ -384,11 +491,45 @@ print(json.dumps({
 ")"
 
 ACCEPTANCE_EXITS_FILE="$RUN_DIR/acceptance_exits.txt"
-> "$ACCEPTANCE_EXITS_FILE"
+
+# Resume granularity is the command, not the phase. A run killed after the
+# third of five acceptance commands must run exactly two, and the three
+# already-recorded exit statuses must survive — they are what the verdict is
+# computed from, and re-running them would ask a different question of a
+# worktree that has since changed.
+DONE_COUNT=0
+if $RESUMING && [ -f "$ACCEPTANCE_EXITS_FILE" ]; then
+  DONE_COUNT=$(grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE" || true)
+  RECORDED=$(wc -l < "$ACCEPTANCE_EXITS_FILE" | tr -d ' ')
+  # The file and the ledger must agree. If they do not, the crash landed
+  # between the two writes and the honest move is to trust neither: fall back
+  # to whichever is smaller, so a command runs twice rather than not at all.
+  if [ "$RECORDED" -lt "$DONE_COUNT" ]; then
+    DONE_COUNT="$RECORDED"
+  fi
+  # `head -n 0` is an error on BSD head, not an empty result. A resume that
+  # crashed before the first acceptance command took this branch with
+  # DONE_COUNT=0 and died on the trim rather than on anything to do with the
+  # run — found by the test for that exact case.
+  if [ "$DONE_COUNT" -gt 0 ]; then
+    head -n "$DONE_COUNT" "$ACCEPTANCE_EXITS_FILE" > "$ACCEPTANCE_EXITS_FILE.keep"
+    mv "$ACCEPTANCE_EXITS_FILE.keep" "$ACCEPTANCE_EXITS_FILE"
+    _skip "$DONE_COUNT acceptance command(s)"
+  else
+    > "$ACCEPTANCE_EXITS_FILE"
+  fi
+else
+  > "$ACCEPTANCE_EXITS_FILE"
+fi
 
 IDX=0
 while IFS= read -r cmd; do
   [ -z "$cmd" ] && continue
+
+  if [ "$IDX" -lt "$DONE_COUNT" ]; then
+    IDX=$((IDX + 1))
+    continue
+  fi
 
   set +o errexit
   (cd "$WORKTREE" && eval "$cmd") >/dev/null 2>&1
@@ -662,6 +803,7 @@ with open('$RESULT_FILE', 'w') as f:
 "
 
 # ---- final event: run_finished ----------------------------------------------
+_RUN_FINISHED=1
 _event_append "$(python3 -c "
 import json
 print(json.dumps({

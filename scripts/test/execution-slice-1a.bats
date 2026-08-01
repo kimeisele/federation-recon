@@ -182,10 +182,18 @@ _check_lie() {
   wait "$RUNNER_PID" 2>/dev/null || true
   sleep 0.2
 
-  # --resume must exit 2 and print INCOMPLETE
+  # --resume must CONTINUE the run, not report on it.
   run bash "$RUNNER" "$WO" --resume
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"INCOMPLETE"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"INCOMPLETE"* ]]      # it says what it found
+  [[ "$output" == *"RESUMING"* ]]        # and what it is doing about it
+  [ -f "$RUN_ROOT/wo-1-3/result.json" ]  # and it reaches the end
+
+  # The builder must have run exactly once across both invocations. This is
+  # the property that matters most: a builder is not idempotent — it appends,
+  # commits, calls a model, spends money.
+  run grep -c '"event":"builder_finished"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -642,4 +650,197 @@ with open('$WO', 'w') as f:
 
   PATCH_ERROR=$(python3 -c "import json; print(json.load(open('$RESULT'))['patch_error'])")
   [ -n "$PATCH_ERROR" ]
+}
+
+# ---------------------------------------------------------------------------
+# RESUME — the three properties the owner asked for, each as its own case.
+# All three run against the fake builder; no model call anywhere.
+# ---------------------------------------------------------------------------
+
+# _kill_at <events-file> <pid> <grep-pattern> [min-count]
+# Wait until the ledger shows the pattern at least min-count times, then
+# SIGKILL. Terminates on process exit too, so a run that finishes early fails
+# the caller's assertion rather than hanging here.
+_kill_at() {
+  local ev="$1" pid="$2" pat="$3" want="${4:-1}" waited=0 n
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -f "$ev" ]; then
+      n="$(grep -c "$pat" "$ev" 2>/dev/null || true)"
+      [ -z "$n" ] && n=0
+      if [ "$n" -ge "$want" ]; then break; fi
+    fi
+    sleep 0.05
+    waited=$((waited + 1))
+    if [ "$waited" -ge 1200 ]; then
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      false "never reached $want x $pat within 60s"
+    fi
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  sleep 0.2
+}
+
+@test "execution-slice-1a: RESUME — a killed run runs to completion" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-20" 1 '[]' '["true", "sleep 30"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-20/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1
+
+  [ ! -f "$RUN_ROOT/wo-1-20/result.json" ]   # the crash was real
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -f "$RUN_ROOT/wo-1-20/result.json" ]
+
+  # Both commands ran, across the two invocations.
+  run grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE"
+  [ "$output" = "2" ]
+}
+
+@test "execution-slice-1a: RESUME — a completed step is not run a second time" {
+  # Five acceptance commands, killed after the second. Exactly three may run
+  # on the resume, and the builder none.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-21" 1 '[]' '["true", "true", "sleep 30", "true", "true"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-21/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 2
+
+  BEFORE="$(grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE")"
+  [ "$BEFORE" -ge 2 ]
+
+  # The fake builder appends a line every time it runs, so a second invocation
+  # is visible in the work itself and not only in the ledger. The worktree is
+  # removed when the resumed run completes, so the evidence is taken from the
+  # saved patch afterwards rather than from the file.
+  MARKER="$RUN_ROOT/wo-1-21/wt/operator/.fake-marker"
+  [ "$(wc -l < "$MARKER" | tr -d ' ')" = "1" ]
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"acceptance command(s) already done"* ]]
+
+  run grep -c '"event":"builder_finished"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+
+  # Exactly one line was added to the marker across both invocations. Two
+  # would mean the builder ran again.
+  run grep -c '^+fake builder touched this file' "$RUN_ROOT/wo-1-21/changes.patch"
+  [ "$output" = "1" ]
+
+  # Five commands total, not five-plus-the-repeats.
+  run grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE"
+  [ "$output" = "5" ]
+}
+
+@test "execution-slice-1a: RESUME — resumable after verification, before the result" {
+  # The last window in Slice 1a: the verdict is decided and result.json is not
+  # yet written. Slice 1a stops before the PR, so this is the equivalent seam.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-22" 1 '[]' '["true"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-22/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"verdict"' 1
+
+  run tail -1 "$EVENTS_FILE"
+  [[ "$output" == *'"verdict"'* ]]
+  [ ! -f "$RUN_ROOT/wo-1-22/result.json" ]
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -f "$RUN_ROOT/wo-1-22/result.json" ]
+
+  run grep -c '"event":"builder_finished"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+  run grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "execution-slice-1a: RESUME — a finished run is reported, not re-run" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-23" 1 '[]' '["true"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-23/events.jsonl"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+  BEFORE="$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+
+  run bash "$RUNNER" "$WO" --resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"COMPLETE"* ]]
+
+  AFTER="$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+  [ "$BEFORE" = "$AFTER" ]      # it appended nothing
+}
+
+@test "execution-slice-1a: RESUME — an event without its output file re-runs the step" {
+  # The event is a claim the crashed run made about itself; the file is the
+  # thing. A step interrupted between writing its output and recording the
+  # event must re-run, and so must one whose output was lost — the safe
+  # direction, since these steps are idempotent and the builder is guarded
+  # separately by its own file check.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-24" 1 '[]' '["sleep 30"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-24/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1
+
+  # The ledger says the snapshot was taken. Remove the file it wrote.
+  grep -q '"event":"before_snapshot"' "$EVENTS_FILE"
+  rm -f "$RUN_ROOT/wo-1-24/before_snapshot.json"
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"before-snapshot already done"* ]]   # it did NOT skip
+  [ -f "$RUN_ROOT/wo-1-24/before_snapshot.json" ]       # it rebuilt it
+}
+
+@test "execution-slice-1a: RESUME — the ledger of a crashed run is never truncated" {
+  # Truncating on resume would destroy the record the resume is reading, and a
+  # crash would become invisible after one retry.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-25" 1 '[]' '["sleep 30"]'
+  EVENTS_FILE="$RUN_ROOT/wo-1-25/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1
+
+  FIRST_LINE="$(head -1 "$EVENTS_FILE")"
+  BEFORE="$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+
+  run bash "$RUNNER" "$WO" --resume
+  [ "$status" -eq 0 ]
+
+  [ "$(head -1 "$EVENTS_FILE")" = "$FIRST_LINE" ]
+  AFTER="$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+  [ "$AFTER" -gt "$BEFORE" ]
+  run grep -c '"event":"run_resumed"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "execution-slice-1a: RESUME — with no ledger at all, it refuses" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-26" 1 '[]' '["true"]'
+
+  run bash "$RUNNER" "$WO" --resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"nothing to resume"* ]]
 }
