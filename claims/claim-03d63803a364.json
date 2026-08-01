@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": "docs/REPO_BOUNDARIES.md",
   "claim_text": "kimeisele/agent-world/docs/REPO_BOUNDARIES.md asserts steward-gateway owns: (intended: external API gateway)",
-  "observed_at": "2026-07-31T05:01:10Z",
+  "observed_at": "2026-08-01T04:03:00Z",
   "repository_pin": "pins/v0-boundary-drift/agent-world.json"
 }

@@ -1,19 +1,19 @@
 {
   "digest_type": "composed_federation",
   "composer_version": "v2",
-  "composed_at": "2026-07-31T05:01:27Z",
+  "composed_at": "2026-08-01T04:03:23Z",
   "procedure_count": 4,
   "procedures": [
     {
       "procedure_id": "node-census-v1",
       "procedure_version": "v1",
-      "run_timestamp": "2026-07-31T05:00:57Z",
+      "run_timestamp": "2026-08-01T04:02:43Z",
       "summary": {}
     },
     {
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0",
-      "run_timestamp": "2026-07-31T05:01:10Z",
+      "run_timestamp": "2026-08-01T04:03:00Z",
       "summary": {
         "pins": 7,
         "claims": 30,
@@ -28,11 +28,11 @@
     {
       "procedure_id": "v1-census",
       "procedure_version": "v1",
-      "run_timestamp": "2026-07-31T05:00:57Z",
+      "run_timestamp": "2026-08-01T04:02:43Z",
       "summary": {
         "pins": 7,
-        "evidence": 52,
-        "findings": 26,
+        "evidence": 55,
+        "findings": 28,
         "coverage_records": 7,
         "observed_nodes": 7,
         "stale_nodes": 1,
@@ -44,7 +44,7 @@
     {
       "procedure_id": "v2-consumption",
       "procedure_version": "v2",
-      "run_timestamp": "2026-07-31T05:01:27Z",
+      "run_timestamp": "2026-08-01T04:03:23Z",
       "summary": {
         "pins": 6,
         "finding_references": 0,
@@ -53,7 +53,7 @@
         "coverage_records": 6,
         "observed_repositories": 6,
         "partial_failures": 0,
-        "cycle": 6
+        "cycle": 7
       }
     }
   ],
@@ -62,7 +62,7 @@
       "target": "kimeisele/*",
       "status": "observed",
       "attention_rank": 0,
-      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 6 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
+      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 7 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
       "refs": [
         "consumption/"
       ],
