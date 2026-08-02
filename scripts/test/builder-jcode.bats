@@ -45,19 +45,37 @@ setup() {
 
 echo "$@" >> "${JCODE_LOG:-/dev/null}"
 
+# Profile-backed jcode puts global routing flags before the `run` subcommand,
+# while the legacy form starts with `run`. Find the subcommand instead of
+# assuming its position so this stub exercises both contracts.
+IS_RUN=no
+for arg in "$@"; do
+  if [ "$arg" = "run" ]; then
+    IS_RUN=yes
+    break
+  fi
+done
+
 # The stub simulates jcode's LOG as well as its behaviour, because the provider
 # probe (#159) reads the log rather than the tool's own resolver — the resolver
 # was measured saying "DeepSeek" while the runtime logged "openrouter".
 # A stub that answered but wrote no log would make every run unverifiable,
 # which is the correct outcome for a tool that writes no log and the wrong
 # outcome for a test of something else.
-if [ "${1:-}" = "run" ] && [ -n "${JCODE_LOG_DIR:-}" ]; then
+if [ "$IS_RUN" = "yes" ] && [ -n "${JCODE_LOG_DIR:-}" ]; then
   mkdir -p "$JCODE_LOG_DIR"
   printf '[%s] [INFO] [ses:session_stub|prv:%s|mod:%s] API call starting\n' \
     "$(date -u +'%Y-%m-%d %H:%M:%S')" \
     "${JCODE_STUB_PROVIDER:-deepseek}" \
     "${JCODE_STUB_MODEL:-deepseek-v4-flash}" \
     >> "$JCODE_LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+  if [ -n "${JCODE_STUB_ENDPOINT:-}" ]; then
+    printf '[%s] [INFO] API stream attempt 1/1 over HTTPS transport (model: %s, endpoint: %s, auth: TEST_API_KEY)\n' \
+      "$(date -u +'%Y-%m-%d %H:%M:%S')" \
+      "${JCODE_STUB_MODEL:-deepseek-v4-flash}" \
+      "$JCODE_STUB_ENDPOINT" \
+      >> "$JCODE_LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+  fi
 fi
 
 case "${1:-}" in
@@ -66,6 +84,10 @@ case "${1:-}" in
     exit 0
     ;;
 esac
+
+if [ "$IS_RUN" = "yes" ] && [ -n "${JCODE_STUB_TOKENS:-}" ]; then
+  printf '%s\n' "$JCODE_STUB_TOKENS"
+fi
 
 # Extract -C dir from arguments
 C_DIR=""
@@ -366,4 +388,106 @@ with open('$wo_file', 'w') as f:
   FILES=$(ls -1 "$WO_DIR" 2>/dev/null)
   [ "$(echo "$FILES" | wc -l | tr -d ' ')" -eq 1 ]
   [[ "$FILES" == "wo.json" ]]
+}
+
+# ---------------------------------------------------------------------------
+# 11. NAMED PROFILE — profile and model are independent global selections.
+#     This is the no-vendor-login path for any OpenAI-compatible API.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: NAMED PROFILE — profile route is used without provider flag" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 167 '["src/"]' '[]' '["true"]'
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_PROVIDER_PROFILE="fixture-direct" \
+    JCODE_EXPECTED_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_ENDPOINT="https://api.fixture.invalid" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -eq 0 ]
+  # Global jcode flags must precede the run subcommand. A literal provider
+  # name is not a substitute for the selected profile.
+  run grep -E -- '--provider-profile fixture-direct .*--model deepseek-v4-flash .* run ' "$JCODE_LOG"
+  [ "$status" -eq 0 ]
+  run grep -E -- '(^| )-p deepseek( |$)' "$JCODE_LOG"
+  [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# 12. ENDPOINT MISMATCH — a profile label is intent; the logged endpoint is
+#     route evidence. A different endpoint must stop before build mutation.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: ENDPOINT MISMATCH — profile route fails closed before build" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 167 '["src/"]' '[]' '["true"]'
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_PROVIDER_PROFILE="fixture-direct" \
+    JCODE_EXPECTED_ENDPOINT="https://api.expected.invalid" \
+    JCODE_STUB_ENDPOINT="https://api.somewhere-else.invalid" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'failed'* ]]
+  [ ! -e "$WT/src/out.txt" ]
+}
+
+# ---------------------------------------------------------------------------
+# 13. MODEL MISMATCH — endpoint agreement alone must not substitute for the
+#     model named by the work dispatch.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: MODEL MISMATCH — profile route fails closed before build" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 167 '["src/"]' '[]' '["true"]'
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_PROVIDER_PROFILE="fixture-direct" \
+    JCODE_EXPECTED_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_MODEL="not-the-requested-model" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'failed'* ]]
+  [ ! -e "$WT/src/out.txt" ]
+}
+
+# ---------------------------------------------------------------------------
+# 14. BUILD TOKENS — jcode emits exact per-run figures on stdout. They belong
+#     to the build invocation, not the separate route probe, and must survive.
+# ---------------------------------------------------------------------------
+
+@test "builder-jcode: BUILD TOKENS — exact jcode token figures reach cost record" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 167 '["src/"]' '[]' '["true"]'
+  export RUN_DIR="$WORKDIR/run"
+
+  WORK_ORDER="$WO" RUN_DIR="$RUN_DIR" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_PROVIDER_PROFILE="fixture-direct" \
+    JCODE_EXPECTED_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_TOKENS=$'[Tokens] upload: 123 download: 45 cache_read: 6 cache_write: 7\n[Tokens] upload: 10 download: 5 cache_read: 2 cache_write: 3' \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -eq 0 ]
+  [ -f "$RUN_DIR/builder_cost.txt" ]
+  # Agentic builds make multiple model calls. Per-call token lines must be
+  # summed; keeping only the first or last line is not run-level accounting.
+  grep -q '^input_tokens:[[:space:]]*133$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^output_tokens:[[:space:]]*50$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^cache_read_tokens:[[:space:]]*8$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^cache_write_tokens:[[:space:]]*10$' "$RUN_DIR/builder_cost.txt"
+
+  # operator/run.sh owns builder_stdout.txt for the adapter's JSON report.
+  # The adapter must not truncate or reuse it for jcode's raw stream.
+  [ ! -e "$RUN_DIR/builder_stdout.txt" ]
+  [ -s "$RUN_DIR/builder_jcode_output.txt" ]
+
+  grep -q '^requested_endpoint:[[:space:]]*https://api.fixture.invalid$' \
+    "$RUN_DIR/builder_provider.txt"
+  grep -q '^resolved_endpoint:[[:space:]]*https://api.fixture.invalid$' \
+    "$RUN_DIR/builder_provider.txt"
 }

@@ -70,6 +70,8 @@ _record() {
     printf 'requested_model:    %s\n' "$REQUESTED_MODEL"
     printf 'resolved_provider:  %s\n' "${1:-undetermined}"
     printf 'resolved_model:     %s\n' "${2:-undetermined}"
+    printf 'requested_endpoint: %s\n' "${JCODE_EXPECTED_ENDPOINT:-not applicable}"
+    printf 'resolved_endpoint:  %s\n' "${4:-not measured}"
     printf 'verdict:            %s\n' "$3"
     printf 'log:                %s\n' "$LOG_FILE"
     printf 'window_from:        %s\n' "${WINDOW_FROM:-unset}"
@@ -84,13 +86,27 @@ trap 'rm -rf "$SCRATCH"' EXIT
 
 WINDOW_FROM="$(date -u +"%Y-%m-%d %H:%M:%S")"
 
+PROFILE="${JCODE_PROVIDER_PROFILE:-}"
+EXPECTED_ENDPOINT="${JCODE_EXPECTED_ENDPOINT:-}"
+
 # The probe is bounded by OUR clock. #149 measured a configured
 # stream_idle_timeout_secs=180 that did not fire after 10h45m, and #159
 # measured 22 minutes with no socket open. A timeout we do not enforce is not
 # a timeout.
-"${JCODE_BIN:-jcode}" run -p "$REQUESTED_PROVIDER" -m "$REQUESTED_MODEL" \
-  --quiet --no-update -C "$SCRATCH" "Reply with the single word: ok" \
-  >/dev/null 2>&1 &
+if [ -n "$PROFILE" ]; then
+  if [ -z "$EXPECTED_ENDPOINT" ]; then
+    _record "$PROFILE" "$REQUESTED_MODEL" "profile mode requires JCODE_EXPECTED_ENDPOINT"
+    echo "provider-probe: profile selected without an expected endpoint" >&2
+    exit 2
+  fi
+  "${JCODE_BIN:-jcode}" --provider-profile "$PROFILE" --model "$REQUESTED_MODEL" \
+    --quiet --no-update -C "$SCRATCH" run "Reply with the single word: ok" \
+    >/dev/null 2>&1 &
+else
+  "${JCODE_BIN:-jcode}" run -p "$REQUESTED_PROVIDER" -m "$REQUESTED_MODEL" \
+    --quiet --no-update -C "$SCRATCH" "Reply with the single word: ok" \
+    >/dev/null 2>&1 &
+fi
 PROBE_PID=$!
 waited=0
 while kill -0 "$PROBE_PID" 2>/dev/null; do
@@ -110,6 +126,53 @@ if [ ! -f "$LOG_FILE" ]; then
   _record "" "" "log file not found"
   echo "provider-probe: no log at $LOG_FILE — cannot measure" >&2
   exit 2
+fi
+
+if [ -n "$PROFILE" ]; then
+  # Named OpenAI-compatible profiles use a generic transport tag. Measure the
+  # route tuple that JCode logs for the request instead: model plus endpoint.
+  ROUTES="$(python3 - "$LOG_FILE" "$WINDOW_FROM" <<'PY'
+import re, sys
+log, start = sys.argv[1], sys.argv[2]
+seen = set()
+for line in open(log, errors="replace"):
+    stamp = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
+    if not stamp or stamp.group(1) < start:
+        continue
+    route = re.search(
+        r"model:\s*([^,\s)]+),\s*endpoint:\s*([^\s,)]+)", line
+    )
+    if route:
+        seen.add("%s\t%s" % route.groups())
+for item in sorted(seen):
+    print(item)
+PY
+)"
+  COUNT="$(printf '%s' "$ROUTES" | grep -c . || true)"
+
+  if [ "${COUNT:-0}" -eq 0 ]; then
+    _record "$PROFILE" "" "no model and endpoint route logged in the window"
+    echo "provider-probe: no model/endpoint route logged — profile unverified" >&2
+    exit 2
+  fi
+  if [ "${COUNT:-0}" -gt 1 ]; then
+    _record "$PROFILE" "AMBIGUOUS" "more than one route logged in the window"
+    echo "provider-probe: more than one model/endpoint route in the window" >&2
+    exit 1
+  fi
+
+  RESOLVED_MODEL="$(printf '%s' "$ROUTES" | cut -f1)"
+  RESOLVED_ENDPOINT="$(printf '%s' "$ROUTES" | cut -f2)"
+  if [ "$RESOLVED_MODEL" != "$REQUESTED_MODEL" ] || \
+     [ "$RESOLVED_ENDPOINT" != "$EXPECTED_ENDPOINT" ]; then
+    _record "$PROFILE" "$RESOLVED_MODEL" "MISMATCH" "$RESOLVED_ENDPOINT"
+    echo "provider-probe: REFUSED — named profile resolved to an unexpected model or endpoint" >&2
+    exit 1
+  fi
+
+  _record "$PROFILE" "$RESOLVED_MODEL" "match" "$RESOLVED_ENDPOINT"
+  printf '%s\n' "$PROFILE"
+  exit 0
 fi
 
 # Every distinct provider tag written since the window opened.
