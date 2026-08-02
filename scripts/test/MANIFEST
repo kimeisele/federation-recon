@@ -16,11 +16,13 @@ consult-provenance.bats
 consultation-diff-hygiene.bats
 consultation-gate.bats
 consultation-provenance.bats
+consultation-rounds.bats
 consumption.bats
 count-procedure.bats
 cross-node-artifacts.bats
 dispatch-bridge.bats
 execution-slice-1a.bats
+finding-retirement.bats
 gate-cleanup.bats
 heartbeat-v12-invariants.bats
 heartbeat.bats

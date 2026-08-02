@@ -44,6 +44,12 @@
 # Usage:
 #   scripts/consult.sh <provider> <model> <output.md> <prompt-file> [workdir]
 #
+# MORE THAN ONE ROUND: the output of the latest round goes to
+# governance/consultations/<pr>.md and every earlier round moves to
+# <pr>-round<N>.md, whole. The primary links them all. A superseded round is
+# never deleted and never shortened — enforced by check_consultation_rounds,
+# and spelled out in governance/consultation-prompt.md.
+#
 # Environment:
 #   CONSULT_LOG            — override the log path (tests drive fixtures)
 #   CONSULT_SKIP_RUN       — do not dispatch; only verify. Tests only.
