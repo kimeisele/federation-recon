@@ -543,6 +543,46 @@ if [ "$PROVIDER_VERDICT" != "match" ]; then
   REPORTED_OUTCOME="failed"
 fi
 
+# ── the cost record goes in the ledger, and its absence fails the run ─────
+#
+# #160: a run has to be able to say what it cost and where. The record names
+# the provider, the model, the call count, and — explicitly — the figures the
+# tool redacts, because an empty field reads as zero and zero is a
+# measurement while "unavailable" is not.
+COST_RECORD="$RUN_DIR/builder_cost.txt"
+if [ -f "$COST_RECORD" ]; then
+  COST_PROVIDER="$(sed -n 's/^run_provider:[[:space:]]*//p' "$COST_RECORD" | head -1)"
+  COST_MODEL="$(sed -n 's/^run_model:[[:space:]]*//p' "$COST_RECORD" | head -1)"
+  COST_CALLS="$(sed -n 's/^api_calls:[[:space:]]*//p' "$COST_RECORD" | head -1)"
+else
+  COST_PROVIDER=""
+  COST_MODEL=""
+  COST_CALLS=""
+fi
+
+ESCAPED_CP=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "${COST_PROVIDER:-missing}")
+ESCAPED_CM=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "${COST_MODEL:-missing}")
+ESCAPED_CC=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "${COST_CALLS:-missing}")
+_event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'builder_cost',
+    'provider': $ESCAPED_CP,
+    'model': $ESCAPED_CM,
+    'api_calls': $ESCAPED_CC,
+    'record': 'builder_cost.txt'
+}, separators=(',', ':')))
+")"
+
+if [ ! -f "$COST_RECORD" ] || [ -z "$COST_PROVIDER" ] || [ -z "$COST_MODEL" ]; then
+  echo "FATAL: no cost record for this run — it cannot say what it spent or where." >&2
+  echo "       expected $COST_RECORD with run_provider and run_model." >&2
+  echo "       A run without a cost record is not complete. See #160." >&2
+  BUILDER_EXIT=1
+  REPORTED_OUTCOME="failed"
+fi
+
 _event_append "$(python3 -c "
 import json
 print(json.dumps({
