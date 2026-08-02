@@ -20,6 +20,37 @@ no session context.
 | Fable 5 | Anthropic | `jcode run -p claude -m claude-fable-5` |
 | Sol 5.6 | OpenAI | `jcode run -p openai -m gpt-5.6-sol` |
 | Kimi K3 | Moonshot | direct API — see below. **Do not use `jcode run` for Kimi.** |
+| Qwen 3.7 Max | OpenCode Go service; Qwen upstream model | `scripts/consult-opencode.sh qwen3.7-max <output.md> <prompt-file> <source-repo>` |
+
+### Current non-JCode review channel (2026-08-02)
+
+The current operator is OpenAI and the current builder is DeepSeek. Sol and
+DeepSeek therefore cannot supply the different-provider judgment for work they
+authored or operated. The owner retired Claude from this operation. Moonshot is
+unavailable until its exposed credential is rotated in a separate OWNER-ONLY
+action.
+
+The adopted bootstrap channel is `opencode-go/qwen3.7-max`, invoked only
+through `scripts/consult-opencode.sh`. The wrapper runs the reviewer in a
+disposable detached worktree, binds the JSON stream to one session, then checks
+the session export for the exact OpenCode Go service provider and requested
+model. A mismatch, ambiguous session, missing export, abnormal finish, crash or
+missing final verdict produces no consultation.
+
+The disposable worktree prevents reviewer edits from landing in the supplied
+checkout; it is **not an OS sandbox**. The model process still has the host
+capabilities granted to OpenCode. The wrapper refuses a dirty source checkout
+because its detached review would otherwise silently omit uncommitted bytes.
+
+Two facts remain separate in every artifact:
+
+- **service provider:** `opencode-go`, established by the session export;
+- **upstream model:** `qwen3.7-max`, asserted by that service's metadata. The
+  upstream model provider is not independently established by this control.
+
+This limitation is explicit because treating a service's model label as an
+independent network measurement would recreate the provenance overclaim in
+#135. The raw JSONL stream and full exported session remain beside the report.
 
 **Neither the env-var form nor the flags are sufficient on their own, and the
 correction recorded here on 2026-07-30 was itself wrong.** It said the fix was

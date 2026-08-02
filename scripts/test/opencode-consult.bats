@@ -39,6 +39,11 @@ case "${1:-}" in
       printf '%s\n' '{"type":"text","sessionID":"ses_review_123","part":{"type":"text","text":"PARTIAL FINDING"}}'
       exit 9
     fi
+    if [ "$mode" = hang ]; then
+      printf '%s\n' '{"type":"text","sessionID":"ses_review_123","part":{"type":"text","text":"PARTIAL BEFORE HANG"}}'
+      sleep 30
+      exit 0
+    fi
     if [ "$mode" = ambiguous ]; then
       printf '%s\n' '{"type":"text","sessionID":"ses_other_456","part":{"type":"text","text":"OTHER"}}'
     fi
@@ -68,6 +73,7 @@ teardown() {
 
 run_consult() {
   run env FAKE_MODE="${1:-ok}" OPENCODE_BIN="$OPENCODE_BIN" FAKE_ARGS="$FAKE_ARGS" \
+    OPENCODE_REVIEW_TIMEOUT_SECONDS=1 \
     bash "$CONSULT" qwen3.7-max "$OUT" "$PROMPT" "$SOURCE"
   echo "$output"
 }
@@ -131,6 +137,18 @@ run_consult() {
   [ -s "$OUT.raw.jsonl" ]
 }
 
+@test "opencode consult: its own clock kills a hanging review process group" {
+  start="$(date +%s)"
+  run_consult hang
+  elapsed=$(( $(date +%s) - start ))
+  [ "$status" -eq 1 ]
+  [ "$elapsed" -lt 10 ]
+  [ ! -e "$OUT" ]
+  [ -s "$OUT.unattributed" ]
+  grep -q 'PARTIAL BEFORE HANG' "$OUT.unattributed"
+  [ "$(git -C "$SOURCE" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+}
+
 @test "opencode consult: a completed answer without a final verdict is refused" {
   run_consult no_verdict
   [ "$status" -eq 1 ]
@@ -148,6 +166,14 @@ run_consult() {
   [ ! -e "$ARGS" ]
 }
 
+@test "opencode consult: a dirty source is refused because detached HEAD would omit it" {
+  printf 'not committed\n' > "$SOURCE/dirty.txt"
+  run_consult ok
+  [ "$status" -eq 2 ]
+  [ ! -e "$OUT" ]
+  [ ! -e "$ARGS" ]
+}
+
 @test "opencode consult: there is no verification bypass and the roster pins the invocation" {
   run bash -c "grep -nEi 'skip.?(verify|check)|--no-verify|SKIP_VERIFY' '$CONSULT'"
   [ "$status" -eq 1 ]
@@ -157,4 +183,3 @@ run_consult() {
   grep -qi 'service provider' "$REPO_ROOT/governance/reviewers.md"
   grep -qi 'upstream model' "$REPO_ROOT/governance/reviewers.md"
 }
-
