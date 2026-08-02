@@ -42,6 +42,22 @@ if [ -n "${RUN_DIR:-}" ]; then
   } > "$RUN_DIR/builder_provider.txt"
 fi
 
+# ---- the cost record every builder must write (#160) ------------------------
+#
+# The fake spends nothing, and says so in the fields rather than leaving them
+# blank. A blank field reads as zero, and zero is a measurement.
+if [ -n "${RUN_DIR:-}" ]; then
+  {
+    printf 'run_provider:      %s\n' "${FAKE_PROVIDER:-fake}"
+    printf 'run_model:         %s\n' "${FAKE_MODEL:-fake-builder}"
+    printf 'api_calls:         0\n'
+    printf 'stream_ms_total:   0\n'
+    printf 'tokens:            none — no model was called\n'
+    printf 'balance_before:    not applicable\n'
+    printf 'balance_after:     not applicable\n'
+  } > "${FAKE_COST_RECORD:-$RUN_DIR/builder_cost.txt}"
+fi
+
 FILES_CHANGED="[]"
 
 if [ -n "$TOUCH_FILE" ]; then

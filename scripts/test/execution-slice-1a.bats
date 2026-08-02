@@ -300,6 +300,8 @@ WT="${1:?}"
 if [ -n "${RUN_DIR:-}" ]; then
   printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
     > "$RUN_DIR/builder_provider.txt"
+  printf 'run_provider:      inline-test-builder\nrun_model:         none\napi_calls:         0\ntokens:            none — no model was called\n' \
+    > "$RUN_DIR/builder_cost.txt"
 fi
 
 mkdir -p "$WT/operator"
@@ -375,6 +377,8 @@ WT="${1:?}"
 if [ -n "${RUN_DIR:-}" ]; then
   printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
     > "$RUN_DIR/builder_provider.txt"
+  printf 'run_provider:      inline-test-builder\nrun_model:         none\napi_calls:         0\ntokens:            none — no model was called\n' \
+    > "$RUN_DIR/builder_cost.txt"
 fi
 
 mkdir -p "$WT/operator"
@@ -475,6 +479,8 @@ WT="${1:?}"
 if [ -n "${RUN_DIR:-}" ]; then
   printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
     > "$RUN_DIR/builder_provider.txt"
+  printf 'run_provider:      inline-test-builder\nrun_model:         none\napi_calls:         0\ntokens:            none — no model was called\n' \
+    > "$RUN_DIR/builder_cost.txt"
 fi
 mkdir -p "$WT/operator"
 echo "patch-saved-content" > "$WT/operator/patch-test.txt"
@@ -535,6 +541,8 @@ WT="${1:?}"
 if [ -n "${RUN_DIR:-}" ]; then
   printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
     > "$RUN_DIR/builder_provider.txt"
+  printf 'run_provider:      inline-test-builder\nrun_model:         none\napi_calls:         0\ntokens:            none — no model was called\n' \
+    > "$RUN_DIR/builder_cost.txt"
 fi
 mkdir -p "$WT/operator"
 echo "apply-test-v9" > "$WT/operator/apply-test.txt"
@@ -616,6 +624,8 @@ with open('$WO', 'w') as f:
 if [ -n "${RUN_DIR:-}" ]; then
   printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
     > "$RUN_DIR/builder_provider.txt"
+  printf 'run_provider:      inline-test-builder\nrun_model:         none\napi_calls:         0\ntokens:            none — no model was called\n' \
+    > "$RUN_DIR/builder_cost.txt"
 fi
 python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': []}))"
 exit 0
@@ -1248,4 +1258,72 @@ PYEOF
 
     VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-53/result.json'))['verdict'])")"
     [ "$VERDICT" = "rejected" ]
+}
+
+# ---------------------------------------------------------------------------
+# COST (#160) — a run without a cost record is not complete.
+#
+# Slice 1b's successful run produced none: the adapter wrote to a temp
+# directory it then deleted, because run.sh set RUN_DIR without exporting it.
+# Combined with the provider substitution, that run could say neither what it
+# spent nor where.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: COST — the record is in the ledger" {
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-60" 1 '[]' '["true"]'
+
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+
+    run grep -c '"event":"builder_cost"' "$RUN_ROOT/wo-1-60/events.jsonl"
+    [ "$output" = "1" ]
+    [ -s "$RUN_ROOT/wo-1-60/builder_cost.txt" ]
+
+    run grep '"event":"builder_cost"' "$RUN_ROOT/wo-1-60/events.jsonl"
+    [[ "$output" == *'"provider":"fake"'* ]]
+    [[ "$output" == *'"model":"fake-builder"'* ]]
+}
+
+@test "execution-slice-1a: COST — a run with no cost record is rejected" {
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-61" 1 '[]' '["true"]'
+
+    # Send the fake's cost record somewhere the runner will not look.
+    FAKE_COST_RECORD="$BATS_TEST_TMPDIR/elsewhere.txt" run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cannot say what it spent"* ]]
+
+    VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-61/result.json'))['verdict'])")"
+    [ "$VERDICT" = "rejected" ]
+}
+
+@test "execution-slice-1a: COST — the record survives in the run directory" {
+    # #160 in one line: the file existed and was deleted. It must be where the
+    # run record is, not in a temp directory the builder owns.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-62" 1 '[]' '["true"]'
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+
+    [ -f "$RUN_ROOT/wo-1-62/builder_cost.txt" ]
+    run grep -c "tokens:" "$RUN_ROOT/wo-1-62/builder_cost.txt"
+    [ "$output" = "1" ]
+}
+
+@test "execution-slice-1a: COST — the tokens field is never blank" {
+    # A blank field reads as zero and zero is a measurement. Whatever the
+    # builder could not obtain, it names.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-63" 1 '[]' '["true"]'
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+
+    TOK="$(sed -n 's/^tokens:[[:space:]]*//p' "$RUN_ROOT/wo-1-63/builder_cost.txt")"
+    [ -n "$TOK" ]
 }

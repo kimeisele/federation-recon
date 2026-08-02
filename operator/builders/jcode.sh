@@ -145,6 +145,7 @@ USAGE_BEFORE=$(jcode usage 2>&1 || true)
 # -----------------------------------------------------------------
 # 6. Invoke jcode
 # -----------------------------------------------------------------
+BUILD_WINDOW_FROM="$(date -u +"%Y-%m-%d %H:%M:%S")"
 set +o errexit
 jcode run -p "$PROVIDER" -m "$MODEL" --quiet -C "$WORKTREE" "$PROMPT" >/dev/null 2>&1
 JCODE_EXIT=$?
@@ -156,7 +157,7 @@ set -o errexit
 USAGE_AFTER=$(jcode usage 2>&1 || true)
 
 # -----------------------------------------------------------------
-# 8. Write usage file
+# 8. Write usage files — the raw capture and the assembled record
 # -----------------------------------------------------------------
 mkdir -p "$(dirname "$USAGE_FILE")" 2>/dev/null || true
 {
@@ -165,6 +166,19 @@ mkdir -p "$(dirname "$USAGE_FILE")" 2>/dev/null || true
   echo "=== jcode usage AFTER ==="
   printf '%s\n' "$USAGE_AFTER"
 } > "$USAGE_FILE"
+
+# The assembled record: provider, model, calls, and what could not be
+# obtained, named. The runner refuses a run without it (#160).
+printf '%s\n' "$USAGE_BEFORE" > "${USAGE_FILE}.before"
+printf '%s\n' "$USAGE_AFTER"  > "${USAGE_FILE}.after"
+if [ -x "$PROBE_DIR/usage-record.sh" ]; then
+  "$PROBE_DIR/usage-record.sh" \
+    "$(dirname "$USAGE_FILE")/builder_cost.txt" \
+    "$BUILD_WINDOW_FROM" \
+    "$PROVIDER_RECORD" \
+    "${USAGE_FILE}.before" \
+    "${USAGE_FILE}.after" || true
+fi
 
 # -----------------------------------------------------------------
 # 9. If jcode failed, report failure
