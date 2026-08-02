@@ -1,0 +1,38 @@
+{
+  "work_order_id": "wo-175-0",
+  "issue": 175,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "allowed_paths": [
+    "scripts/lib/github-api.sh",
+    "scripts/recon-run.sh",
+    "scripts/node-census-run.sh"
+  ],
+  "forbidden_paths": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".github/",
+    "operator/",
+    "schemas/",
+    "scripts/test/",
+    "docs/",
+    "claims/",
+    "coverage/",
+    "digest/",
+    "drift/",
+    "evidence/",
+    "findings/",
+    "pins/",
+    "consumption/",
+    "STATE.md"
+  ],
+  "acceptance_commands": [
+    "bash -n scripts/lib/github-api.sh scripts/recon-run.sh scripts/node-census-run.sh",
+    "env LC_ALL=C LC_CTYPE=C LANG=C bats scripts/test/github-api-failure-boundary.bats"
+  ],
+  "oracle_paths": [
+    "scripts/test/github-api-failure-boundary.bats",
+    "scripts/test/MANIFEST"
+  ],
+  "builder": "operator/builders/jcode.sh",
+  "builder_timeout_seconds": 600
+}
