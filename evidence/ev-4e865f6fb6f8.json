@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-4e865f6fb6f8",
+  "repository_pin": "pins/v1-census/agent-city.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-07-28T09:40:41Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}

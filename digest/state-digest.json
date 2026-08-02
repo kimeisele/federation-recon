@@ -17,7 +17,7 @@
       "summary": {
         "pins": 7,
         "claims": 30,
-        "evidence": 35,
+        "evidence": 38,
         "drift_records": 2,
         "findings": 5,
         "coverage_records": 7,
@@ -31,8 +31,8 @@
       "run_timestamp": "2026-08-02T04:06:50Z",
       "summary": {
         "pins": 7,
-        "evidence": 58,
-        "findings": 30,
+        "evidence": 33,
+        "findings": 7,
         "coverage_records": 7,
         "observed_nodes": 7,
         "stale_nodes": 1,
@@ -71,26 +71,26 @@
       "procedure_version": "v2"
     },
     {
-      "target": "kimeisele/steward",
-      "status": "observed",
-      "attention_rank": 1,
-      "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
-      "refs": [
-        "findings/finding-5cd51c7f5fed.json",
-        "drift/drift-0064abff93ac.json"
-      ],
-      "non_peer": false,
-      "procedure_id": "v0-boundary-drift",
-      "procedure_version": "v0"
-    },
-    {
       "target": "kimeisele/agent-internet",
       "status": "observed",
       "attention_rank": 1,
       "headline": "Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.",
       "refs": [
         "findings/finding-194863fb230b.json",
-        "drift/drift-d2d7cfe7156b.json"
+        "drift/drift-291e3dce52a6.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v0-boundary-drift",
+      "procedure_version": "v0"
+    },
+    {
+      "target": "kimeisele/steward",
+      "status": "observed",
+      "attention_rank": 1,
+      "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
+      "refs": [
+        "findings/finding-5cd51c7f5fed.json",
+        "drift/drift-cee0f86aae7c.json"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",

@@ -2,7 +2,7 @@
   "finding_id": "finding-0fc027b8a436",
   "lifecycle_state": "observed",
   "statement": "Node kimeisele/steward-protocol is OK — descriptor present, role=agent_federation_descriptor, tier=none, charter=true, last commit 2026-07-12T09:38:24Z",
-  "evidence_refs": ["ev-d431ca4f9177", "ev-14d651b2a7a0", "ev-f02a80626b65", "ev-d431ca4f9177", "ev-bfa0d7d3d5c6"],
+  "evidence_refs": ["ev-18a328eff7be", "ev-44f9097e52f5", "ev-905bc88fa3ce", "ev-bbd13a4c02ee", "ev-55820ef4706b"],
   "domain": "node_census",
   "severity": "info",
   "created_at": "2026-08-02T04:06:50Z"

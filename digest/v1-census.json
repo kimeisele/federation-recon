@@ -11,8 +11,8 @@
 }],
   "summary": {
   "pins": 7,
-  "evidence": 58,
-  "findings": 30,
+  "evidence": 33,
+  "findings": 7,
   "coverage_records": 7,
   "observed_nodes": 7,
   "stale_nodes": 1,
