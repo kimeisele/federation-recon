@@ -34,7 +34,7 @@ teardown() {
 # Helper: build a work-order JSON file
 _wo() {
   local wo_file="$1" wo_id="$2" issue="$3" forbidden="$4" acceptance="$5"
-  local opener="${6:-}" oracle="${7:-[]}"
+  local opener="${6:-}" oracle="${7:-[]}" timeout="${8:-}"
   python3 -c "
 import json
 wo = {
@@ -49,6 +49,8 @@ wo = {
 }
 if '$opener':
     wo['pr_opener'] = '$opener'
+if '$timeout':
+    wo['builder_timeout_seconds'] = int('$timeout')
 with open('$wo_file', 'w') as f:
     json.dump(wo, f)
 "
@@ -1326,4 +1328,109 @@ PYEOF
 
     TOK="$(sed -n 's/^tokens:[[:space:]]*//p' "$RUN_ROOT/wo-1-63/builder_cost.txt")"
     [ -n "$TOK" ]
+}
+
+# ---------------------------------------------------------------------------
+# THE BUILDER CLOCK (#159, #149) — the runner enforces it, not the tool.
+#
+# #149: a configured stream_idle_timeout_secs=180 had not fired after 10h45m.
+# #159: 22 minutes and 52 seconds at 0.0% CPU with no open socket, ended by a
+# manual kill. Both times the conclusion was recorded and the consequence was
+# not: the runner had no clock of its own.
+# ---------------------------------------------------------------------------
+
+# _hanging_builder <path> [preamble-line]
+# A builder that declares its provider and cost, optionally speaks, then hangs.
+_hanging_builder() {
+  local path="$1" speak="${2:-}"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'if [ -n "${RUN_DIR:-}" ]; then\n'
+    printf '  printf "resolved_provider:  inline\\nresolved_model:     none\\nverdict:            match\\n" > "$RUN_DIR/builder_provider.txt"\n'
+    printf '  printf "run_provider:      inline\\nrun_model:         none\\napi_calls:         0\\ntokens:            none\\n" > "$RUN_DIR/builder_cost.txt"\n'
+    printf 'fi\n'
+    [ -n "$speak" ] && printf '%s\n' "$speak"
+    printf 'sleep 600\n'
+  } > "$path"
+  chmod +x "$path"
+}
+
+_use_builder() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+wo = json.load(open(sys.argv[1]))
+wo["builder"] = sys.argv[2]
+json.dump(wo, open(sys.argv[1], "w"))
+PYEOF
+}
+
+@test "execution-slice-1a: CLOCK — a builder that never exits is killed" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-70" 1 '[]' '["true"]' "" "[]" "3"
+  _hanging_builder "$WORKDIR/hang.sh"
+  _use_builder "$WO" "$WORKDIR/hang.sh"
+
+  START=$(date +%s)
+  run bash "$RUNNER" "$WO"
+  ELAPSED=$(( $(date +%s) - START ))
+  echo "$output"
+  [ "$status" -eq 0 ]
+
+  # It ended on our clock, not on the builder's 600-second sleep.
+  [ "$ELAPSED" -lt 120 ]
+
+  run grep -c '"event":"builder_timeout"' "$RUN_ROOT/wo-1-70/events.jsonl"
+  [ "$output" = "1" ]
+
+  VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-70/result.json'))['verdict'])")"
+  [ "$VERDICT" = "rejected" ]
+}
+
+@test "execution-slice-1a: CLOCK — the timeout event names the limit and the action" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-71" 1 '[]' '["true"]' "" "[]" "3"
+  _hanging_builder "$WORKDIR/hang.sh"
+  _use_builder "$WO" "$WORKDIR/hang.sh"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+  run grep '"event":"builder_timeout"' "$RUN_ROOT/wo-1-71/events.jsonl"
+  [[ "$output" == *'"limit_seconds":3'* ]]
+  [[ "$output" == *"terminated, then killed"* ]]
+}
+
+@test "execution-slice-1a: CLOCK — a killed builder's report is not read" {
+  # A builder killed at the wall clock wrote no report, and a stale or partial
+  # stdout must not be read as one. "It said nothing" and "it said completed"
+  # are both failures; only the second is a statement.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-72" 1 '[]' '["true"]' "" "[]" "3"
+  _hanging_builder "$WORKDIR/liar.sh" 'echo "{\"outcome\":\"completed\",\"files_changed\":[]}"'
+  _use_builder "$WO" "$WORKDIR/liar.sh"
+
+  run bash "$RUNNER" "$WO"
+  echo "$output"
+  [ "$status" -eq 0 ]
+
+  REPORTED="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-72/result.json'))['builder_reported_outcome'])")"
+  [[ "$REPORTED" == *"killed at the wall clock"* ]]
+
+  VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-72/result.json'))['verdict'])")"
+  [ "$VERDICT" = "rejected" ]
+}
+
+@test "execution-slice-1a: CLOCK — a builder that finishes in time is untouched" {
+  # So the clock cannot be satisfied by killing everything.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-73" 1 '[]' '["true"]' "" "[]" "120"
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+  run grep -c '"event":"builder_timeout"' "$RUN_ROOT/wo-1-73/events.jsonl"
+  [ "$output" = "0" ]
+  VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-73/result.json'))['verdict'])")"
+  [ "$VERDICT" = "accepted" ]
 }

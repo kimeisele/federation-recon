@@ -58,6 +58,11 @@
         "type": "string"
       },
       "description": "Files the acceptance depends on: test files, fixtures, contracts, helper scripts the acceptance_commands invoke. Every one must exist at base_sha, and the builder may not touch any of them. Required whenever acceptance_commands name a path in the repository. See #103."
+    },
+    "builder_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Wall clock for the builder, enforced by the runner. Default 1800. #149 measured a configured stream_idle_timeout_secs=180 that never fired after 10h45m, and #159 measured 22 minutes with no socket open and no CPU consumed, ended only by a manual kill. A timeout we do not enforce is not a timeout."
     }
   },
   "additionalProperties": false

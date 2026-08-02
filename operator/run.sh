@@ -485,16 +485,81 @@ print(json.dumps({
 }, separators=(',', ':')))
 ")"
 
+# ── the runner's own clock on the builder (#159, #149) ────────────────────
+#
+# #149 measured a configured stream_idle_timeout_secs=180 that had not fired
+# after 10 h 45 m. #159 measured 22 minutes and 52 seconds with 0.0% CPU, under
+# a second of CPU time consumed, and — checked with lsof — not one open
+# socket. It was not waiting on a response; there was no connection to wait
+# on. It ended because I killed it by hand.
+#
+# The conclusion was recorded both times and the consequence was not: the
+# runner had no clock of its own. A timeout that lives in the tool being
+# supervised is a claim by that tool.
+#
+# The builder runs in its own process group so the kill takes its children
+# with it. jcode spawns helpers, and killing only the parent leaves them
+# holding the worktree.
+BUILDER_TIMEOUT="$(python3 -c "
+import json
+print(json.load(open('$WO_FILE')).get('builder_timeout_seconds', 1800))
+")"
+
 set +o errexit
 # RUN_DIR is exported, not merely set. The adapter writes its provider record
 # and its usage evidence there, and falls back to a temp directory it then
 # deletes when the variable is absent — which was every run until now (#160).
+set -m
 WORK_ORDER="$WO_FILE" RUN_DIR="$RUN_DIR" \
-  "$BUILDER" "$WORKTREE" >"$BUILDER_STDOUT_FILE" 2>"$BUILDER_STDERR_FILE"
+  "$BUILDER" "$WORKTREE" >"$BUILDER_STDOUT_FILE" 2>"$BUILDER_STDERR_FILE" &
+BUILDER_PID=$!
+BUILDER_PGID="$(ps -o pgid= -p "$BUILDER_PID" 2>/dev/null | tr -d ' ')"
+set +m
+
+BUILDER_TIMED_OUT=false
+_waited=0
+while kill -0 "$BUILDER_PID" 2>/dev/null; do
+  sleep 1
+  _waited=$((_waited + 1))
+  if [ "$_waited" -ge "$BUILDER_TIMEOUT" ]; then
+    BUILDER_TIMED_OUT=true
+    # TERM the group, give it a moment, then KILL. A builder that ignores TERM
+    # is exactly the case this exists for, so the KILL is not optional.
+    [ -n "$BUILDER_PGID" ] && kill -TERM -"$BUILDER_PGID" 2>/dev/null || true
+    kill -TERM "$BUILDER_PID" 2>/dev/null || true
+    sleep 2
+    [ -n "$BUILDER_PGID" ] && kill -KILL -"$BUILDER_PGID" 2>/dev/null || true
+    kill -KILL "$BUILDER_PID" 2>/dev/null || true
+    break
+  fi
+done
+wait "$BUILDER_PID" 2>/dev/null
 BUILDER_EXIT=$?
 set -o errexit
 
+if $BUILDER_TIMED_OUT; then
+  BUILDER_EXIT=124
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'builder_timeout',
+    'limit_seconds': $BUILDER_TIMEOUT,
+    'action': 'process group terminated, then killed',
+    'reason': 'the builder produced no exit within the wall clock the runner enforces'
+}, separators=(',', ':')))
+")"
+  echo "FATAL: the builder exceeded ${BUILDER_TIMEOUT}s and was killed." >&2
+  echo "       Its process group was terminated, then killed. See #159, #149." >&2
+fi
+
 # Parse builder's reported outcome — we do NOT trust this
+if $BUILDER_TIMED_OUT; then
+  # A killed builder wrote no report, and a stale or partial stdout must not
+  # be read as one. "It said nothing" and "it said failed" are both failures,
+  # and only the second is a statement.
+  REPORTED_OUTCOME="none — killed at the wall clock"
+else
 REPORTED_OUTCOME="$(python3 -c "
 import json, sys
 try:
@@ -503,6 +568,7 @@ try:
 except:
     print('failed')
 " 2>/dev/null)"
+fi
 
 # ── the resolved provider goes in the ledger ──────────────────────────────
 #
