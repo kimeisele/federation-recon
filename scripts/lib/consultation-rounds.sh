@@ -108,7 +108,15 @@ check_consultation_rounds() {
         [ -z "$pr" ] && continue
         primaries=$((primaries + 1))
 
-        # Markdown links of the form [text](name.md) or (./name.md).
+        # Markdown links of the form [text](name.md) or (./name.md), outside
+        # fenced code blocks.
+        #
+        # The fence filter is not cosmetic. A primary that embeds the raw diff
+        # it was judged against — which the consultation gate requires — will
+        # contain every link in every file that diff touches, including this
+        # check's own bats fixtures. 155.md was refused for linking
+        # `9-round1.md`, a name that exists only inside a test. A link in a
+        # code block is an example, not a reference.
         while IFS= read -r link; do
             [ -z "$link" ] && continue
             target="$dir/$(basename "$link")"
@@ -117,7 +125,8 @@ check_consultation_rounds() {
                     "$base" "$link" >&2
                 rc=1
             fi
-        done < <(grep -oE '\]\([^)]*[0-9]+-[^)]*\.md\)' "$f" 2>/dev/null \
+        done < <(awk '/^```/ {fence = !fence; next} !fence' "$f" 2>/dev/null \
+                 | grep -oE '\]\([^)]*[0-9]+-[^)]*\.md\)' \
                  | sed 's/^](//; s/)$//' | sort -u)
 
         # ── 2. every round file for this PR must be linked from it ─────────

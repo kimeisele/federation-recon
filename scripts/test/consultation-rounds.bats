@@ -214,3 +214,25 @@ _round() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"no verdict"* ]]
 }
+
+@test "rounds: a link inside a fenced code block is an example, not a reference" {
+    # The consultation gate requires a primary to embed the raw diff it was
+    # judged against. That diff contains every link in every file it touches —
+    # including this check's own bats fixtures. 155.md was refused for linking
+    # `9-round1.md`, a name that exists only inside a test.
+    _round "9-round1.md"
+    printf '# P\n\n[r1](9-round1.md)\n\n```diff\n+[r2](9-round2.md)\n```\n\nverdict: APPROVE\n' \
+        > "$FIX/9.md"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 0 ]
+}
+
+@test "rounds: a link outside the fence is still a reference" {
+    # The other direction, so the fence filter cannot be a blanket excuse.
+    _round "9-round1.md"
+    printf '# P\n\n[r1](9-round1.md)\n\n```diff\n+x\n```\n\n[r2](9-round2.md)\n\nverdict: APPROVE\n' \
+        > "$FIX/9.md"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"9-round2.md"* ]]
+}
