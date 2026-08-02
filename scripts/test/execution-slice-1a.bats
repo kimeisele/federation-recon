@@ -34,7 +34,7 @@ teardown() {
 # Helper: build a work-order JSON file
 _wo() {
   local wo_file="$1" wo_id="$2" issue="$3" forbidden="$4" acceptance="$5"
-  local opener="${6:-}"
+  local opener="${6:-}" oracle="${7:-[]}"
   python3 -c "
 import json
 wo = {
@@ -44,6 +44,7 @@ wo = {
     'allowed_paths': ['operator/'],
     'forbidden_paths': $forbidden,
     'acceptance_commands': $acceptance,
+    'oracle_paths': $oracle,
     'builder': '$FAKE_BUILDER'
 }
 if '$opener':
@@ -1021,4 +1022,99 @@ _kill_at() {
 
   run grep -c '"event":"patch_saved"' "$EVENTS_FILE"
   [ "$output" = "1" ]
+}
+
+# ---------------------------------------------------------------------------
+# THE ORACLE (#103) — an acceptance the builder wrote is not an acceptance.
+#
+# wo-98-3 was accepted by a verifier that did everything right. The order's
+# acceptance was `bats scripts/test/gate-cleanup.bats`, a file that did not
+# exist when the order was written. The builder wrote it, then wrote code that
+# passed it. The acceptance confirmed the builder agreed with itself.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: ORACLE — a path absent at base_sha refuses the order" {
+    # The wo-98-3 case exactly, and it must refuse BEFORE the builder runs:
+    # money is spent at the builder, and a refusal after it is a refund
+    # nobody gets.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-40" 1 '[]' '["bats scripts/test/not-written-yet.bats"]' "" \
+        "['scripts/test/not-written-yet.bats']"
+
+    run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"do not exist at base_sha"* ]]
+
+    # No builder invocation, and no marker in a worktree that was never used.
+    [ ! -f "$RUN_ROOT/wo-1-40/builder_stdout.txt" ]
+    run grep -c '"event":"builder_started"' "$RUN_ROOT/wo-1-40/events.jsonl"
+    [ "$output" = "0" ]
+    run grep -c '"event":"oracle_refused"' "$RUN_ROOT/wo-1-40/events.jsonl"
+    [ "$output" = "1" ]
+}
+
+@test "execution-slice-1a: ORACLE — an acceptance naming a path with no oracle refuses" {
+    # Silence is not a declaration that there is no oracle; it is the absence
+    # of one, and the two must not produce the same outcome.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-41" 1 '[]' '["bats scripts/test/order-vectors.bats"]'
+
+    run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"declares no oracle_paths"* ]]
+}
+
+@test "execution-slice-1a: ORACLE — an acceptance with no path at all is fine" {
+    # `true`, `make`, a behavioural probe: nothing to declare.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-42" 1 '[]' '["true"]'
+
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+    VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-42/result.json'))['verdict'])")"
+    [ "$VERDICT" = "accepted" ]
+}
+
+@test "execution-slice-1a: ORACLE — a declared, existing, untouched oracle passes" {
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-43" 1 '[]' '["bats scripts/test/order-vectors.bats"]' "" \
+        "['scripts/test/order-vectors.bats']"
+
+    run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    run grep -c '"event":"oracle_verified"' "$RUN_ROOT/wo-1-43/events.jsonl"
+    [ "$output" = "1" ]
+}
+
+@test "execution-slice-1a: ORACLE — the builder touching its own oracle is rejected" {
+    # The second form of the same defect: declare an oracle that exists, then
+    # rewrite it during the run. The acceptance still ends up judging the
+    # builder against something the builder chose.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    # The oracle is a file that DOES exist at base_sha, so rule 1 passes and
+    # rule 2 is the one under test. An earlier version of this case used the
+    # fake builder's default marker, which does not exist at base — the order
+    # was refused for the right reason at the wrong step, and the case proved
+    # nothing about the rule it was written for.
+    _wo "$WO" "wo-1-44" 1 '[]' '["true"]' "" "['operator/builders/fake.sh']"
+
+    FAKE_TOUCH_FILE=operator/builders/fake.sh run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 0 ]
+
+    VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-44/result.json'))['verdict'])")"
+    [ "$VERDICT" = "rejected" ]
+
+    TOUCHED="$(python3 -c "
+import json
+print(json.load(open('$RUN_ROOT/wo-1-44/path_check_result.json'))['oracle_touched'])")"
+    [[ "$TOUCHED" == *"operator/builders/fake.sh"* ]]
 }

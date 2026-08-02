@@ -285,6 +285,97 @@ print(json.dumps({
 ")"
 fi
 
+# ---- step 2b: the oracle must predate the order (#103) ----------------------
+#
+# `wo-98-3` was accepted by a verifier that did everything right. The work
+# order's acceptance was `bats scripts/test/gate-cleanup.bats` — a file that
+# did not exist when the order was written. The builder wrote it, then wrote
+# code that passed it, and the acceptance confirmed that the builder agreed
+# with itself.
+#
+# The gap was in the contract, not the machine, and this is the contract made
+# executable. Two rules, and the first is the one that would have stopped it:
+#
+#   1. Every oracle path must exist at base_sha. A test file the builder is
+#      about to write cannot be the thing that judges it.
+#   2. The builder may not touch an oracle path. Checked after the run, at
+#      step 7, because an oracle edited during the run is the same defect
+#      arriving one step later.
+#
+# An order whose acceptance names a repository path and declares no oracle is
+# refused. Silence is not a declaration that there is no oracle; it is the
+# absence of one, and the two must not produce the same outcome.
+ORACLE_PATHS_FILE="$RUN_DIR/oracle_paths.txt"
+python3 -c "
+import json
+wo = json.load(open('$WO_FILE'))
+for p in wo.get('oracle_paths', []):
+    print(p)
+" > "$ORACLE_PATHS_FILE"
+
+ORACLE_COUNT=$(wc -l < "$ORACLE_PATHS_FILE" | tr -d ' ')
+
+# Does the acceptance name a path in the repository at all?
+ACCEPTANCE_NAMES_PATH=$(python3 -c "
+import json, os, sys
+wo = json.load(open('$WO_FILE'))
+# A token that looks like a repo-relative path and exists at HEAD of the
+# checkout. Crude on purpose: the question is 'might this acceptance depend on
+# a file', and over-answering it costs a declaration, while under-answering it
+# costs the whole check.
+hit = False
+for cmd in wo['acceptance_commands']:
+    for tok in cmd.replace(';', ' ').replace('&&', ' ').split():
+        tok = tok.strip(chr(34) + chr(39))   # quote chars by code: a literal
+                                            # quote here closes the shell's
+                                            # double-quoted -c argument
+        if '/' in tok and not tok.startswith('-'):
+            hit = True
+print('yes' if hit else 'no')
+")
+
+if [ "$ACCEPTANCE_NAMES_PATH" = "yes" ] && [ "$ORACLE_COUNT" -eq 0 ]; then
+  echo "FATAL: acceptance_commands name a repository path but the work order" >&2
+  echo "       declares no oracle_paths. An undeclared oracle is how #103" >&2
+  echo "       happened: the builder wrote the test that judged it." >&2
+  exit 1
+fi
+
+if [ "$ORACLE_COUNT" -gt 0 ]; then
+  MISSING=""
+  while IFS= read -r op; do
+    [ -z "$op" ] && continue
+    if ! git cat-file -e "$BASE_SHA:$op" 2>/dev/null; then
+      MISSING="${MISSING}    $op"$'\n'
+    fi
+  done < "$ORACLE_PATHS_FILE"
+
+  if [ -n "$MISSING" ]; then
+    echo "FATAL: these oracle paths do not exist at base_sha $BASE_SHA:" >&2
+    printf '%s' "$MISSING" >&2
+    echo "       An oracle the builder is about to write is not an oracle." >&2
+    echo "       See #103." >&2
+    _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'oracle_refused',
+    'reason': 'oracle paths absent at base_sha'
+}, separators=(',', ':')))
+")"
+    exit 1
+  fi
+
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'oracle_verified',
+    'count': $ORACLE_COUNT
+}, separators=(',', ':')))
+")"
+fi
+
 # ---- step 3: git worktree add (idempotent) ----------------------------------
 WORKTREE="$RUN_DIR/wt"
 
@@ -469,6 +560,37 @@ print(json.dumps({
     'forbidden_hits': forbidden_hits
 }))
 ")"
+
+# ── the builder may not touch its own oracle (#103, second form) ──────────
+#
+# Declaring an oracle that exists and then rewriting it during the run is the
+# same defect one step later: the acceptance still ends up judging the builder
+# against something the builder chose.
+ORACLE_TOUCHED=$(python3 -c "
+import json
+changed = set()
+with open('$CHANGED_PATHS_FILE') as f:
+    changed = {l.strip() for l in f if l.strip()}
+oracle = set()
+with open('$ORACLE_PATHS_FILE') as f:
+    oracle = {l.strip() for l in f if l.strip()}
+hits = sorted(changed & oracle)
+print(json.dumps(hits))
+")
+
+PATH_CHECK_RESULT=$(python3 -c "
+import json, sys
+pcr = json.loads(sys.argv[1])
+hits = json.loads(sys.argv[2])
+pcr['oracle_touched'] = hits
+if hits:
+    # A touched oracle is a path violation, so the existing verdict rule
+    # rejects the run without a second mechanism deciding the same thing.
+    for h in hits:
+        if h not in pcr['violations']:
+            pcr['violations'].append(h)
+print(json.dumps(pcr))
+" "$PATH_CHECK_RESULT" "$ORACLE_TOUCHED")
 
 # Also write to a file for safe reading in the result builder
 echo "$PATH_CHECK_RESULT" > "$RUN_DIR/path_check_result.json"
