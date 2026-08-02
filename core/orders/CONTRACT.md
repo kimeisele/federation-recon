@@ -27,8 +27,41 @@ python3 -m core.orders.validate <order-file>
 - **exit 0** — the order is admissible. Nothing is printed to stderr.
 - **exit 1** — the order is refused. The first line of stderr is the reason
   code, alone. Further lines are human explanation and are not tested.
+- **exit 2** — the order could not be READ. This is **not a verdict about an
+  order**, and the first line of stderr is deliberately *not* a reason code.
 
 Only the exit status and the reason code are the contract. Wording is free.
+
+### Why unreadable input is exit 2 and not a seventh code
+
+Settled 2026-08-02, closing #126. The validator used to report a missing file,
+a directory, and an unreadable file as `E_SIZE`, reached by elimination in the
+branch that reads the bytes. `E_SIZE` is defined below as *"the file exceeds
+the byte limit"*, and a file that does not exist has no byte count to exceed.
+An operator reading `E_SIZE` in a run record goes looking for an oversized
+order and finds nothing.
+
+Three shapes were on the table (#126). A seventh code keeps everything on one
+exit path but grows the closed set, and the vector suite is directory-based —
+"a file that does not exist" cannot be a vector file, so the test would have to
+be written unlike every other. Widening `E_SIZE` to "the bytes could not be
+obtained" is cheapest and makes one code mean two things so that no code has to
+change.
+
+**Exit 2 is adopted because the distinction is real and worth paying for.**
+ADR §3.1 puts the supervisor in the trusted computing base, and a component of
+the TCB that cannot read its own input has *failed*, not *judged*. A malformed
+order is a mistake by the builder or the operator and belongs in the order's
+verdict; a missing file is the supervisor failing to find its input, closer to
+a missing backend or a full disk. There is no order to have a verdict about.
+
+The cost is stated rather than discounted: this changes a published contract,
+and every caller written against "exit 0 or 1" learns a third outcome. It is
+settled now because nothing consumes these codes yet — S3 does not exist — and
+the right time is before the first consumer.
+
+**A caller must not fold exit 2 into exit 1.** `E_*` on stderr line 1 means a
+verdict was reached. Exit 2 means none was.
 
 Refusal is not a judgment that the order is a bad idea. It is a statement that
 the supervisor cannot establish the order is safe to run — and per ADR §6,

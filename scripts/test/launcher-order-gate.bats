@@ -169,3 +169,17 @@ PY
   [ "$status" -eq 1 ]
   [[ "$output" == *"The backend was not consulted and no workspace was created."* ]]
 }
+
+@test "launcher-order-gate: an unreadable order is an operational failure, not a refusal" {
+  # CONTRACT.md §1 (#126): exit 2 means the order could not be READ, and a
+  # caller must not fold it into exit 1. The launcher is the first caller, so
+  # it is the first place the distinction can be lost.
+  #
+  # Written before the implementation order exists, per #103.
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.launcher '$BATS_TEST_TMPDIR/absent.json' 2>&1"
+  echo "status=$status output=$output"
+  [ "$status" -ne 0 ]
+  # It must say the input could not be read, and must NOT present a reason
+  # code, because no verdict was reached about any order.
+  [[ "$output" != *"E_SIZE"* ]]
+}

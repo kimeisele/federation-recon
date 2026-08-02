@@ -160,3 +160,82 @@ PY
   [[ "$output" == *"mem_limit"* ]]
   [[ "$output" == *"macos-seatbelt"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# UNREADABLE INPUT (#126) — exit 2, and not a verdict.
+#
+# Written and committed BEFORE the implementation order exists, by the author
+# of the contract decision and not by the party that will be judged against it.
+# That ordering is #103's remedy: an acceptance the builder writes confirms
+# only that the builder agrees with itself.
+#
+# CONTRACT.md §1 now says exit 2 means the order could not be READ, and that
+# the first stderr line is deliberately not a reason code. These cases hold
+# both halves — a caller that folded exit 2 into exit 1 would still see a
+# refusal it could route on, which is the thing being prevented.
+# ---------------------------------------------------------------------------
+
+@test "order-validator: a missing file exits 2" {
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$BATS_TEST_TMPDIR/nope.json'"
+  echo "status=$status output=$output"
+  [ "$status" -eq 2 ]
+}
+
+@test "order-validator: a missing file does not report a reason code" {
+  # The half that matters for a consumer: E_* on line 1 means a verdict was
+  # reached, and none was.
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$BATS_TEST_TMPDIR/nope.json' 2>&1 >/dev/null | head -n1"
+  echo "$output"
+  [[ "$output" != E_* ]]
+}
+
+@test "order-validator: a directory exits 2" {
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$BATS_TEST_TMPDIR'"
+  echo "status=$status output=$output"
+  [ "$status" -eq 2 ]
+}
+
+@test "order-validator: an unreadable file exits 2" {
+  f="$BATS_TEST_TMPDIR/locked.json"
+  cp "$VEC/accept/01-minimal.json" "$f"
+  chmod 000 "$f"
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$f'"
+  chmod 644 "$f"
+  echo "status=$status output=$output"
+  # Running as root defeats the permission bit; skip rather than pass, so a
+  # green result never means "the check could not run".
+  if [ "$(id -u)" = "0" ]; then
+    skip "running as root: chmod 000 does not deny read"
+  fi
+  [ "$status" -eq 2 ]
+}
+
+@test "order-validator: an unreadable POLICY also exits 2" {
+  # The other caller of the same funnel. A policy that cannot be read is the
+  # supervisor failing to find its own configuration — the same class, and it
+  # used to report E_SIZE too.
+  run bash -c "
+    set -e
+    tmp=\"\$(mktemp -d)\"
+    cp -R '$REPO_ROOT/core' \"\$tmp/core\"
+    rm -f \"\$tmp/core/policy.json\"
+    cd \"\$tmp\"
+    PYTHONPATH=\"\$tmp\" python3 -m core.orders.validate '$VEC/accept/01-minimal.json'
+  "
+  echo "status=$status output=$output"
+  [ "$status" -eq 2 ]
+}
+
+@test "order-validator: a real refusal still exits 1 with its code" {
+  # The regression that matters: exit 2 must not swallow verdicts. An
+  # implementation that returned 2 for everything would pass every case above.
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$VEC/reject/25-unproven-mem-limit.json'"
+  [ "$status" -eq 1 ]
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$VEC/reject/25-unproven-mem-limit.json' 2>&1 >/dev/null | head -n1"
+  [ "$output" = "E_CAPABILITY_UNPROVEN" ]
+}
+
+@test "order-validator: an admissible order still exits 0" {
+  run bash -c "cd '$REPO_ROOT' && python3 -m core.orders.validate '$VEC/accept/01-minimal.json'"
+  [ "$status" -eq 0 ]
+}
