@@ -201,13 +201,28 @@ sys.exit(0)
     "file_existence" \
     "true" \
     "CHARTER.md")"
+  boundary_left="$(gen_evidence \
+    "pins/v1-census/example.json" \
+    "file_existence" \
+    "true" \
+    "subject:" \
+    "field=value")"
+  boundary_right="$(gen_evidence \
+    "pins/v1-census/example.json" \
+    "file_existence" \
+    "true" \
+    "subject" \
+    ":field=value")"
 
   [ "$first_path" != "$second_path" ]
+  [ "$boundary_left" != "$boundary_right" ]
   [ -f "$first_path" ]
   [ -f "$second_path" ]
-  [ "$(find evidence -type f -name '*.json' | wc -l | tr -d ' ')" -eq 2 ]
+  [ -f "$boundary_left" ]
+  [ -f "$boundary_right" ]
+  [ "$(find evidence -type f -name '*.json' | wc -l | tr -d ' ')" -eq 4 ]
 
-  run python3 - "$first_path" "$second_path" <<'PY'
+  run python3 - "$first_path" "$second_path" "$boundary_left" "$boundary_right" <<'PY'
 import json
 import sys
 
@@ -219,6 +234,13 @@ with open(sys.argv[2]) as fh:
 assert first["evidence_id"] != second["evidence_id"]
 assert first["paths"] == [".well-known/agent-federation.json"]
 assert second["paths"] == ["CHARTER.md"]
+
+with open(sys.argv[3]) as fh:
+    boundary_left = json.load(fh)
+with open(sys.argv[4]) as fh:
+    boundary_right = json.load(fh)
+
+assert boundary_left["evidence_id"] != boundary_right["evidence_id"]
 PY
   [ "$status" -eq 0 ]
 }
