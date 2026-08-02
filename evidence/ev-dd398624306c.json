@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-dd398624306c",
+  "repository_pin": "pins/v0-boundary-drift/federation-recon.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "file_count",
+  "value": 21, "paths": ["/ (repository root)"]
+}

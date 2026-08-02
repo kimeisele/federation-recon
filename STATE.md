@@ -18,8 +18,8 @@
 | # | Target | Status | Procedure | Headline | Evidence |
 |---|---|---|---|---|---|
 | 1 | `kimeisele/*` | ✅ observed | `v2-consumption` | ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 8 of 10 — F-02 falsifier is active if this persists across ten cycles. | consumption/ |
-| 2 | `kimeisele/agent-internet` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-194863fb230b.json, drift/drift-291e3dce52a6.json |
-| 3 | `kimeisele/steward` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-5cd51c7f5fed.json, drift/drift-cee0f86aae7c.json |
+| 2 | `kimeisele/agent-internet` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-194863fb230b.json, drift/drift-f66870a20644.json |
+| 3 | `kimeisele/steward` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-5cd51c7f5fed.json, drift/drift-fe4d72fbd5d2.json |
 | 4 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
 
 ## Constitutional Observatory

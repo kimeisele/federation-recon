@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-c352a598d6b8",
-  "repository_pin": "pins/v0-boundary-drift/agent-world.json",
-  "procedure_id": "boundary-drift-recon-v0",
-  "procedure_version": "v0",
-  "observation_type": "file_existence",
-  "value": true, "paths": [".well-known/agent-federation.json"]
-}

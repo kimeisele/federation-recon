@@ -2,7 +2,7 @@
   "finding_id": "finding-194863fb230b",
   "lifecycle_state": "observed",
   "statement": "Cross-node boundary disagreement for agent-internet: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.well-known/agent-federation.json has no role or owner_boundary field",
-  "evidence_refs": ["ev-c32a7f81266f", "ev-260486687067"],
+  "evidence_refs": ["ev-8bb8243207e2", "ev-f4e004a06e38"],
   "domain": "cross_repository_boundaries",
   "severity": "warning",
   "created_at": "2026-08-02T04:07:05Z"

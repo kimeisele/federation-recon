@@ -1,8 +1,0 @@
-{
-  "evidence_id": "ev-4bbbe1f598a8",
-  "repository_pin": "pins/v1-census/steward-federation.json",
-  "procedure_id": "node-census-v1",
-  "procedure_version": "v1",
-  "observation_type": "file_existence",
-  "value": true, "paths": [".well-known/agent-federation.json"]
-}
