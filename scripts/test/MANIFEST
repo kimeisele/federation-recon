@@ -24,6 +24,7 @@ dispatch-bridge.bats
 execution-slice-1a.bats
 finding-retirement.bats
 gate-cleanup.bats
+github-api-failure-boundary.bats
 heartbeat-v12-invariants.bats
 heartbeat.bats
 helpers.bats
