@@ -73,7 +73,7 @@ teardown() {
 
 run_consult() {
   run env FAKE_MODE="${1:-ok}" OPENCODE_BIN="$OPENCODE_BIN" FAKE_ARGS="$FAKE_ARGS" \
-    OPENCODE_REVIEW_TIMEOUT_SECONDS=1 \
+    OPENCODE_REVIEW_TIMEOUT_SECONDS="${2:-5}" \
     bash "$CONSULT" qwen3.7-max "$OUT" "$PROMPT" "$SOURCE"
   echo "$output"
 }
@@ -139,7 +139,7 @@ run_consult() {
 
 @test "opencode consult: its own clock kills a hanging review process group" {
   start="$(date +%s)"
-  run_consult hang
+  run_consult hang 1
   elapsed=$(( $(date +%s) - start ))
   [ "$status" -eq 1 ]
   [ "$elapsed" -lt 10 ]
