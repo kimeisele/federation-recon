@@ -24,6 +24,24 @@ TOUCH_FILE="${FAKE_TOUCH_FILE:-operator/.fake-marker}"
 OUTCOME="${FAKE_OUTCOME:-completed}"
 EXIT="${FAKE_EXIT:-0}"
 
+# ---- the provider record every builder must write (#159) --------------------
+#
+# The runner refuses a run whose provider it cannot establish, and the fake is
+# a builder like any other: it declares what served it. `fake` is the honest
+# answer — no provider did — and a test that needs a substitution forces
+# FAKE_PROVIDER to something else.
+if [ -n "${RUN_DIR:-}" ]; then
+  {
+    printf 'requested_provider: %s\n' "${FAKE_REQUESTED_PROVIDER:-fake}"
+    printf 'requested_model:    %s\n' "${FAKE_MODEL:-fake-builder}"
+    printf 'resolved_provider:  %s\n' "${FAKE_PROVIDER:-fake}"
+    printf 'resolved_model:     %s\n' "${FAKE_MODEL:-fake-builder}"
+    printf 'verdict:            %s\n' "${FAKE_PROVIDER_VERDICT:-match}"
+    printf 'log:                not applicable — no model was called\n'
+    printf 'measured_by:        fake.sh, which is not measuring anything\n'
+  } > "$RUN_DIR/builder_provider.txt"
+fi
+
 FILES_CHANGED="[]"
 
 if [ -n "$TOUCH_FILE" ]; then
