@@ -434,8 +434,24 @@ with open('$wo_file', 'w') as f:
   [ ! -e "$WT/src/out.txt" ]
 }
 
+@test "builder-jcode: MODEL MISMATCH — profile route fails closed before build" {
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" 167 '["src/"]' '[]' '["true"]'
+
+  WORK_ORDER="$WO" JCODE_STUB_TOUCH="src/out.txt" \
+    JCODE_PROVIDER_PROFILE="fixture-direct" \
+    JCODE_EXPECTED_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_ENDPOINT="https://api.fixture.invalid" \
+    JCODE_STUB_MODEL="not-the-requested-model" \
+    run bash "$BUILDER" "$WT"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'failed'* ]]
+  [ ! -e "$WT/src/out.txt" ]
+}
+
 # ---------------------------------------------------------------------------
-# 13. BUILD TOKENS — jcode emits exact per-run figures on stdout. They belong
+# 14. BUILD TOKENS — jcode emits exact per-run figures on stdout. They belong
 #     to the build invocation, not the separate route probe, and must survive.
 # ---------------------------------------------------------------------------
 
