@@ -200,6 +200,7 @@ served_provider() {
   grep -q  "endpoint: https://api\.moonshot\.ai"   <<< "$window" && seen="$seen moonshot"
   grep -qi "prv:OpenAI|"    <<< "$window" && seen="$seen openai"
   grep -qi "prv:Anthropic|" <<< "$window" && seen="$seen claude"
+  grep -qi "prv:Claude|"    <<< "$window" && seen="$seen claude"
   grep -qi "mod:deepseek"   <<< "$window" && seen="$seen deepseek"
 
   seen="$(printf '%s\n' $seen | sort -u | tr '\n' ' ' | sed 's/ *$//')"
