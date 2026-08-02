@@ -24,8 +24,15 @@
 #   1 — usage or pre-flight error
 #   2 — --resume asked for, and the run cannot be resumed
 #
-# Boundaries: MUST NOT push, open a PR, merge, or write outside operator/.runs/
-# and its own worktree. Slice 1a stops at result.json.
+# Boundaries: MUST NOT merge, and MUST NOT write outside operator/.runs/ and
+# its own worktree. It may open a pull request, and only when the work order
+# names a `pr_opener` and the verdict is "accepted" — #83 §23 puts "PR
+# geoeffnet" inside Slice 1 and "STOP. Kein Merge." immediately after it.
+#
+# The opener is a field rather than a hardcoded `gh pr create` because opening
+# a PR is the first outward-facing act in this pipeline. A work order with no
+# `pr_opener` stops at result.json, which is what every run did before the
+# field existed and is still the default.
 #
 # Environment:
 #   RUN_ROOT  override run-directory root (default: operator/.runs)
@@ -281,7 +288,14 @@ fi
 # ---- step 3: git worktree add (idempotent) ----------------------------------
 WORKTREE="$RUN_DIR/wt"
 
-if $RESUMING && [ -d "$WORKTREE" ]; then
+if $RESUMING && grep -q '"event":"worktree_removed"' "$EVENTS_FILE" 2>/dev/null; then
+  # The run had already finished with the worktree and removed it. Recreating
+  # it would be pure waste — and worse, it would put a clean checkout of
+  # base_sha where a reader might mistake it for the builder's output. Noticed
+  # while watching the kill-after-verification case rebuild 471 files it was
+  # never going to look at.
+  _skip "worktree (already removed by the run being resumed)"
+elif $RESUMING && [ -d "$WORKTREE" ]; then
   # The builder's work is in here. Re-creating it from base_sha would discard
   # exactly what the resume exists to preserve.
   _skip "worktree"
@@ -626,6 +640,21 @@ print(json.dumps({
 # patch against base_sha that is applicable with `git apply`.  If the patch
 # cannot be produced or written the run becomes rejected, because a verified
 # contribution nobody can see afterwards is worthless.
+#
+# On resume this step MUST be skipped once it has run, and the reason is not
+# efficiency. The worktree is removed at step 10; a resume that recomputed the
+# patch afterwards would diff a worktree that is gone, or — worse, and this is
+# what actually happened — diff a clean checkout of base_sha that the resume
+# had helpfully rebuilt, and write an EMPTY patch over the real one. The run
+# then reports accepted with the builder's work silently discarded. Found by
+# the test for resuming after the worktree was removed, and only because
+# rebuilding the worktree was fixed first: the rebuild was hiding it.
+if _completed patch_saved "$PATCH_FILE" || \
+   { grep -q '"event":"patch_saved"' "$EVENTS_FILE" 2>/dev/null && [ -f "$PATCH_FILE" ]; }; then
+  _skip "patch"
+  PATCH_OK=true
+  PATCH_ERROR=""
+else
 set +o errexit
 PATCH_OUTCOME=$(python3 -c "
 import json, subprocess, os, sys
@@ -701,8 +730,18 @@ if ! $PATCH_OK; then
   $BUILDER_CLAIM_CONTRADICTED && BCC_PYTHON="True"
 fi
 
-# Emit patch_saved event
-if $PATCH_OK; then
+fi   # end of the "patch not already saved" branch
+
+# Emit patch_saved event — unless the resume skipped the step, in which case
+# the event is already in the ledger.
+#
+# The first attempt at this guard put the condition on the `if` alone, so a
+# resume fell into the `else` and appended a patch_saved marked FAILED next to
+# the successful one. A guard that redirects into the failure branch is worse
+# than no guard: it reports a defect that did not happen.
+if grep -q '"event":"patch_saved"' "$EVENTS_FILE" 2>/dev/null; then
+  :
+elif $PATCH_OK; then
   _event_append "$(python3 -c "
 import json
 print(json.dumps({
@@ -801,6 +840,83 @@ if not $PATCH_OK_PYTHON:
 with open('$RESULT_FILE', 'w') as f:
     json.dump(result, f, indent=2, sort_keys=True)
 "
+
+# ---- step 11: open the pull request -----------------------------------------
+#
+# Only on an accepted verdict, only when the work order names an opener, and
+# resumable like every other step. A rejected run has nothing to propose.
+PR_OPENER="$(python3 -c "
+import json
+print(json.load(open('$WO_FILE')).get('pr_opener', ''))
+")"
+PR_REF_FILE="$RUN_DIR/pr_ref.txt"
+
+if [ -z "$PR_OPENER" ]; then
+  :
+elif [ "$VERDICT" != "accepted" ]; then
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'pr_skipped',
+    'reason': 'verdict is $VERDICT, not accepted'
+}, separators=(',', ':')))
+")"
+elif _completed pr_opened "$PR_REF_FILE"; then
+  # The one step where re-running is not merely wasteful: a second invocation
+  # opens a second pull request, and nothing downstream would notice.
+  _skip "pull request"
+else
+  _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'pr_started'
+}, separators=(',', ':')))
+")"
+
+  set +o errexit
+  "$PR_OPENER" "$RUN_DIR" >"$PR_REF_FILE" 2>"$RUN_DIR/pr_stderr.txt"
+  PR_EXIT=$?
+  set -o errexit
+
+  PR_REF="$(head -1 "$PR_REF_FILE" 2>/dev/null || true)"
+
+  # An opener that exits 0 while printing nothing has not opened anything, and
+  # a run that recorded pr_opened on that basis would report a PR that does not
+  # exist. The measurement is the reference, not the exit status.
+  if [ "$PR_EXIT" -ne 0 ] || [ -z "$PR_REF" ]; then
+    ESCAPED_PR_ERR=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" \
+      "opener exited $PR_EXIT, reference: ${PR_REF:-<empty>}")
+    _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'pr_failed',
+    'exit_status': $PR_EXIT,
+    'detail': $ESCAPED_PR_ERR
+}, separators=(',', ':')))
+")"
+    rm -f "$PR_REF_FILE"
+    echo "PR NOT OPENED: opener exited $PR_EXIT, reference ${PR_REF:-<empty>}" >&2
+  else
+    ESCAPED_PR_REF=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$PR_REF")
+    _event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'pr_opened',
+    'reference': $ESCAPED_PR_REF
+}, separators=(',', ':')))
+")"
+    python3 -c "
+import json
+r = json.load(open('$RESULT_FILE'))
+r['pr_reference'] = open('$PR_REF_FILE').read().strip()
+json.dump(r, open('$RESULT_FILE', 'w'), indent=2, sort_keys=True)
+"
+  fi
+fi
 
 # ---- final event: run_finished ----------------------------------------------
 _RUN_FINISHED=1

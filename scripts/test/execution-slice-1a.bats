@@ -12,6 +12,7 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
   BASE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   FAKE_BUILDER="$REPO_ROOT/operator/builders/fake.sh"
+  FAKE_PR="$REPO_ROOT/operator/builders/fake-pr-opener.sh"
   RUNNER="$REPO_ROOT/operator/run.sh"
 
   # Each test gets its own run-directory root
@@ -33,6 +34,7 @@ teardown() {
 # Helper: build a work-order JSON file
 _wo() {
   local wo_file="$1" wo_id="$2" issue="$3" forbidden="$4" acceptance="$5"
+  local opener="${6:-}"
   python3 -c "
 import json
 wo = {
@@ -44,6 +46,8 @@ wo = {
     'acceptance_commands': $acceptance,
     'builder': '$FAKE_BUILDER'
 }
+if '$opener':
+    wo['pr_opener'] = '$opener'
 with open('$wo_file', 'w') as f:
     json.dump(wo, f)
 "
@@ -843,4 +847,178 @@ _kill_at() {
   run bash "$RUNNER" "$WO" --resume
   [ "$status" -eq 1 ]
   [[ "$output" == *"nothing to resume"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# THE PULL REQUEST — the last step of Slice 1, and the first outward-facing
+# act in the pipeline. #83 §23 puts "PR geöffnet" inside Slice 1 and
+# "STOP. Kein Merge." immediately after it.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: PR — an accepted run with an opener opens one" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-30" 1 '[]' '["true"]' "$FAKE_PR"
+
+  run bash "$RUNNER" "$WO"
+  echo "$output"
+  [ "$status" -eq 0 ]
+
+  run grep -c '"event":"pr_opened"' "$RUN_ROOT/wo-1-30/events.jsonl"
+  [ "$output" = "1" ]
+
+  REF="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-30/result.json'))['pr_reference'])")"
+  [[ "$REF" == https://* ]]
+}
+
+@test "execution-slice-1a: PR — no opener in the work order, no pull request" {
+  # The default, and what every run did before the field existed. Opening a PR
+  # is outward-facing; it should require someone to write it down.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-31" 1 '[]' '["true"]'
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+  run grep -c '"event":"pr_' "$RUN_ROOT/wo-1-31/events.jsonl"
+  [ "$output" = "0" ]
+}
+
+@test "execution-slice-1a: PR — a rejected run opens nothing" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-32" 1 '[]' '["false"]' "$FAKE_PR"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-32/result.json'))['verdict'])")"
+  [ "$VERDICT" = "rejected" ]
+
+  run grep -c '"event":"pr_skipped"' "$RUN_ROOT/wo-1-32/events.jsonl"
+  [ "$output" = "1" ]
+  [ ! -f "$RUN_ROOT/wo-1-32/pr_ref.txt" ]
+}
+
+@test "execution-slice-1a: PR — an opener that prints nothing is a failure" {
+  # Exit 0 with no reference has not opened anything. A run that recorded
+  # pr_opened on the exit status would report a pull request that does not
+  # exist — the measurement is the reference, not the status.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-33" 1 '[]' '["true"]' "$FAKE_PR"
+
+  FAKE_PR_SILENT=1 run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  run grep -c '"event":"pr_failed"' "$RUN_ROOT/wo-1-33/events.jsonl"
+  [ "$output" = "1" ]
+  run grep -c '"event":"pr_opened"' "$RUN_ROOT/wo-1-33/events.jsonl"
+  [ "$output" = "0" ]
+  [ ! -f "$RUN_ROOT/wo-1-33/pr_ref.txt" ]
+}
+
+@test "execution-slice-1a: PR — a kill before the PR resumes into exactly one PR" {
+  # The step where re-running is not merely wasteful: a second invocation opens
+  # a second pull request and nothing downstream would notice.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-34" 1 '[]' '["true", "sleep 30"]' "$FAKE_PR"
+  EVENTS_FILE="$RUN_ROOT/wo-1-34/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+
+  run grep -c '"event":"pr_opened"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+
+  # The opener itself, counted rather than inferred from the ledger it writes.
+  run wc -l < "$RUN_ROOT/wo-1-34/pr_opener_invocations.txt"
+  [ "$(echo "$output" | tr -d ' ')" = "1" ]
+}
+
+@test "execution-slice-1a: PR — resuming a run that already opened one does not open a second" {
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-35" 1 '[]' '["true"]' "$FAKE_PR"
+
+  run bash "$RUNNER" "$WO"
+  [ "$status" -eq 0 ]
+
+  # A finished run reports COMPLETE, so force the harder case: strip the final
+  # event so the run looks interrupted immediately after the PR was opened.
+  EVENTS_FILE="$RUN_ROOT/wo-1-35/events.jsonl"
+  grep -v '"event":"run_finished"' "$EVENTS_FILE" > "$EVENTS_FILE.t"
+  mv "$EVENTS_FILE.t" "$EVENTS_FILE"
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pull request already done"* ]]
+
+  run wc -l < "$RUN_ROOT/wo-1-35/pr_opener_invocations.txt"
+  [ "$(echo "$output" | tr -d ' ')" = "1" ]
+}
+
+@test "execution-slice-1a: RESUME — a worktree the run already removed is not rebuilt" {
+  # Noticed watching the kill-after-verification case rebuild 471 files it was
+  # never going to look at. Worse than waste: it puts a clean checkout of
+  # base_sha where a reader might take it for the builder's output.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-36" 1 '[]' '["true"]' "$FAKE_PR"
+  EVENTS_FILE="$RUN_ROOT/wo-1-36/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"worktree_removed"' 1
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already removed by the run being resumed"* ]]
+  [ ! -d "$RUN_ROOT/wo-1-36/wt" ]
+  run grep -c '"event":"pr_opened"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
+
+  # The defect the rebuild was hiding, and the reason this test matters more
+  # than the waste it was written about: with the worktree rebuilt clean, the
+  # patch step re-ran against a checkout of base_sha and wrote an EMPTY patch
+  # over the real one. The run reported accepted with the builder's work
+  # silently discarded — the worst shape of failure this repository knows.
+  [ -s "$RUN_ROOT/wo-1-36/changes.patch" ]
+  run grep -c '^+fake builder touched' "$RUN_ROOT/wo-1-36/changes.patch"
+  [ "$output" = "1" ]
+
+  VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-36/result.json'))['verdict'])")"
+  [ "$VERDICT" = "accepted" ]
+}
+
+@test "execution-slice-1a: RESUME — a saved patch is never recomputed" {
+  # The general form of the same defect: once patch_saved is in the ledger and
+  # changes.patch is on disk, no resume may produce it again. Pinned by
+  # content, not by presence — an empty file is present too.
+  WORKDIR="$BATS_TEST_TMPDIR"
+  WO="$WORKDIR/wo.json"
+  _wo "$WO" "wo-1-37" 1 '[]' '["true"]' "$FAKE_PR"
+  EVENTS_FILE="$RUN_ROOT/wo-1-37/events.jsonl"
+
+  bash "$RUNNER" "$WO" & RUNNER_PID=$!
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"patch_saved"' 1
+
+  BEFORE="$(shasum < "$RUN_ROOT/wo-1-37/changes.patch")"
+
+  run bash "$RUNNER" "$WO" --resume
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"patch already done"* ]]
+
+  AFTER="$(shasum < "$RUN_ROOT/wo-1-37/changes.patch")"
+  [ "$BEFORE" = "$AFTER" ]
+
+  run grep -c '"event":"patch_saved"' "$EVENTS_FILE"
+  [ "$output" = "1" ]
 }
