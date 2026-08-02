@@ -6,12 +6,14 @@
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
   CONSULT="$REPO_ROOT/scripts/consult-opencode.sh"
+  PROVENANCE_CHECK="$REPO_ROOT/scripts/lib/consultation-provenance.sh"
   BIN="$BATS_TEST_TMPDIR/bin"
-  OUT="$BATS_TEST_TMPDIR/review.md"
+  CONSULTATION_DIR="$BATS_TEST_TMPDIR/consultations"
+  OUT="$CONSULTATION_DIR/review.md"
   PROMPT="$BATS_TEST_TMPDIR/prompt.md"
   SOURCE="$BATS_TEST_TMPDIR/source"
   ARGS="$BATS_TEST_TMPDIR/args"
-  mkdir -p "$BIN" "$SOURCE"
+  mkdir -p "$BIN" "$SOURCE" "$CONSULTATION_DIR"
   printf 'Review the change and end with a verdict.\n' > "$PROMPT"
 
   git -C "$SOURCE" init -q
@@ -84,7 +86,10 @@ run_consult() {
   [ -s "$OUT" ]
   [ -s "$OUT.provenance.json" ]
   [ -s "$OUT.raw.jsonl" ]
+  [ "$(head -1 "$OUT")" = '<!-- provenance' ]
   grep -q '^served_provider: opencode-go$' "$OUT"
+  grep -q '^reviewer_claim: opencode-go$' "$OUT"
+  grep -q '^model: qwen3.7-max$' "$OUT"
   grep -q '^served_model: qwen3.7-max$' "$OUT"
   grep -q '^session: ses_review_123$' "$OUT"
   grep -q '^cost: 0.25$' "$OUT"
@@ -96,6 +101,11 @@ run_consult() {
   ! grep -q -- "--dir $SOURCE\([[:space:]]\|$\)" "$ARGS"
   [ ! -e "$SOURCE/reviewer-touch" ]
   [ "$(git -C "$SOURCE" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+
+  run bash -c 'source "$1"; check_consultation_provenance "$2"' \
+    _ "$PROVENANCE_CHECK" "$CONSULTATION_DIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == OK* ]]
 }
 
 @test "opencode consult: refuses a different served provider and preserves the body as unattributed" {

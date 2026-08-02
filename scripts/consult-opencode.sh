@@ -268,9 +268,15 @@ COST="$(sed -n '1p' "$META")"
 INPUT_TOKENS="$(sed -n '2p' "$META")"
 OUTPUT_TOKENS="$(sed -n '3p' "$META")"
 {
-  echo "reviewer_claim: $SERVICE_PROVIDER"
-  echo "requested_model: $MODEL"
+  echo '<!-- provenance'
+  echo "requested_provider: $SERVICE_PROVIDER"
   echo "served_provider: $SERVICE_PROVIDER"
+  echo "reviewer_claim: $SERVICE_PROVIDER"
+  echo "model: $MODEL"
+  echo "consistency_check: session export matches the completed stream session, service provider, and requested model"
+  echo "log: $RAW; session export: $PROVENANCE"
+  echo '-->'
+  echo
   echo "served_model: $MODEL"
   echo "service_provider: $SERVICE_PROVIDER"
   echo "upstream_model: $MODEL"
