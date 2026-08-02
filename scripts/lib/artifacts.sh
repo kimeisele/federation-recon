@@ -87,7 +87,7 @@ gen_evidence() {
   # one evidence_id — silent overwrite and a determinism hazard (FR-CON-012).
   local subject_input="${pin_id}:${obs_type}:$(sha256_of "${value}")"
   if [ -n "$paths" ] || [ -n "$hashes" ]; then
-    subject_input="${subject_input}:$(sha256_of "${paths}:${hashes}")"
+    subject_input="${subject_input}:paths_sha=$(sha256_of "$paths"):hashes_sha=$(sha256_of "$hashes")"
   fi
   local ev_id; ev_id="$(make_id "ev" "$subject_input")"
   local json_paths="" json_hashes=""
