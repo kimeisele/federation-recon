@@ -9,6 +9,8 @@ Usage:
 
 Exit 0 — admissible, silent stderr.
 Exit 1 — refused, first stderr line is the bare reason code.
+Exit 2 — the input could not be read. Not a verdict about an order, and the
+         first stderr line is deliberately not a reason code (see #126).
 """
 
 import json
@@ -62,23 +64,30 @@ _POLICY_PATH = os.path.join(
 )
 
 
-def _refuse_unreadable(path, detail):
-    """Refuse when a file the validator must read cannot be read.
+def _refuse_unreadable(path, exc):
+    """Exit 2 when a file the validator must read cannot be read.
+
+    This is the one function #126 named, and the decision is now made here:
+    unreadable input is exit 2, and it is NOT a verdict about an order.
+    CONTRACT.md §1 — a component of the TCB that cannot read its own input has
+    *failed*, not *judged* (ADR §3.1), and a missing file is the supervisor
+    failing to find its input, closer to a missing backend or a full disk.
+    There is no order to have a verdict about.
+
+    The first line of stderr is deliberately not a reason code: E_* on line 1
+    means a verdict was reached, and none was. A caller must not fold exit 2
+    into exit 1.
 
     Both callers — the order file and the policy — funnel through here on
-    purpose. The code below is the wrong category: E_SIZE is defined as "the
-    file exceeds the byte limit", and a file that is absent has no byte count
-    to exceed. That is #126, and it is a contract decision rather than an
-    implementation one, so it is deliberately not made here.
-
-    What this function does establish is that the failure leaves through the
-    documented door: exit 1 with a bare reason code on the first line of
-    stderr. A missing policy.json used to raise an uncaught FileNotFoundError,
-    putting "Traceback (most recent call last):" where a caller reads the code
-    — fail-closed in status, unusable in content. When #126 is decided, exactly
-    one function changes.
+    purpose. The previous code reported a missing file, a directory, and an
+    unreadable file as E_SIZE, reached by elimination in the branch that reads
+    the bytes. E_SIZE is defined as "the file exceeds the byte limit", and a
+    file that does not exist has no byte count to exceed — an operator reading
+    E_SIZE in a run record went looking for an oversized order and found
+    nothing.
     """
-    _refuse('E_SIZE', f'{detail}\n  (reason code is provisional — see #126)')
+    print(f'Cannot read {path}: {exc}', file=sys.stderr)
+    sys.exit(2)
 
 
 def _load_policy():
@@ -87,7 +96,7 @@ def _load_policy():
         with open(_POLICY_PATH) as f:
             return json.load(f)
     except OSError as exc:
-        _refuse_unreadable(_POLICY_PATH, f'Cannot read the policy: {exc}')
+        _refuse_unreadable(_POLICY_PATH, exc)
     except json.JSONDecodeError as exc:
         _refuse('E_JSON', f'The policy at {_POLICY_PATH} is not valid JSON: {exc}')
 
@@ -646,6 +655,11 @@ def run_checks(order_path):
       5. E_LIMIT — non‑positive effective limit
       6. E_BUNDLE_PROVENANCE — bundle provenance
 
+    Unreadable input does not reach this ordering: a missing file, a directory,
+    an unreadable file, or an unreadable policy exits 2 before any code is
+    considered. Exit 2 is not a verdict and the first stderr line is not a
+    reason code (CONTRACT.md §1, #126).
+
     Refusal still leaves through `_refuse`, which exits 1 after printing the
     reason code — that is the contract and it does not change. What changes is
     the success path: the parsed order is *returned* rather than deposited in a
@@ -664,7 +678,7 @@ def run_checks(order_path):
         with open(order_path, 'rb') as f:
             raw = f.read()
     except OSError as exc:
-        _refuse_unreadable(order_path, f'Cannot read the order: {exc}')
+        _refuse_unreadable(order_path, exc)
 
     # 2. Size check (before the parser sees a byte) ──────────────────────
     if len(raw) > SIZE_LIMIT:

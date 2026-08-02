@@ -164,9 +164,10 @@ def validate_order(order_path):
         with contextlib.redirect_stderr(buf):
             order = order_validate.run_checks(order_path)
     except SystemExit as exc:
-        # Only refusals leave this way now. A SystemExit(0) would mean the
-        # validator exited successfully without returning the order, which is
-        # a contract change and is reported as a refusal rather than admitted.
+        # Exit-1 refusals and exit-2 unreadable-input failures (#126) both
+        # leave this way. A SystemExit(0) would mean the validator exited
+        # successfully without returning the order, which is a contract change
+        # and is reported as a refusal rather than admitted.
         rc = exc.code if isinstance(exc.code, int) else 1
         if rc == 0:
             return 1, buf.getvalue() + "validator exited 0 without returning an order\n", None
@@ -204,6 +205,16 @@ def main(argv=None):
 
     order_path = argv[0]
     rc, verr, order = validate_order(order_path)
+    if rc == 2:
+        # #126: the order could not be READ. That is an operational failure,
+        # not a refusal: no verdict was reached about any order, so there is
+        # no reason code, and exit 2 must not be folded into exit 1
+        # (CONTRACT.md §1). The launcher is the first caller, so it is the
+        # first place the distinction can be lost.
+        print(verr, end="", file=sys.stderr)
+        print("The backend was not consulted and no workspace was created.",
+              file=sys.stderr)
+        return 2
     if rc != 0:
         code = (verr.strip().splitlines() or ["E_UNKNOWN"])[0]
         print(f"ORDER REFUSED: {code}", file=sys.stderr)
