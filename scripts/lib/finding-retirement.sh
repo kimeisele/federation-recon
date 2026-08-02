@@ -94,10 +94,30 @@
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. See #75.
 
+# _fr_base_ref — the ref to diff against, resolved rather than assumed.
+#
+# CI exports BASE_REF as a bare branch name (`main`), and a checkout in
+# detached HEAD has no local `main` — only `origin/main`. Taking BASE_REF
+# verbatim made the check return 2 in the one environment it exists for, which
+# a fail-closed gate correctly turned red and which is not the failure anyone
+# meant. Each candidate is tried and the first that resolves wins.
 _fr_base_ref() {
-    if [ -n "${BASE_REF:-}" ]; then printf '%s' "$BASE_REF"; return 0; fi
-    if [ -n "${GITHUB_BASE_REF:-}" ]; then printf 'origin/%s' "$GITHUB_BASE_REF"; return 0; fi
-    printf 'origin/main'
+    local want spelling
+    want="${BASE_REF:-${GITHUB_BASE_REF:-main}}"
+
+    # Two SPELLINGS of the same ref, never a different ref. A checkout in
+    # detached HEAD has no local `main`, only `origin/main`, so trying both is
+    # necessary — and falling back from a named-but-missing base to some other
+    # branch would be a silent substitution of what is being compared, which
+    # is the failure class this repository has paid for more than once.
+    for spelling in "$want" "origin/$want"; do
+        if git rev-parse --verify "$spelling" >/dev/null 2>&1; then
+            printf '%s' "$spelling"; return 0
+        fi
+    done
+
+    # Nothing resolved. Name what was asked for, not what was guessed.
+    printf '%s' "$want"
 }
 
 check_finding_retirement() {

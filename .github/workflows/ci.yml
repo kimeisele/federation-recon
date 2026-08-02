@@ -38,6 +38,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history. check_consultation_rounds proves that a superseded
+          # review round was never deleted, and it proves it from git history
+          # — which a shallow clone does not have. It fails rather than
+          # skipping, so a depth-1 checkout turns it into a permanent red
+          # instead of a silent green. That is the right direction and this is
+          # the other half of it.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5

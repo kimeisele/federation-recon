@@ -203,7 +203,19 @@ check_consultation_rounds() {
     # under `fetch-depth: 1` this examined one commit, found nothing, and
     # printed OK — the announced skip never happening because the condition
     # never fired. `--is-shallow-repository` is the test the comment described.
-    if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    # Only for a directory that is actually under version control here. A
+    # fixture in a tmpdir has no history and never did, so asking git about it
+    # answers a question nobody posed — and in a shallow CI checkout it turned
+    # every fixture test red, including the ones asserting a clean pass.
+    local dir_tracked=false
+    if git ls-files --error-unmatch "$dir" >/dev/null 2>&1 \
+       || [ -n "$(git ls-files -- "$dir" 2>/dev/null | head -1)" ]; then
+        dir_tracked=true
+    fi
+
+    if ! $dir_tracked; then
+        :
+    elif [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
         echo "  note: shallow clone — the deletion check did not run; use fetch-depth: 0" >&2
         rc=1
     elif git rev-parse --git-dir >/dev/null 2>&1; then

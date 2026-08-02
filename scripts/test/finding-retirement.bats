@@ -192,6 +192,30 @@ _mod() {
     [[ "$output" == *"definitely-not-a-ref"* ]]
 }
 
+@test "finding-retirement: a bare branch name resolves to its remote spelling" {
+    # CI exports BASE_REF as `main`, and a checkout in detached HEAD has no
+    # local `main` — only `origin/main`. Taking it verbatim made the check
+    # return 2 in the one environment it exists for.
+    if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
+        skip "origin/main not available in this checkout"
+    fi
+    run bash -c "BASE_REF=main source '$REPO/scripts/lib/finding-retirement.sh' && \
+        cd '$REPO' && BASE_REF=main check_finding_retirement"
+    [ "$status" -eq 0 ]
+}
+
+@test "finding-retirement: a missing base does not fall back to another branch" {
+    # Two spellings of the SAME ref, never a different ref. Falling back from
+    # a named-but-missing base to origin/main would silently change what is
+    # being compared, which is the failure class this repository has paid for
+    # more than once.
+    run bash -c "cd '$REPO' && BASE_REF=definitely-not-a-ref \
+        source '$REPO/scripts/lib/finding-retirement.sh' && \
+        BASE_REF=definitely-not-a-ref check_finding_retirement"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"definitely-not-a-ref"* ]]
+}
+
 @test "finding-retirement: no dead enumeration is left behind" {
     # An intermediate version computed a base-tree listing, exported it, and
     # never read it — while two comments credited it for the non-shrinking
