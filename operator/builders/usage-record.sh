@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage-record.sh — assemble the cost record for one builder run.
 #
-#   usage-record.sh <out_file> <window_from> <provider_record> <usage_before_file> <usage_after_file>
+#   usage-record.sh <out_file> <window_from> <provider_record> <usage_before_file> <usage_after_file> [build_output_file]
 #
 # Exit 0 a complete record was written, 1 it could not be.
 #
@@ -12,7 +12,7 @@
 # and never exported. That is fixed. This is the other half — what goes in the
 # file now that there is a file.
 #
-# ── Tokens are redacted by the tool, and this says so ──────────────────────
+# ── Tokens come from the build stream, not the redacted lifecycle log ──────
 #
 # `jcode usage` reports plan windows and API-key balances, not per-run
 # consumption. The log carries per-call lifecycle events, and every one of
@@ -20,9 +20,10 @@
 #
 #     input_tokens=<redacted> ... output_tokens=<redacted>
 #
-# So a token count is not obtainable from either source. The record states
-# that in the field rather than leaving it empty, because an empty field reads
-# as zero and zero is a measurement. `unavailable` is not.
+# JCode's build stream separately emits a `[Tokens]` line for each model call.
+# Those figures are summed for the run. If no such line survives, the record
+# says `unavailable` rather than leaving a field empty, because an empty field
+# reads as zero and zero is a measurement. `unavailable` is not.
 #
 # What IS obtainable and is recorded: the provider and model that actually
 # served (measured by provider-probe.sh from the log, not from the request),
@@ -50,6 +51,7 @@ WINDOW_FROM="${2:-}"
 PROVIDER_RECORD="${3:-}"
 USAGE_BEFORE="${4:-}"
 USAGE_AFTER="${5:-}"
+BUILD_OUTPUT="${6:-}"
 
 if [ -z "$OUT" ] || [ -z "$WINDOW_FROM" ]; then
   echo "usage: usage-record.sh <out> <window_from> <provider_record> <before> <after>" >&2
@@ -108,6 +110,40 @@ else
   REDACTED=0
 fi
 
+# JCode emits one token line per model round during an agentic build. Sum all
+# of those build-only lines; taking the first or last line is not run-level
+# accounting. The separate route probe is redirected elsewhere.
+if [ -n "$BUILD_OUTPUT" ] && [ -f "$BUILD_OUTPUT" ]; then
+  TOKENS="$(python3 - "$BUILD_OUTPUT" <<'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(
+    r"\[Tokens\]\s+upload:\s*(\d+)\s+download:\s*(\d+)\s+"
+    r"cache_read:\s*(\d+)\s+cache_write:\s*(\d+)",
+    text,
+)
+if rows:
+    print("\t".join(str(sum(int(row[i]) for row in rows)) for i in range(4)))
+PY
+)"
+else
+  TOKENS=""
+fi
+
+if [ -n "$TOKENS" ]; then
+  INPUT_TOKENS="$(printf '%s' "$TOKENS" | cut -f1)"
+  OUTPUT_TOKENS="$(printf '%s' "$TOKENS" | cut -f2)"
+  CACHE_READ_TOKENS="$(printf '%s' "$TOKENS" | cut -f3)"
+  CACHE_WRITE_TOKENS="$(printf '%s' "$TOKENS" | cut -f4)"
+  TOKENS_SUMMARY="summed exact per-call figures from the build output"
+else
+  INPUT_TOKENS="unavailable"
+  OUTPUT_TOKENS="unavailable"
+  CACHE_READ_TOKENS="unavailable"
+  CACHE_WRITE_TOKENS="unavailable"
+  TOKENS_SUMMARY="unavailable — no [Tokens] line in the build output"
+fi
+
 # A balance line, where the provider publishes one at all.
 _balance() {
   [ -f "$1" ] || { printf 'not captured'; return; }
@@ -122,8 +158,12 @@ _balance() {
   printf 'api_calls:         %s\n' "$CALLS"
   printf 'stream_ms_total:   %s\n' "$ELAPSED_MS"
   printf 'cache_read_total:  %s\n' "$CACHE_READ"
-  printf 'tokens:            unavailable — the tool redacts them\n'
+  printf 'tokens:            %s\n' "$TOKENS_SUMMARY"
   printf 'tokens_evidence:   %s log line(s) carry tokens=<redacted>\n' "$REDACTED"
+  printf 'input_tokens:      %s\n' "$INPUT_TOKENS"
+  printf 'output_tokens:     %s\n' "$OUTPUT_TOKENS"
+  printf 'cache_read_tokens: %s\n' "$CACHE_READ_TOKENS"
+  printf 'cache_write_tokens: %s\n' "$CACHE_WRITE_TOKENS"
   printf 'balance_before:    %s\n' "$(_balance "$USAGE_BEFORE")"
   printf 'balance_after:     %s\n' "$(_balance "$USAGE_AFTER")"
   printf 'window_from:       %s\n' "$WINDOW_FROM"

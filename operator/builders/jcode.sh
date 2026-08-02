@@ -90,7 +90,11 @@ Complete the task described by the issue."
 # -----------------------------------------------------------------
 # 4. Provider
 # -----------------------------------------------------------------
-# Provider AND model, both passed as flags on the command line.
+# Two routing contracts, chosen by JCODE_PROVIDER_PROFILE (#167):
+#
+#   - profile set: select a named OpenAI-compatible profile and model with
+#     global jcode flags; the probe verifies its endpoint and model;
+#   - profile unset: retain the legacy explicit provider/model flags.
 #
 # This used to set JCODE_PROVIDER as an environment variable and pass no model
 # at all. Measured on 2026-07-31: `jcode run` does not read those variables,
@@ -98,8 +102,15 @@ Complete the task described by the issue."
 # That default now names the REVIEWER model, because an OAuth provider has to
 # be the default for -p/-m to be honoured at all (governance/reviewers.md).
 # So the old line would have built with the model meant to review the build.
+PROFILE="${JCODE_PROVIDER_PROFILE:-}"
 PROVIDER="${JCODE_PROVIDER:-deepseek}"
 MODEL="${JCODE_MODEL:-deepseek-v4-flash}"
+
+if [ -n "$PROFILE" ] && [ -z "${JCODE_EXPECTED_ENDPOINT:-}" ]; then
+  echo "jcode.sh: profile selected without JCODE_EXPECTED_ENDPOINT — refusing unverified build." >&2
+  echo '{"outcome":"failed","files_changed":[]}'
+  exit 1
+fi
 
 # -----------------------------------------------------------------
 # 4b. Establish which provider will actually serve — BEFORE building
@@ -122,7 +133,8 @@ PROVIDER_RECORD="${RUN_DIR:-$SCRATCH_DIR}/builder_provider.txt"
 mkdir -p "$(dirname "$PROVIDER_RECORD")" 2>/dev/null || true
 
 if [ -x "$PROBE_DIR/provider-probe.sh" ]; then
-  if ! "$PROBE_DIR/provider-probe.sh" "$PROVIDER" "$MODEL" \
+  PROBE_REQUEST="${PROFILE:-$PROVIDER}"
+  if ! "$PROBE_DIR/provider-probe.sh" "$PROBE_REQUEST" "$MODEL" \
         "$PROVIDER_RECORD" "${BUILDER_PROBE_TIMEOUT:-180}" >/dev/null; then
     echo "jcode.sh: provider unverified or substituted — refusing to build." >&2
     cat "$PROVIDER_RECORD" >&2 2>/dev/null || true
@@ -146,8 +158,15 @@ USAGE_BEFORE=$(jcode usage 2>&1 || true)
 # 6. Invoke jcode
 # -----------------------------------------------------------------
 BUILD_WINDOW_FROM="$(date -u +"%Y-%m-%d %H:%M:%S")"
+BUILD_OUTPUT_FILE="$(dirname "$USAGE_FILE")/builder_jcode_output.txt"
 set +o errexit
-jcode run -p "$PROVIDER" -m "$MODEL" --quiet -C "$WORKTREE" "$PROMPT" >/dev/null 2>&1
+if [ -n "$PROFILE" ]; then
+  jcode --provider-profile "$PROFILE" --model "$MODEL" --quiet --no-update \
+    -C "$WORKTREE" run "$PROMPT" >"$BUILD_OUTPUT_FILE" 2>&1
+else
+  jcode run -p "$PROVIDER" -m "$MODEL" --quiet -C "$WORKTREE" "$PROMPT" \
+    >"$BUILD_OUTPUT_FILE" 2>&1
+fi
 JCODE_EXIT=$?
 set -o errexit
 
@@ -177,7 +196,8 @@ if [ -x "$PROBE_DIR/usage-record.sh" ]; then
     "$BUILD_WINDOW_FROM" \
     "$PROVIDER_RECORD" \
     "${USAGE_FILE}.before" \
-    "${USAGE_FILE}.after" || true
+    "${USAGE_FILE}.after" \
+    "$BUILD_OUTPUT_FILE" || true
 fi
 
 # -----------------------------------------------------------------
