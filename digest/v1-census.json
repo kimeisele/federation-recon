@@ -1,7 +1,7 @@
 {
   "procedure_id": "v1-census",
   "procedure_version": "v1",
-  "run_timestamp": "2026-08-01T04:02:43Z",
+  "run_timestamp": "2026-08-02T04:06:50Z",
   "attention_items": [{
   "target": "kimeisele/federation-recon",
   "status": "observed",
@@ -11,8 +11,8 @@
 }],
   "summary": {
   "pins": 7,
-  "evidence": 55,
-  "findings": 28,
+  "evidence": 58,
+  "findings": 30,
   "coverage_records": 7,
   "observed_nodes": 7,
   "stale_nodes": 1,
