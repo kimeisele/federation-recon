@@ -486,7 +486,11 @@ print(json.dumps({
 ")"
 
 set +o errexit
-WORK_ORDER="$WO_FILE" "$BUILDER" "$WORKTREE" >"$BUILDER_STDOUT_FILE" 2>"$BUILDER_STDERR_FILE"
+# RUN_DIR is exported, not merely set. The adapter writes its provider record
+# and its usage evidence there, and falls back to a temp directory it then
+# deletes when the variable is absent — which was every run until now (#160).
+WORK_ORDER="$WO_FILE" RUN_DIR="$RUN_DIR" \
+  "$BUILDER" "$WORKTREE" >"$BUILDER_STDOUT_FILE" 2>"$BUILDER_STDERR_FILE"
 BUILDER_EXIT=$?
 set -o errexit
 
@@ -499,6 +503,45 @@ try:
 except:
     print('failed')
 " 2>/dev/null)"
+
+# ── the resolved provider goes in the ledger ──────────────────────────────
+#
+# Written from what the probe MEASURED, not from what the work order asked
+# for. A run whose provider cannot be established is refused here as well as
+# in the adapter — two independent points, because the adapter is the thing
+# being audited and a control inside the audited component is the weaker half.
+PROVIDER_RECORD="$RUN_DIR/builder_provider.txt"
+if [ -f "$PROVIDER_RECORD" ]; then
+  RESOLVED_PROVIDER="$(sed -n 's/^resolved_provider:[[:space:]]*//p' "$PROVIDER_RECORD" | head -1)"
+  RESOLVED_PMODEL="$(sed -n 's/^resolved_model:[[:space:]]*//p' "$PROVIDER_RECORD" | head -1)"
+  PROVIDER_VERDICT="$(sed -n 's/^verdict:[[:space:]]*//p' "$PROVIDER_RECORD" | head -1)"
+else
+  RESOLVED_PROVIDER="undetermined"
+  RESOLVED_PMODEL="undetermined"
+  PROVIDER_VERDICT="no record written"
+fi
+
+ESCAPED_PROV=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$RESOLVED_PROVIDER")
+ESCAPED_PMOD=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$RESOLVED_PMODEL")
+ESCAPED_PVER=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$PROVIDER_VERDICT")
+_event_append "$(python3 -c "
+import json
+print(json.dumps({
+    'ts': '$(utc_ts)',
+    'event': 'builder_provider',
+    'resolved_provider': $ESCAPED_PROV,
+    'resolved_model': $ESCAPED_PMOD,
+    'verdict': $ESCAPED_PVER
+}, separators=(',', ':')))
+")"
+
+if [ "$PROVIDER_VERDICT" != "match" ]; then
+  echo "FATAL: the builder's provider was not established as the one requested." >&2
+  echo "       verdict: $PROVIDER_VERDICT (resolved: $RESOLVED_PROVIDER)" >&2
+  echo "       A run billed to a provider nobody chose is not a run. See #159." >&2
+  BUILDER_EXIT=1
+  REPORTED_OUTCOME="failed"
+fi
 
 _event_append "$(python3 -c "
 import json

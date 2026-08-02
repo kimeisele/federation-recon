@@ -23,6 +23,11 @@ setup() {
   git -C "$WT" commit --allow-empty -m "init" --quiet
   export WT
 
+  # The probe reads jcode's log; give the stub one of its own so the suite
+  # never touches the operator's real log directory.
+  export JCODE_LOG_DIR="$WORKDIR/jcode-logs"
+  mkdir -p "$JCODE_LOG_DIR"
+
   # Create stub jcode on PATH
   cat > "$WORKDIR/jcode" <<'JCODESTUB'
 #!/usr/bin/env bash
@@ -39,6 +44,21 @@ setup() {
 # bash 3.2 compatible.
 
 echo "$@" >> "${JCODE_LOG:-/dev/null}"
+
+# The stub simulates jcode's LOG as well as its behaviour, because the provider
+# probe (#159) reads the log rather than the tool's own resolver — the resolver
+# was measured saying "DeepSeek" while the runtime logged "openrouter".
+# A stub that answered but wrote no log would make every run unverifiable,
+# which is the correct outcome for a tool that writes no log and the wrong
+# outcome for a test of something else.
+if [ "${1:-}" = "run" ] && [ -n "${JCODE_LOG_DIR:-}" ]; then
+  mkdir -p "$JCODE_LOG_DIR"
+  printf '[%s] [INFO] [ses:session_stub|prv:%s|mod:%s] API call starting\n' \
+    "$(date -u +'%Y-%m-%d %H:%M:%S')" \
+    "${JCODE_STUB_PROVIDER:-deepseek}" \
+    "${JCODE_STUB_MODEL:-deepseek-v4-flash}" \
+    >> "$JCODE_LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+fi
 
 case "${1:-}" in
   usage)

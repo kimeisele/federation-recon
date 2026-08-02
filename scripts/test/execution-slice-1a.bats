@@ -294,6 +294,14 @@ print(d.get('builder_claim_contradicted', 'absent'))
 set -o nounset
 WT="${1:?}"
 
+# Every builder declares what served it (#159). This one is inline in a test,
+# so the honest answer is that nothing did — and a builder that declares
+# nothing is refused, which is the point of the rule.
+if [ -n "${RUN_DIR:-}" ]; then
+  printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
+    > "$RUN_DIR/builder_provider.txt"
+fi
+
 mkdir -p "$WT/operator"
 echo "marker" >> "$WT/operator/.fake-marker"
 
@@ -360,6 +368,14 @@ with open('$WO', 'w') as f:
 #!/usr/bin/env bash
 set -o nounset
 WT="${1:?}"
+
+# Every builder declares what served it (#159). This one is inline in a test,
+# so the honest answer is that nothing did — and a builder that declares
+# nothing is refused, which is the point of the rule.
+if [ -n "${RUN_DIR:-}" ]; then
+  printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
+    > "$RUN_DIR/builder_provider.txt"
+fi
 
 mkdir -p "$WT/operator"
 echo "marker" >> "$WT/operator/.fake-marker"
@@ -452,6 +468,14 @@ with open('$WO', 'w') as f:
 #!/usr/bin/env bash
 set -o nounset
 WT="${1:?}"
+
+# Every builder declares what served it (#159). This one is inline in a test,
+# so the honest answer is that nothing did — and a builder that declares
+# nothing is refused, which is the point of the rule.
+if [ -n "${RUN_DIR:-}" ]; then
+  printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
+    > "$RUN_DIR/builder_provider.txt"
+fi
 mkdir -p "$WT/operator"
 echo "patch-saved-content" > "$WT/operator/patch-test.txt"
 python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': ['operator/patch-test.txt']}))"
@@ -504,6 +528,14 @@ with open('$WO', 'w') as f:
 #!/usr/bin/env bash
 set -o nounset
 WT="${1:?}"
+
+# Every builder declares what served it (#159). This one is inline in a test,
+# so the honest answer is that nothing did — and a builder that declares
+# nothing is refused, which is the point of the rule.
+if [ -n "${RUN_DIR:-}" ]; then
+  printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
+    > "$RUN_DIR/builder_provider.txt"
+fi
 mkdir -p "$WT/operator"
 echo "apply-test-v9" > "$WT/operator/apply-test.txt"
 python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': ['operator/apply-test.txt']}))"
@@ -580,6 +612,11 @@ with open('$WO', 'w') as f:
   BUILDER_SCRIPT="$WORKDIR/noop-builder.sh"
   cat > "$BUILDER_SCRIPT" << 'BUILDER_EOF'
 #!/usr/bin/env bash
+# Declares its provider (#159) and changes nothing else.
+if [ -n "${RUN_DIR:-}" ]; then
+  printf 'resolved_provider:  inline-test-builder\nresolved_model:     none\nverdict:            match\n' \
+    > "$RUN_DIR/builder_provider.txt"
+fi
 python3 -c "import json; print(json.dumps({'outcome': 'completed', 'files_changed': []}))"
 exit 0
 BUILDER_EOF
@@ -1117,4 +1154,98 @@ _kill_at() {
 import json
 print(json.load(open('$RUN_ROOT/wo-1-44/path_check_result.json'))['oracle_touched'])")"
     [[ "$TOUCHED" == *"operator/builders/fake.sh"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# PROVIDER (#159) — a substituted provider aborts the run.
+#
+# `-p deepseek -m deepseek-v4-flash` was served by OpenRouter for all 399 log
+# lines of Slice 1b's run wo-126-2, and `jcode provider current -p deepseek`
+# reports `resolved_provider DeepSeek`. The tool's own resolver disagrees with
+# its runtime, so only the log is evidence — and a run billed to a provider
+# nobody chose is a budget failure, not a detail.
+#
+# These force the substitution through the fake builder rather than by calling
+# a model, so they cost nothing and run in CI.
+# ---------------------------------------------------------------------------
+
+@test "execution-slice-1a: PROVIDER — a substituted provider fails the run" {
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-50" 1 '[]' '["true"]'
+
+    FAKE_PROVIDER=openrouter FAKE_PROVIDER_VERDICT=MISMATCH \
+        run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 0 ]
+
+    VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-50/result.json'))['verdict'])")"
+    [ "$VERDICT" = "rejected" ]
+    [[ "$output" == *"billed to a provider nobody chose"* ]]
+}
+
+@test "execution-slice-1a: PROVIDER — the resolved provider is in the ledger" {
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-51" 1 '[]' '["true"]'
+
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+
+    run grep -c '"event":"builder_provider"' "$RUN_ROOT/wo-1-51/events.jsonl"
+    [ "$output" = "1" ]
+
+    # And it carries what was MEASURED, not what was asked for.
+    run grep '"event":"builder_provider"' "$RUN_ROOT/wo-1-51/events.jsonl"
+    [[ "$output" == *'"resolved_provider":"fake"'* ]]
+    [[ "$output" == *'"verdict":"match"'* ]]
+}
+
+@test "execution-slice-1a: PROVIDER — the event precedes builder_finished" {
+    # Order matters: the provider is established as part of the builder step,
+    # not appended afterwards once the outcome is known.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-52" 1 '[]' '["true"]'
+    run bash "$RUNNER" "$WO"
+    [ "$status" -eq 0 ]
+
+    E="$RUN_ROOT/wo-1-52/events.jsonl"
+    P="$(grep -n '"event":"builder_provider"' "$E" | cut -d: -f1)"
+    F="$(grep -n '"event":"builder_finished"' "$E" | cut -d: -f1)"
+    [ -n "$P" ] && [ -n "$F" ]
+    [ "$P" -lt "$F" ]
+}
+
+@test "execution-slice-1a: PROVIDER — a builder that writes no record fails the run" {
+    # A missing record and a passing one must not produce the same outcome.
+    # RUN_DIR unset inside the builder is exactly how #160 happened, and the
+    # same neglect would have made this control silently absent.
+    WORKDIR="$BATS_TEST_TMPDIR"
+    WO="$WORKDIR/wo.json"
+    _wo "$WO" "wo-1-53" 1 '[]' '["true"]'
+
+    # A builder that ignores RUN_DIR entirely.
+    MUTE="$WORKDIR/mute-builder.sh"
+    cat > "$MUTE" <<'MUTEEOF'
+#!/usr/bin/env bash
+mkdir -p "$1/operator"
+echo "touched" >> "$1/operator/.fake-marker"
+echo '{"outcome":"completed","files_changed":["operator/.fake-marker"]}'
+MUTEEOF
+    chmod +x "$MUTE"
+    python3 - "$WO" "$MUTE" <<'PYEOF'
+import json, sys
+wo = json.load(open(sys.argv[1]))
+wo["builder"] = sys.argv[2]
+json.dump(wo, open(sys.argv[1], "w"))
+PYEOF
+
+    run bash "$RUNNER" "$WO"
+    echo "$output"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no record written"* ]] || [[ "$output" == *"not established"* ]]
+
+    VERDICT="$(python3 -c "import json; print(json.load(open('$RUN_ROOT/wo-1-53/result.json'))['verdict'])")"
+    [ "$VERDICT" = "rejected" ]
 }

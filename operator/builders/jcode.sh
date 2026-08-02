@@ -102,6 +102,42 @@ PROVIDER="${JCODE_PROVIDER:-deepseek}"
 MODEL="${JCODE_MODEL:-deepseek-v4-flash}"
 
 # -----------------------------------------------------------------
+# 4b. Establish which provider will actually serve — BEFORE building
+# -----------------------------------------------------------------
+#
+# `-p deepseek -m deepseek-v4-flash` was served by OpenRouter for all 399
+# lines of Slice 1b's run wo-126-2, and `jcode provider current -p deepseek`
+# reports `resolved_provider DeepSeek` — the tool's own resolver disagrees
+# with its runtime, so the resolver is not evidence and the log is. See #159.
+#
+# The probe costs one call with a one-word prompt. There is no zero-token way
+# to learn this, and paying it before the build is cheaper than discovering
+# afterwards that the build was billed somewhere nobody chose.
+#
+# A mismatch ABORTS. Silent substitution of the provider is the same failure
+# class as a base ref quietly falling back to another branch: the thing being
+# compared, or paid for, is not the thing that was named.
+PROBE_DIR="$(dirname "$0")"
+PROVIDER_RECORD="${RUN_DIR:-$SCRATCH_DIR}/builder_provider.txt"
+mkdir -p "$(dirname "$PROVIDER_RECORD")" 2>/dev/null || true
+
+if [ -x "$PROBE_DIR/provider-probe.sh" ]; then
+  if ! "$PROBE_DIR/provider-probe.sh" "$PROVIDER" "$MODEL" \
+        "$PROVIDER_RECORD" "${BUILDER_PROBE_TIMEOUT:-180}" >/dev/null; then
+    echo "jcode.sh: provider unverified or substituted — refusing to build." >&2
+    cat "$PROVIDER_RECORD" >&2 2>/dev/null || true
+    echo '{"outcome":"failed","files_changed":[]}'
+    exit 1
+  fi
+else
+  # The probe is not optional. A missing probe and a passing probe must not
+  # produce the same outcome.
+  echo "jcode.sh: provider-probe.sh missing — refusing to build unverified." >&2
+  echo '{"outcome":"failed","files_changed":[]}'
+  exit 1
+fi
+
+# -----------------------------------------------------------------
 # 5. Usage before
 # -----------------------------------------------------------------
 USAGE_BEFORE=$(jcode usage 2>&1 || true)
