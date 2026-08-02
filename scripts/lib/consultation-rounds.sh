@@ -57,6 +57,16 @@
 #     nothing is caught; a paragraph removed from the middle is not. Git
 #     history shows it, and nothing here reads history for content.
 #   - That the rounds are honest. This is a filing rule.
+#   - **That history is evidence on an unmerged branch.** Rounds for an open
+#     pull request exist only in that branch, and an unmerged branch's history
+#     is the author's to rewrite: three rounds, `git rebase -i`, drop the
+#     commits that added rounds 1 and 2, force-push, and every rule above is
+#     green with no deletion event to find. A reviewer named this as the
+#     primary realization of the threat the convention exists for. The only
+#     real anchors are rounds reaching `main` individually — which merging a
+#     PR does — and the consultation provenance record, which is per-dispatch
+#     and could be cross-checked. Neither is done here, and the gap is stated
+#     rather than implied.
 
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. See #75.
@@ -110,7 +120,6 @@ check_consultation_rounds() {
         done < <(grep -oE '\]\([^)]*[0-9]+-[^)]*\.md\)' "$f" 2>/dev/null \
                  | sed 's/^](//; s/)$//' | sort -u)
 
-        seen_primary_for="${seen_primary_for:-} $pr"
         # ── 2. every round file for this PR must be linked from it ─────────
         # find, not a glob: an unmatched glob is a literal in bash and a hard
         # error in zsh, and this file is sourced by both a bash gate and a
@@ -163,32 +172,72 @@ check_consultation_rounds() {
         fi
     done < <(find "$dir" -maxdepth 1 -type f -name '*.md' | sort)
 
-    # ── 4. a round is never deleted ────────────────────────────────────────
+    # ── 4. a round is never deleted or renamed away ────────────────────────
     #
     # Against git history, not the working tree: the working tree cannot tell
-    # you about a file that is not in it. Skipped when there is no history to
-    # read (a shallow clone), and skipping is announced rather than silent.
-    if git rev-parse --git-dir >/dev/null 2>&1; then
-        local deleted
-        deleted="$(git log --diff-filter=D --name-only --format= -- \
-                       "$dir" 2>/dev/null | sort -u || true)"
+    # you about a file that is not in it.
+    #
+    # `--git-dir` was the wrong test and the comment above it claimed a
+    # safeguard the code did not contain. A shallow clone HAS a git dir, so
+    # under `fetch-depth: 1` this examined one commit, found nothing, and
+    # printed OK — the announced skip never happening because the condition
+    # never fired. `--is-shallow-repository` is the test the comment described.
+    if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+        echo "  note: shallow clone — the deletion check did not run; use fetch-depth: 0" >&2
+        rc=1
+    elif git rev-parse --git-dir >/dev/null 2>&1; then
+        # D and R, with --name-status rather than --name-only.
+        #
+        # Two corrections in one line, both found by testing rather than by
+        # reading: `--diff-filter=D` reports a rename as R, so renaming
+        # 131-sol-round3.md to 131-sol-part3.md removed it from every rule at
+        # once. And `--name-only` prints only the NEW path of a rename, which
+        # is the one name that is not the round — the old path, the thing that
+        # disappeared, never appears at all.
+        local gone
+        gone="$(git log --diff-filter=DR -M --name-status --format= -- \
+                    "$dir" 2>/dev/null \
+                | awk -F'\t' '/^D/ {print $2} /^R/ {print $2}' \
+                | sort -u || true)"
         local d dbase
         while IFS= read -r d; do
             [ -z "$d" ] && continue
             dbase="$(basename "$d")"
             _cr_is_round "$dbase" || continue
-            # A deleted round that is back on disk was a rename or a revert.
+            # Back on disk under its own name: a revert, or a rename that was
+            # undone. Nothing was lost.
             [ -f "$dir/$dbase" ] && continue
-            printf '  FAIL %s was deleted (%s) — a superseded round stays readable\n' \
+            printf '  FAIL %s was removed (%s) — a superseded round stays readable\n' \
                 "$dbase" "$d" >&2
             rc=1
-        done <<< "$deleted"
+        done <<< "$gone"
     else
         echo "  note: not a git repository — the deletion check did not run" >&2
     fi
 
-    # An empty inventory is a failure, not a pass.
-    if [ "$primaries" -eq 0 ] && [ "$rounds" -eq 0 ]; then
+    # ── 5. every registered legacy round must still be on disk ─────────────
+    #
+    # The register was matched literally for files that exist, and nothing
+    # checked the other direction: rename a registered round away and the
+    # entry becomes a name for nothing, silently. The headline protection for
+    # pre-convention rounds had a one-command bypass.
+    if [ -f "$register" ]; then
+        local entry
+        while IFS= read -r entry; do
+            case "$entry" in ''|'#'*) continue ;; esac
+            if [ ! -f "$dir/$entry" ]; then
+                printf '  FAIL %s is registered in ROUNDS-LEGACY but is not on disk\n' \
+                    "$entry" >&2
+                rc=1
+            fi
+        done < "$register"
+    fi
+
+    # An empty inventory is a failure, not a pass — but "the check could not
+    # run" must not overwrite a violation the check already found. Renaming
+    # the last registered round away empties the inventory AND is the
+    # violation, and returning 2 there reported the weaker of the two truths.
+    if [ "$primaries" -eq 0 ] && [ "$rounds" -eq 0 ] && [ "$rc" -eq 0 ]; then
         echo "consultation-rounds: no consultation files found in $dir — the check did not run" >&2
         return 2
     fi

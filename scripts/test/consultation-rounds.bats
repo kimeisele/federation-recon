@@ -126,3 +126,75 @@ _round() {
     run check_consultation_rounds "$REPO/governance/consultations"
     [ "$status" -eq 0 ]
 }
+
+# ── the three findings from round 1 of this check's own review ────────────
+
+@test "rounds: a registered legacy round that is gone is caught" {
+    # The register was matched literally for files that EXIST, and nothing
+    # checked the other direction: rename a registered round away and the
+    # entry becomes a name for nothing. A one-command bypass of the headline
+    # protection for pre-convention rounds.
+    _round "9-round1.md"
+    printf '9-round1.md\n' > "$FIX/ROUNDS-LEGACY"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 0 ]
+
+    mv "$FIX/9-round1.md" "$FIX/9-part1.md"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not on disk"* ]]
+}
+
+@test "rounds: a comment in the register is not treated as a filename" {
+    _round "9-round1.md"
+    printf '# a comment\n\n9-round1.md\n' > "$FIX/ROUNDS-LEGACY"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 0 ]
+}
+
+@test "rounds: a renamed round is caught, not only a deleted one" {
+    # `--diff-filter=D` reports a rename as R. Renaming a round away removed
+    # it from every rule at once: the old path never appeared as a deletion,
+    # and the new name matched neither the round pattern nor the register.
+    cd "$BATS_TEST_TMPDIR"
+    git init -q r2 && cd r2
+    git config user.email t@t && git config user.name t
+    mkdir -p gc
+    printf '# Round\n\nverdict: REJECT\n' > gc/9-round1.md
+    printf '# P\n\n[r1](9-round1.md)\n\nverdict: APPROVE\n' > gc/9.md
+    git add -A && git commit -q -m one
+    git mv gc/9-round1.md gc/9-part1.md
+    printf '# P\n\nverdict: APPROVE\n' > gc/9.md
+    git add -A && git commit -q -m two
+
+    source "$REPO/scripts/lib/consultation-rounds.sh"
+    run check_consultation_rounds "gc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"stays readable"* ]]
+}
+
+@test "rounds: a shallow clone is a failure, not a silent pass" {
+    # The comment claimed the deletion check was "skipped when there is no
+    # history to read (a shallow clone), and skipping is announced rather than
+    # silent". It tested `--git-dir`, which succeeds in a shallow clone, so
+    # under fetch-depth: 1 the check examined one commit, found nothing, and
+    # printed OK. The announced safeguard did not exist.
+    cd "$BATS_TEST_TMPDIR"
+    git init -q src && cd src
+    git config user.email t@t && git config user.name t
+    mkdir -p gc
+    printf '# Round\n\nverdict: REJECT\n' > gc/9-round1.md
+    printf '# P\n\n[r1](9-round1.md)\n\nverdict: APPROVE\n' > gc/9.md
+    git add -A && git commit -q -m one
+    printf 'x\n' > other.txt && git add -A && git commit -q -m two
+
+    cd "$BATS_TEST_TMPDIR"
+    git clone -q --depth 1 "file://$BATS_TEST_TMPDIR/src" shallow
+    cd shallow
+    [ "$(git rev-parse --is-shallow-repository)" = "true" ]
+
+    source "$REPO/scripts/lib/consultation-rounds.sh"
+    run check_consultation_rounds "gc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shallow"* ]]
+}

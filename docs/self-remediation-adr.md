@@ -228,11 +228,22 @@ questions, and a reviewer asked both at once tends to answer neither.
 
 What that check does **not** do, and the ADR is not going to pretend otherwise:
 land the standard change on Monday and the retirement on Tuesday and it says
-nothing. It makes the sequence visible in two diffs instead of invisible in
-one. A rule that made the sequence impossible would also forbid legitimately
-retiring a Finding after a legitimate standard change, and that must remain
-possible. The amendment log still counts the standard change, which is the
-weaker half and was the only half this section had when it was written.
+nothing. A rule that made the sequence impossible would also forbid
+legitimately retiring a Finding after a legitimate standard change, and that
+must remain possible.
+
+What the split does buy is precise, and an earlier draft of this paragraph
+claimed more than it: **two independent reviews instead of one**, because each
+pull request passes the consultation gate on its own. It does **not** buy any
+guarantee that the pair is evaluated as a pair. Tuesday's diff contains a bare
+state flip; the causal claim — *this is obsolete because the standard moved* —
+lives in Monday's, and nothing mechanically links them. A reviewer put that
+exactly, and it is the residual to fix next: requiring a retirement to cite the
+amendment that made it obsolete, and checking the citation resolves. Filed, not
+built.
+
+The amendment log still counts the standard change, which is the weaker half
+and was the only half this section had when it was written.
 
 An earlier draft of this section was titled "the residual honest gap",
 singular. A document whose whole authority is candor about its own ceiling
