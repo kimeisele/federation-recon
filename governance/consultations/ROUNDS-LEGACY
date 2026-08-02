@@ -1,0 +1,29 @@
+# Round files that predate the one-file-per-round convention
+#
+# The convention (scripts/lib/consultation-rounds.sh) is: a consultation that
+# goes more than one round is stored as `<pr>.md` carrying the latest round,
+# linking every earlier round as `<pr>-round<N>.md`. It was adopted on
+# 2026-08-02, after PR #150 was reviewed twice in one file and the consultation
+# gate correctly read the first verdict it found.
+#
+# The rounds below were filed before that. They are whole and unedited; what
+# they lack is a `<pr>.md` primary tying them together, because at the time the
+# last round WAS the primary and there was nothing to tie.
+#
+# Entries are matched literally, one filename per line. This register is for
+# files that already exist — it is not a way to file a new round without a
+# primary, and a round created after 2026-08-02 that lands here should be
+# refused in review rather than registered.
+#
+# Nothing here may be deleted or shortened. That is checked separately and
+# against git history, not against this list.
+
+127-sol-round2.md
+131-kimi-round2.md
+131-sol-round3.md
+131-sol-round4.md
+137-kimi-round4.md
+137-sol-round2.md
+137-sol-round3.md
+142-kimi-round2.md
+142-kimi-round3.md
