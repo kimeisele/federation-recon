@@ -434,6 +434,11 @@ with open('$wo_file', 'w') as f:
   [ ! -e "$WT/src/out.txt" ]
 }
 
+# ---------------------------------------------------------------------------
+# 13. MODEL MISMATCH — endpoint agreement alone must not substitute for the
+#     model named by the work dispatch.
+# ---------------------------------------------------------------------------
+
 @test "builder-jcode: MODEL MISMATCH — profile route fails closed before build" {
   WO="$WORKDIR/wo.json"
   _wo "$WO" 167 '["src/"]' '[]' '["true"]'
