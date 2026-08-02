@@ -212,12 +212,38 @@ route: gap 1 changes the world and keeps the standard, this keeps the world
 and changes the standard. It attacks the rationale directly, because the
 record is independent while the benchmark is not.
 
-This is arguably unforbiddable — no ADR should bind the owner's power to amend
-the standard — which is precisely why it is named here rather than left for
-the next dispute. What bounds it is the amendment log: changing the standard
-is an amendment, amendments are counted, and `check_amendment_log` fails CI
-when an accepted ADR is not in the table. That is a weaker control than a
-prohibition and is offered as nothing more.
+It is unforbiddable in the sense that matters — no ADR should bind the owner's
+power to amend a standard — but it is not unsplittable, and that is where the
+control went.
+
+**`check_finding_retirement` refuses a change that both retires a Finding and
+moves the standard it was measured against.** Either alone passes; together
+they are the laundering move. Splitting them costs two pull requests and buys
+the thing the single diff was designed to avoid: after the split, the
+retirement PR stands on its own and says, on its own, that a Finding is being
+retired because a standard moved — which is a claim someone can refuse.
+
+*"Should the standard change?"* and *"is this still a defect?"* are different
+questions, and a reviewer asked both at once tends to answer neither.
+
+What that check does **not** do, and the ADR is not going to pretend otherwise:
+land the standard change on Monday and the retirement on Tuesday and it says
+nothing. A rule that made the sequence impossible would also forbid
+legitimately retiring a Finding after a legitimate standard change, and that
+must remain possible.
+
+What the split does buy is precise, and an earlier draft of this paragraph
+claimed more than it: **two independent reviews instead of one**, because each
+pull request passes the consultation gate on its own. It does **not** buy any
+guarantee that the pair is evaluated as a pair. Tuesday's diff contains a bare
+state flip; the causal claim — *this is obsolete because the standard moved* —
+lives in Monday's, and nothing mechanically links them. A reviewer put that
+exactly, and it is the residual to fix next: requiring a retirement to cite the
+amendment that made it obsolete, and checking the citation resolves. Filed, not
+built.
+
+The amendment log still counts the standard change, which is the weaker half
+and was the only half this section had when it was written.
 
 An earlier draft of this section was titled "the residual honest gap",
 singular. A document whose whole authority is candor about its own ceiling

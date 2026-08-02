@@ -60,6 +60,23 @@ EXECUTION_LAYER_OUTSIDE_CORE = {
     'scripts/test/worker-limits.bats',
     'scripts/test/order-reread.bats',
     'scripts/test/layer-boundary.bats',        # this file names both sides
+
+    # These two are a different case from the rest of the list, and the
+    # difference is worth stating rather than burying in a shared comment.
+    #
+    # finding-retirement.sh is a governance check. It names `core/policy.json`
+    # as one of the STANDARD DOCUMENTS a Finding is measured against — the same
+    # sense in which it names CLAUDE.md and the founding package. It does not
+    # import from core/, call into it, or read it; the path appears in a list
+    # of things whose modification is significant.
+    #
+    # Admitting it widens what this check tolerates, and the cost is real: the
+    # allowlist is a judgment call, made once per entry, by whoever is adding
+    # the entry. That is the weakness of listing over inferring, and it is the
+    # trade this check made deliberately — an inferred rule would have admitted
+    # this silently and everything after it too.
+    'scripts/lib/finding-retirement.sh',
+    'scripts/test/finding-retirement.bats',
 }
 
 CODE_EXT = ('.py', '.sh', '.bats', '.yml', '.yaml')

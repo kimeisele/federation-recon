@@ -52,7 +52,7 @@ unset GLOBIGNORE BASH_ENV 2>/dev/null || true
 cd "$(dirname "$0")/.."
 fail=0
 
-echo "== [1/7] strict artifact validation =="
+echo "== [1/9] strict artifact validation =="
 if bash scripts/validate-artifacts.sh --strict; then
   echo "  OK"
 else
@@ -68,7 +68,7 @@ fi
 source "$(dirname "$0")/lib/manifest-gate.sh"
 
 echo
-echo "== [2/7] pin → manifest membership =="
+echo "== [2/9] pin → manifest membership =="
 if check_pin_manifest_membership "docs/repository-manifest.md" "pins/*/*.json"; then
   echo "  OK"
 else
@@ -76,7 +76,7 @@ else
 fi
 
 echo
-echo "== [3/7] composed digest idempotency =="
+echo "== [3/9] composed digest idempotency =="
 tmp="$(mktemp -d)"
 cp STATE.md "$tmp/STATE.md"
 cp digest/state-digest.json "$tmp/state-digest.json"
@@ -105,7 +105,7 @@ rm -rf "$tmp"
 source "$(dirname "$0")/lib/consultation-gate.sh"
 
 echo
-echo "== [4/7] consultation artifact gate =="
+echo "== [4/9] consultation artifact gate =="
 # PR number: env var (CI) takes priority, else try to extract from branch name.
 pr="${CONSULTATION_PR_NUMBER:-}"
 if [ -z "$pr" ]; then
@@ -138,7 +138,7 @@ fi
 source "$(dirname "$0")/lib/suite-inventory.sh"
 
 echo
-echo "== [5/7] test suite inventory =="
+echo "== [5/9] test suite inventory =="
 if check_suite_inventory "scripts/test/MANIFEST" "scripts/test"; then
   echo "  OK"
 else
@@ -156,7 +156,7 @@ BASE_REF="${BASE_REF:-${GITHUB_BASE_REF:-origin/main}}"
 export BASE_REF
 
 echo
-echo "== [6/7] pin validation gate =="
+echo "== [6/9] pin validation gate =="
 if check_pin_validity "pins/*/*.json" "docs/repository-manifest.md"; then
   echo "  OK"
 else
@@ -177,13 +177,53 @@ fi
 source "$(dirname "$0")/lib/amendment-log.sh"
 
 echo
-echo "== [7/7] amendment log =="
+echo "== [7/9] amendment log =="
 check_amendment_log "docs" "docs/amendments.md"
 rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "  OK"
 else
   [ "$rc" -eq 2 ] && echo "  the check could not run — that is a failure, not an omission"
+  fail=1
+fi
+
+# ---- Consultation rounds gate ------------------------------------------------
+#
+# A superseded review round stays readable. Multi-round review improves a
+# change; it is one keystroke from a way to outlast a reviewer.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/consultation-rounds.sh"
+
+echo
+echo "== [8/9] consultation rounds =="
+check_consultation_rounds "governance/consultations"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  echo "  OK"
+else
+  [ "$rc" -eq 2 ] && echo "  the check could not run — that is a failure, not an omission"
+  fail=1
+fi
+
+# ---- Finding retirement gate -------------------------------------------------
+#
+# Retiring a Finding and moving the standard it was measured against are two
+# acts. See docs/self-remediation-adr.md, residual gap 2.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/finding-retirement.sh"
+
+echo
+echo "== [9/9] finding retirement =="
+check_finding_retirement
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  echo "  OK"
+elif [ "$rc" -eq 2 ]; then
+  # A base that cannot be resolved is not a clean result. On a local run
+  # without origin/main this is loud rather than silently green.
+  echo "  UNKNOWN — the base could not be resolved; the check did not run"
+  fail=1
+else
   fail=1
 fi
 

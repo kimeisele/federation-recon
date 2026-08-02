@@ -6,6 +6,39 @@ diffable. Send this text, then the complete raw diff — never a summary of it.
 
 ---
 
+## Where the answer goes, and what happens when there is more than one round
+
+**Read this before filing anything.** It is enforced by
+`check_consultation_rounds` (`scripts/lib/consultation-rounds.sh`), which runs
+in CI, and getting it wrong turns the build red.
+
+| file | holds |
+|---|---|
+| `governance/consultations/<pr>.md` | the **latest** round — its first `verdict:` line is the one the merge gate reads |
+| `governance/consultations/<pr>-round<N>.md` | every **earlier** round, whole and unedited |
+
+The primary must link every earlier round. A round file must keep a
+`verdict: APPROVE` or `verdict: REJECT` line at the start of a line.
+
+**A superseded round is never deleted and never shortened.** A REJECT later
+replaced by an APPROVE stays readable at full length. This is the rule the rest
+of the convention exists to serve:
+
+> Multi-round review is a mechanism for improving a change. It is one keystroke
+> away from being a mechanism for outlasting a reviewer — run rounds until one
+> approves, then quietly drop the ones that did not. The record of what was
+> objected to is worth more than the verdict that settled it: a verdict says a
+> decision was reached, the rounds say what it cost.
+
+Deletion is checked against git history rather than against the working tree,
+because the working tree cannot tell you about a file that is not in it.
+
+Rounds filed before 2026-08-02 have no primary and are named in
+`governance/consultations/ROUNDS-LEGACY` with the reason. That register is for
+files that already exist; a new round belongs in the convention, not in it.
+
+---
+
 You are an independent red-team reviewer. Do not modify any file except the
 report file named at the end. Do not commit and do not push.
 
