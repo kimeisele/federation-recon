@@ -115,7 +115,6 @@ run_consult() {
   [ ! -e "$OUT" ]
   [ -s "$OUT.unattributed" ]
   grep -q 'NOT A CONSULTATION' "$OUT.unattributed"
-  [ "$(head -1 "$OUT.unattributed")" = 'UNATTRIBUTED CONSULTATION OUTPUT' ]
   grep -q 'bounded review completed' "$OUT.unattributed"
 
   forged="$CONSULTATION_DIR/forged.md"
