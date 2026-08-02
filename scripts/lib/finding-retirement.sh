@@ -51,9 +51,16 @@
 #     `scripts/old.sh` while editing any Finding reported "a Finding file was
 #     deleted" when none had been.
 #
-# The diff is now parsed per file, and the standard set is enumerated from the
-# BASE tree. A grep over a diff cannot answer "which file was this line in",
-# and that question is the whole check.
+# The diff is now parsed per file, and the standard is matched BY SHAPE rather
+# than against a list read from a tree. A grep over a diff cannot answer "which
+# file was this line in", and that question is the whole check.
+#
+# An intermediate version enumerated the base tree into an environment variable
+# that the matcher never read, while two comments credited the enumeration for
+# the non-shrinking property. The property is real; it comes from shape
+# matching, which has no list to shrink. Round 1 of this check had a dead
+# variable, and the fix for it grew a dead pipeline with a false provenance
+# sentence attached — which is worse, because a reader would have believed it.
 #
 # ── What this establishes ──────────────────────────────────────────────────
 #
@@ -71,8 +78,16 @@
 #     it obsolete — is filed, not built here.
 #   - That the standard set is complete. It is a deny-list and will lag: the
 #     Finding schema, `scripts/` (where half of this repository's standard is
-#     executable), and `governance/` are outside it. Enumerating from the base
-#     tree at least stops the set from shrinking under its own pull request.
+#     executable), and `governance/` are outside it. Matching by shape at least
+#     stops the set from shrinking under its own pull request: there is no list
+#     for a rename to fall out of.
+#   - Complete ownership of the diff grammar. A reviewer found the remaining
+#     corner: the fixture branch that accepts a bare `--- a/` header will also
+#     fire on a *content* line beginning `-- a/` once a `+++` has been seen,
+#     misattributing what follows to a spurious record. It is unreachable
+#     against a strictly-validated JSON Finding today and the standard half
+#     never reads added lines, so it is named rather than closed. Parsing diff
+#     headers means owning the whole grammar, and this owns most of it.
 #   - Anything about Findings in observed repositories. Recon does not write
 #     those.
 
@@ -86,7 +101,7 @@ _fr_base_ref() {
 }
 
 check_finding_retirement() {
-    local diff_out base standard_list
+    local diff_out base
     if [ $# -ge 1 ]; then
         diff_out="$1"
         base=""
@@ -104,14 +119,8 @@ check_finding_retirement() {
 
     [ -z "$diff_out" ] && { echo "  no diff against the base"; return 0; }
 
-    if [ -n "$base" ]; then
-        standard_list="$(git ls-tree -r --name-only "$base" 2>/dev/null)"
-    else
-        standard_list=""
-    fi
-
-    printf '%s' "$diff_out" | STANDARD_LIST="$standard_list" python3 -c '
-import os, re, sys
+    printf '%s' "$diff_out" | python3 -c '
+import re, sys
 
 diff = sys.stdin.read()
 

@@ -198,3 +198,19 @@ _round() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"shallow"* ]]
 }
+
+@test "rounds: a REGISTERED round emptied of its verdict still fails" {
+    # The population the register exists to protect was the one the verdict
+    # rule did not cover: the check ran after the register branch, behind a
+    # `continue`, so a pre-convention round could be gutted to a stub in one
+    # pull request while this file promised it could not be emptied.
+    _round "9-round1.md"
+    printf '9-round1.md\n' > "$FIX/ROUNDS-LEGACY"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 0 ]
+
+    printf '# Round\n\n(content removed)\n' > "$FIX/9-round1.md"
+    run check_consultation_rounds "$FIX"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no verdict"* ]]
+}

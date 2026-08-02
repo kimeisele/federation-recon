@@ -144,6 +144,30 @@ check_consultation_rounds() {
         _cr_is_round "$base" || continue
         rounds=$((rounds + 1))
 
+        # The verdict check runs FIRST, before the register branch, and the
+        # order is the whole point.
+        #
+        # It used to run after, behind a `continue`, so a registered
+        # pre-convention round could be gutted to a stub in one pull request
+        # and pass every rule — while this file's own "what this establishes"
+        # promised that a round cannot be emptied of its verdict. The nine
+        # files the register exists to protect were the exact population the
+        # promise did not cover. Same claim-versus-code mismatch as the
+        # shallow-clone comment, one section down.
+        #
+        # Two grammars are accepted. `verdict: REJECT` at line start is what
+        # the consultation gate reads and what new rounds must carry; the
+        # bolded prose form is what several pre-convention rounds use, and
+        # rejecting those would be enforcing the convention retroactively on
+        # files that predate it. Either proves the round still ends in a
+        # judgment, which is what this rule is about.
+        if ! grep -qE '^verdict: (APPROVE|REJECT)$' "$f" \
+           && ! grep -qiE '^[[:space:]]*\**Verdict:?\**[[:space:]]*\**(APPROVE|REJECT)' "$f"; then
+            printf '  FAIL %s carries no verdict line — a round emptied of its verdict is a deleted one\n' \
+                "$base" >&2
+            rc=1
+        fi
+
         # A round whose PR has no primary predates the convention. Those are
         # named in a register with a reason, the same way UNVERIFIED names
         # consultations whose provider was never established. Silence would
@@ -157,18 +181,6 @@ check_consultation_rounds() {
                 rc=1
             fi
             continue
-        fi
-        # Two grammars are accepted. `verdict: REJECT` at line start is what
-        # the consultation gate reads and what new rounds must carry; the
-        # bolded prose form is what several pre-convention rounds use, and
-        # rejecting those would be enforcing the convention retroactively on
-        # files that predate it. Either proves the round still ends in a
-        # judgment, which is what this rule is about.
-        if ! grep -qE '^verdict: (APPROVE|REJECT)$' "$f" \
-           && ! grep -qiE '^[[:space:]]*\**Verdict:?\**[[:space:]]*\**(APPROVE|REJECT)' "$f"; then
-            printf '  FAIL %s carries no verdict line — a round emptied of its verdict is a deleted one\n' \
-                "$base" >&2
-            rc=1
         fi
     done < <(find "$dir" -maxdepth 1 -type f -name '*.md' | sort)
 

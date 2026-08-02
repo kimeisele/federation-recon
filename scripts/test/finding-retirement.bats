@@ -192,6 +192,17 @@ _mod() {
     [[ "$output" == *"definitely-not-a-ref"* ]]
 }
 
+@test "finding-retirement: no dead enumeration is left behind" {
+    # An intermediate version computed a base-tree listing, exported it, and
+    # never read it — while two comments credited it for the non-shrinking
+    # property that actually comes from shape matching. A reader would have
+    # believed the comment.
+    run grep -c "STANDARD_LIST" "$REPO/scripts/lib/finding-retirement.sh"
+    [ "$output" = "0" ]
+    run grep -c "ls-tree" "$REPO/scripts/lib/finding-retirement.sh"
+    [ "$output" = "0" ]
+}
+
 @test "finding-retirement: the live branch is clean" {
     if ! git rev-parse --verify "${BASE_REF:-origin/main}" >/dev/null 2>&1; then
         skip "base ref not available in this checkout"
