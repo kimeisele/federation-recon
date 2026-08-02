@@ -33,6 +33,7 @@ manifest-gate.bats
 order-reread.bats
 order-validator.bats
 order-vectors.bats
+opencode-consult.bats
 pin-gate.bats
 pr-opener-canary.bats
 schedule-watchdog.bats

@@ -1,0 +1,37 @@
+{
+  "work_order_id": "wo-173-0",
+  "issue": 173,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "allowed_paths": [
+    "scripts/consult-opencode.sh",
+    "governance/reviewers.md"
+  ],
+  "forbidden_paths": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".github/",
+    "operator/",
+    "schemas/",
+    "scripts/test/",
+    "docs/",
+    "claims/",
+    "coverage/",
+    "digest/",
+    "drift/",
+    "evidence/",
+    "findings/",
+    "pins/",
+    "consumption/",
+    "STATE.md"
+  ],
+  "acceptance_commands": [
+    "bash -n scripts/consult-opencode.sh",
+    "env LC_ALL=C LC_CTYPE=C LANG=C bats scripts/test/opencode-consult.bats"
+  ],
+  "oracle_paths": [
+    "scripts/test/opencode-consult.bats",
+    "scripts/test/MANIFEST"
+  ],
+  "builder": "operator/builders/jcode.sh",
+  "builder_timeout_seconds": 600
+}
