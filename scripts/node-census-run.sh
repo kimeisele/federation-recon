@@ -1088,6 +1088,24 @@ for s in st.get('candidates', []):
   perform_self_observation
   budget_checkpoint "self-observation"
 
+  # Shared output directories retain other procedures. Prune superseded
+  # census outputs only after the complete replacement set exists. Without
+  # this step, every census accumulated historical Findings and Evidence;
+  # identity fixes could regenerate the current set but never repair the
+  # repository-wide validation state exposed by #164.
+  local keep_file
+  keep_file="$(mktemp)"
+  for key in "${!EVIDENCE_FILES[@]}"; do printf '%s\n' "${EVIDENCE_FILES[$key]}"; done > "$keep_file"
+  for key in "${!FINDING_FILES[@]}"; do printf '%s\n' "${FINDING_FILES[$key]}"; done >> "$keep_file"
+  for key in "${!COVERAGE_FILES[@]}"; do printf '%s\n' "${COVERAGE_FILES[$key]}"; done >> "$keep_file"
+  python3 "$SCRIPT_DIR/clean-procedure-artifacts.py" \
+    --root "$REPO_ROOT" \
+    --procedure-id "$PROCEDURE_ID" \
+    --pin-prefix "pins/$PIN_NAMESPACE/" \
+    --keep-file "$keep_file" \
+    || { rm -f "$keep_file"; die "Failed to prune superseded $PROCEDURE_ID outputs"; }
+  rm -f "$keep_file"
+
   # Phase 7: Census digest
   generate_census_digest
   budget_checkpoint "digest"
