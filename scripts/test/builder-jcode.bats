@@ -448,13 +448,25 @@ with open('$wo_file', 'w') as f:
     JCODE_PROVIDER_PROFILE="fixture-direct" \
     JCODE_EXPECTED_ENDPOINT="https://api.fixture.invalid" \
     JCODE_STUB_ENDPOINT="https://api.fixture.invalid" \
-    JCODE_STUB_TOKENS='[Tokens] upload: 123 download: 45 cache_read: 6 cache_write: 7' \
+    JCODE_STUB_TOKENS=$'[Tokens] upload: 123 download: 45 cache_read: 6 cache_write: 7\n[Tokens] upload: 10 download: 5 cache_read: 2 cache_write: 3' \
     run bash "$BUILDER" "$WT"
 
   [ "$status" -eq 0 ]
   [ -f "$RUN_DIR/builder_cost.txt" ]
-  grep -q '^input_tokens:[[:space:]]*123$' "$RUN_DIR/builder_cost.txt"
-  grep -q '^output_tokens:[[:space:]]*45$' "$RUN_DIR/builder_cost.txt"
-  grep -q '^cache_read_tokens:[[:space:]]*6$' "$RUN_DIR/builder_cost.txt"
-  grep -q '^cache_write_tokens:[[:space:]]*7$' "$RUN_DIR/builder_cost.txt"
+  # Agentic builds make multiple model calls. Per-call token lines must be
+  # summed; keeping only the first or last line is not run-level accounting.
+  grep -q '^input_tokens:[[:space:]]*133$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^output_tokens:[[:space:]]*50$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^cache_read_tokens:[[:space:]]*8$' "$RUN_DIR/builder_cost.txt"
+  grep -q '^cache_write_tokens:[[:space:]]*10$' "$RUN_DIR/builder_cost.txt"
+
+  # operator/run.sh owns builder_stdout.txt for the adapter's JSON report.
+  # The adapter must not truncate or reuse it for jcode's raw stream.
+  [ ! -e "$RUN_DIR/builder_stdout.txt" ]
+  [ -s "$RUN_DIR/builder_jcode_output.txt" ]
+
+  grep -q '^requested_endpoint:[[:space:]]*https://api.fixture.invalid$' \
+    "$RUN_DIR/builder_provider.txt"
+  grep -q '^resolved_endpoint:[[:space:]]*https://api.fixture.invalid$' \
+    "$RUN_DIR/builder_provider.txt"
 }
