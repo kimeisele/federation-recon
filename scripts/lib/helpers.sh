@@ -294,6 +294,15 @@ try:
                     if not isinstance(val, list) or len(val) < prop_schema['minItems']:
                         print(f'MINITEMS violation: {prop_name} has {len(val) if isinstance(val,list) else 0} items, need {prop_schema[\"minItems\"]}', file=sys.stderr)
                         sys.exit(1)
+                if 'uniqueItems' in prop_schema and prop_schema['uniqueItems']:
+                    if isinstance(val, list):
+                        seen = set()
+                        for item in val:
+                            key = item if item is None or isinstance(item, (str, int, float, bool)) else json.dumps(item, sort_keys=True)
+                            if key in seen:
+                                print(f'UNIQUEITEMS violation: {prop_name} contains duplicate element', file=sys.stderr)
+                                sys.exit(1)
+                            seen.add(key)
                 if 'maxLength' in prop_schema and isinstance(val, str) and len(val) > prop_schema['maxLength']:
                     over = len(val) - prop_schema['maxLength']
                     print(f'MAXLENGTH violation: {prop_name} has {len(val)} chars, max is {prop_schema[\"maxLength\"]} (over by {over})', file=sys.stderr)
