@@ -51,6 +51,13 @@
     "pr_opener": {
       "type": "string",
       "description": "Optional. A command run after an ACCEPTED verdict to open the pull request. It receives the run directory as $1 and must print the PR reference on stdout. Omitted means the run stops at result.json, which is the default and what Slice 1a did before this field existed. It is a field rather than a hardcoded `gh pr create` on purpose: opening a PR is the first outward-facing act in the whole pipeline, and it should require someone to write it down."
+    },
+    "oracle_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Files the acceptance depends on: test files, fixtures, contracts, helper scripts the acceptance_commands invoke. Every one must exist at base_sha, and the builder may not touch any of them. Required whenever acceptance_commands name a path in the repository. See #103."
     }
   },
   "additionalProperties": false
