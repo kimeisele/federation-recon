@@ -102,7 +102,8 @@ trap 'exit 143' TERM
 quarantine() {
   local reason="$1"
   {
-    echo "UNATTRIBUTED OR INCOMPLETE OUTPUT — NOT A CONSULTATION"
+    echo "UNATTRIBUTED CONSULTATION OUTPUT"
+    echo "NOT A CONSULTATION"
     echo
     echo "reason: $reason"
     echo "requested_service_provider: $SERVICE_PROVIDER"
@@ -288,10 +289,12 @@ OUTPUT_TOKENS="$(sed -n '3p' "$META")"
   echo "output_tokens: $OUTPUT_TOKENS"
   echo "provenance: $PROVENANCE"
   echo "consistency_check: match"
+  echo "body_rendering: line-leading provenance-opener and quarantine-sentinel quotations are prefixed with a Markdown blockquote marker; raw response remains verbatim in the JSONL stream and session export"
   echo
   echo "---"
   echo
-  cat "$BODY"
+  sed -e '/^[[:space:]]*<!-- provenance[[:space:]]*$/s/^/> /' \
+      -e '/^[[:space:]]*UNATTRIBUTED CONSULTATION OUTPUT/s/^/> /' "$BODY"
 } > "${OUTPUT}.tmp" || { quarantine "could not assemble consultation" || true; exit 1; }
 mv "${OUTPUT}.tmp" "$OUTPUT" || { quarantine "could not publish consultation" || true; exit 1; }
 
