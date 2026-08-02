@@ -8,6 +8,12 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 }
 
+teardown() {
+  if [ -n "${WORKDIR:-}" ] && [ -d "$WORKDIR" ]; then
+    rm -rf "$WORKDIR"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Green path — committed artifacts validate clean
 # ---------------------------------------------------------------------------
@@ -172,4 +178,74 @@ sys.exit(0)
     "$REPO_ROOT/scripts/test/fixtures/broken/schema-violation-pin.json" \
     "$REPO_ROOT/schemas/repository-pin.schema.json"
   [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Evidence identity and reference-set integrity (#164)
+# ---------------------------------------------------------------------------
+
+@test "gen_evidence: distinct semantic subjects do not overwrite each other" {
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+
+  WORKDIR="$(mktemp -d)"
+
+  cd "$WORKDIR"
+  first_path="$(gen_evidence \
+    "pins/v1-census/example.json" \
+    "file_existence" \
+    "true" \
+    ".well-known/agent-federation.json")"
+  second_path="$(gen_evidence \
+    "pins/v1-census/example.json" \
+    "file_existence" \
+    "true" \
+    "CHARTER.md")"
+
+  [ "$first_path" != "$second_path" ]
+  [ -f "$first_path" ]
+  [ -f "$second_path" ]
+  [ "$(find evidence -type f -name '*.json' | wc -l | tr -d ' ')" -eq 2 ]
+
+  run python3 - "$first_path" "$second_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as fh:
+    first = json.load(fh)
+with open(sys.argv[2]) as fh:
+    second = json.load(fh)
+
+assert first["evidence_id"] != second["evidence_id"]
+assert first["paths"] == [".well-known/agent-federation.json"]
+assert second["paths"] == ["CHARTER.md"]
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_json_schema: rejects duplicate evidence_refs when schema requires uniqueness" {
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/lib/helpers.sh"
+
+  WORKDIR="$(mktemp -d)"
+
+  cp "$REPO_ROOT/schemas/finding.schema.json" "$WORKDIR/finding.schema.json"
+  cat > "$WORKDIR/finding.json" <<'JSON'
+{
+  "finding_id": "finding-duplicate-test",
+  "lifecycle_state": "observed",
+  "statement": "The same evidence must not masquerade as two observations.",
+  "evidence_refs": ["ev-same", "ev-same"],
+  "domain": "artifact-integrity",
+  "severity": "high",
+  "created_at": "2026-08-02T00:00:00Z"
+}
+JSON
+
+  run validate_json_schema \
+    "$WORKDIR/finding.json" \
+    "$WORKDIR/finding.schema.json"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"UNIQUEITEMS violation: evidence_refs"* ]]
 }
