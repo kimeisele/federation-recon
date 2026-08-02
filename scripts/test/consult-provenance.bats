@@ -51,12 +51,28 @@ _log_for() {
   local now; now="$(date -v+60S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '+60 seconds' '+%Y-%m-%d %H:%M:%S')"
   case "$1" in
     openai)   printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] API stream opened in 0.03s\n' "$now" "$SESSION" ;;
+    claude)   printf '[%s] [INFO] [ses:%s|prv:Claude|mod:claude] API stream opened in 1.06s\n' "$now" "$SESSION" ;;
     deepseek) printf '[%s] [INFO] [ses:%s] API stream attempt 1/3 (model: deepseek-v4-flash, endpoint: https://api.deepseek.com)\n' "$now" "$SESSION"
               printf '[%s] [INFO] [ses:%s|prv:OpenRouter|mod:deepseek] API stream opened in 0.03s\n' "$now" "$SESSION" ;;
     both)     printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] opened\n' "$now" "$SESSION"
               printf '[%s] [INFO] [ses:%s|prv:OpenRouter|mod:deepseek] opened\n' "$now" "$SESSION" ;;
     empty)    : ;;
   esac > "$LOG"
+}
+
+@test "consult: the current Claude runtime tag is attributed to claude" {
+  # Measured on two real 2026-08-02 sessions: jcode emits prv:Claude, not the
+  # prv:Anthropic spelling the original parser expected. Both real reviews
+  # were quarantined as undetermined while their bound log sessions clearly
+  # named prv:Claude.
+  _log_for claude
+  echo "CLAUDE REVIEW" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" claude claude-opus-4-6 "$OUT" "$PROMPT"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q "served_provider: claude" "$OUT"
+  grep -q "reviewer_claim: claude" "$OUT"
 }
 
 @test "consult: the requested provider actually serving is accepted" {
