@@ -526,17 +526,55 @@ PYEOF
 # ---- Verdict assembly and aggregation (functions) -------------------------
 
 # write_verdict <subject_sha> <tier0> <tier1a> <tier1b> <tier2> — assemble the
-# verdict artifact via python3 so escaping cannot corrupt the JSON. The stored
-# `verdict` field is a placeholder; the aggregator recomputes it from tasks
-# and findings rather than trusting the stored copy.
+# verdict artifact via python3 so escaping cannot corrupt the JSON. Collects
+# findings from tier artifacts and promotes verdict_line: REJECT to a blocking
+# finding so the aggregator can act on it.
 write_verdict() {
   local subject_sha="$1" t0="$2" t1a="$3" t1b="$4" t2="$5"
   python3 - "$run_id" "$pr_number" "$subject_sha" "$risk_class" "$timestamp" \
-    "$t0" "$t1a" "$t1b" "$t2" "$run_dir/verdict.json" <<'PYEOF'
-import json, sys
+    "$t0" "$t1a" "$t1b" "$t2" "$run_dir" <<'PYEOF'
+import json, os, sys
 
 (run_id, pr_number, subject_sha, risk_class, timestamp,
- t0, t1a, t1b, t2, out_path) = sys.argv[1:11]
+ t0, t1a, t1b, t2, run_dir) = sys.argv[1:11]
+out_path = os.path.join(run_dir, "verdict.json")
+
+TIER_MAP = {
+    "tier1a": {"tier": 1, "task": "review-analysis"},
+    "tier1b": {"tier": 1, "task": "adversarial-execution"},
+    "tier2":  {"tier": 2, "task": "tier2"},
+}
+
+findings = []
+for stem, meta in TIER_MAP.items():
+    artifact_path = os.path.join(run_dir, stem + ".json")
+    if not os.path.isfile(artifact_path):
+        continue
+    try:
+        with open(artifact_path) as fh:
+            artifact = json.load(fh)
+    except Exception:
+        continue
+
+    if artifact.get("verdict_line") == "REJECT":
+        findings.append({
+            "id": "%s-verdict" % stem,
+            "tier": meta["tier"],
+            "task": meta["task"],
+            "severity": "blocking",
+            "summary": "reviewer returned verdict: REJECT",
+            "verification_status": "confirmed",
+        })
+
+    for i, raw in enumerate(artifact.get("findings", []), 1):
+        findings.append({
+            "id": "%s-%03d" % (stem, i),
+            "tier": meta["tier"],
+            "task": meta["task"],
+            "severity": "non-blocking",
+            "summary": raw.get("summary", "(unparseable)")[:500],
+            "verification_status": "not_run",
+        })
 
 verdict = {
     "schema": "review-verdict-v1",
@@ -551,7 +589,7 @@ verdict = {
         "adversarial-execution": t1b,
         "tier2": t2,
     },
-    "findings": [],
+    "findings": findings,
     "verdict": "PARTIAL",
 }
 
@@ -657,9 +695,18 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   tier1b_status="$(_tier1b "$wt_dir")"
 
   # ---- 8. Tier 2 — independent verification (stub) -----------------------
-  # Escalation triggers (spec §Tier 2): risk_class HIGH, a blocking finding,
-  # or an inconclusive Tier 1. risk_class is hardcoded LOW and the stubs
-  # produce no findings, so Tier 2 is not called.
+  # Escalation triggers (spec §Tier 2): risk_class HIGH, a blocking finding
+  # (verdict_line REJECT from Tier 1), or an inconclusive Tier 1 (error).
+  for _stem in tier1a tier1b; do
+    _artifact="$run_dir/${_stem}.json"
+    if [ -f "$_artifact" ]; then
+      _vl="$(python3 -c "import json; print(json.load(open('$_artifact')).get('verdict_line',''))" 2>/dev/null || true)"
+      [ "$_vl" = "REJECT" ] && has_blocking_finding=true
+    fi
+  done
+  if [ "$tier1a_status" = "error" ] || [ "$tier1b_status" = "error" ]; then
+    tier1_inconclusive=true
+  fi
   if [ "$risk_class" = "HIGH" ] || [ "$has_blocking_finding" = "true" ] || [ "$tier1_inconclusive" = "true" ]; then
     tier2_status="$(_tier2 "$wt_dir")"
   fi
