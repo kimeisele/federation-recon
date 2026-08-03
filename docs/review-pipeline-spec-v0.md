@@ -23,8 +23,8 @@ The current cross-provider adversarial review process is:
 6. **Manual.** The operator must invoke reviews, interpret results, commit
    responses, and re-run gates — each a failure point in an unattended session.
 
-All six were observed in a single session (2026-08-02). Three of five failures
-were internal orchestration, not provider availability.
+All six were observed in a single session (2026-08-02). Three of the five
+distinct failure events were internal orchestration, not provider availability.
 
 ## Design principles
 
@@ -32,22 +32,52 @@ were internal orchestration, not provider availability.
    individually-checkpointed, resumable units ("review tasks"). A timeout
    loses one task, not the pipeline.
 2. **Deterministic first, LLM second.** Everything that can be checked without
-   a model (schema validation, test results, CI status, architecture drift,
-   artifact integrity) runs deterministically. The LLM tier handles only what
-   requires judgment: intent-vs-spec alignment and adversarial reasoning.
+   a model (schema validation, test results, CI status, artifact integrity)
+   runs deterministically. The LLM tier handles only what requires judgment:
+   intent-vs-spec alignment and adversarial reasoning.
 3. **Existing infrastructure.** The pipeline emits `evidence/`, `findings/`,
    and verdict artifacts in the existing schema. It is a new procedure, not a
    parallel system.
 4. **Graceful degradation.** When no LLM reviewer is reachable, the
    deterministic tiers still run and produce a partial verdict. The partial
    verdict is recorded as such and is not promoted to a full approval.
-5. **Serialization.** Review and gate never run concurrently in the same
-   worktree. The pipeline owns the sequencing, enforced by a lockdir
-   (same `mkdir`-atomic mechanism as `heartbeat.lock`).
+5. **Isolation.** Mutating checks (evasion, mutation testing, self-application)
+   run in a disposable git worktree created at the subject HEAD SHA. A timeout
+   or crash destroys the worktree, not the primary checkout. A lockdir
+   (`mkdir`-atomic, same mechanism as `heartbeat.lock`) prevents concurrent
+   pipeline runs.
 6. **Machine-readable verdicts.** Each review task produces a structured
    artifact. The merge-decision layer consumes artifacts, not prose.
+7. **Separation of trigger and execution.** The heartbeat dispatcher remains
+   deterministic and LLM-free. It detects that review is required and emits a
+   `REVIEW_REQUIRED` signal. A separate review runner executes the pipeline.
 
 ## Architecture
+
+### Trigger model
+
+```
+Heartbeat (deterministic, no LLM)
+    ↓ detects PR needs review
+    ↓ emits REVIEW_REQUIRED signal
+    ↓
+Review Runner (separate process)
+    ↓ creates disposable worktree
+    ↓ executes Tier 0 → Tier 1 → Tier 2
+    ↓ publishes verdict artifact
+    ↓ destroys worktree
+    ↓
+Merge Decision (operator reads verdict)
+```
+
+The heartbeat decides **that** a review is required. It does not execute the
+review. This preserves the `CLAUDE.md` invariant: "No LLM is in the
+dispatcher" and "v1.2 only reports an action; it does not execute actions."
+
+The review runner can initially be a standalone script (`scripts/review.sh`)
+invoked by the operator when the heartbeat signals `REVIEW_REQUIRED`. A later
+adoption PR may wire it into a GitHub Actions workflow for event-driven
+execution (triggered on PR open/push), but that is not required for v0.
 
 ### Tiers
 
@@ -55,139 +85,230 @@ The pipeline runs in three tiers, each producing its own artifact:
 
 ```
 Tier 0: Deterministic checks (no model, always available)
-Tier 1: Bounded model review (cheap model, decomposed tasks)
-Tier 2: Adversarial verification (independent model, checkout tasks + critical findings)
+Tier 1: Bounded model review (3 consolidated tasks)
+Tier 2: Adversarial verification (1 independent pass)
 ```
 
 #### Tier 0 — Deterministic (always runs)
 
-Reuses existing infrastructure:
+Instruments the existing `gate.sh` rather than duplicating its checks:
 
-| Check | Source | Artifact |
+| Check | Source | Notes |
 |---|---|---|
 | Schema validation | `validate-artifacts.sh --strict` | pass/fail + count |
 | Test suite | `bats scripts/test/` | pass/fail + count |
 | Reproduce fixpoint | `gate.sh --full` fixpoint phase | match/mismatch |
-| Architecture drift | `REPO_BOUNDARIES.md` boundary check | violations list |
 | Tree state | clean worktree assertion | pass/fail |
-| CI status | `gh` API read | pass/fail per check |
+| CI status | `gh` API read | `pass`, `fail`, `pending`, `error`, `missing` |
 | PR metadata | title, body, labels, linked issues | structured extract |
 
-The reproduce fixpoint (`gate.sh --full`) is the expensive check (~18 minutes,
-#172). It runs once per PR version, not per update. Its result is cached in the
-Tier 0 artifact; re-running is only required when the PR's HEAD changes.
+Architecture drift checking against `REPO_BOUNDARIES.md` is deferred to Tier 1
+because no deterministic checker currently exists; comparing against prose is
+model work, not deterministic work.
 
-Output: `findings/review-t0-{pr_number}.json` — machine-readable, no
-judgment required.
+The reproduce fixpoint (~18 minutes, #172) runs once per review subject
+(see SHA binding below). Its result is cached in the Tier 0 artifact;
+re-running is required only when `subject_head_sha` changes.
 
-#### Tier 1 — Bounded model review (decomposed)
+Output: `findings/review-t0-{pr_number}-{run_id}.json`
 
-The current 11-question monolith is decomposed into independent review tasks.
-Each task:
+#### Tier 1 — Bounded model review (3 consolidated tasks)
 
-- Has a bounded scope (one question or a small group)
-- Has a timeout (configurable, default 300s)
-- Produces its own artifact on completion
-- Can be retried independently on failure
-- Must use a model distinct from the builder for checkout tasks
-  (`evasion-analysis`, `mutation-testing`, `completeness`) — the builder's own
-  model family cannot review its own output (`adversarial-review.md` founding
-  claim; `builders.md` classifies builder output as untrusted)
-- Read-only tasks (`claim-verification`, `environment-check`, `proof-vs-claim`,
-  `failure-modes`, `fitness-judgment`) may use any available model
-- Model provenance is verified per task via the `model` field in the API
-  response (method documented in `governance/builders.md`)
-
-Proposed decomposition:
+The 11-question adversarial template is preserved but grouped into three
+bounded tasks to reduce orchestration overhead in v0. If measurement shows
+a task regularly exceeds its timeout, it can be split further.
 
 | Task | Questions covered | Requires checkout? |
 |---|---|---|
-| `evasion-analysis` | Q1, Q1b | Yes — must attempt evasions |
-| `claim-verification` | Q1c, Q4b | No — reads PR body + data |
-| `environment-check` | Q2 | No — reads workflow files |
-| `mutation-testing` | Q3 | Yes — must break and restore |
-| `proof-vs-claim` | Q4, Q4c | No — reads diff + substrate |
-| `failure-modes` | Q5, Q6 | No — reads code paths |
-| `fitness-judgment` | Q7 | No — reads diff + context |
-| `completeness` | Q8, Q9 | Yes — runs mechanism against itself |
+| `intent-and-claims` | Q1c, Q4, Q4b, Q4c, Q7 | No — reads PR body + diff + data |
+| `environment-and-failure-modes` | Q2, Q5, Q6 | No — reads workflow files + code |
+| `adversarial-execution` | Q1, Q1b, Q3, Q8, Q9 | Yes — must execute evasions, mutations, self-application |
 
-Each task emits: `findings/review-t1-{task}-{pr_number}.json`
+Each task:
+
+- Has a timeout (configurable, default 300s per task)
+- Produces its own artifact on completion or timeout
+- Can be retried independently (max 1 retry on transport error/timeout)
+- Runs in a disposable worktree (checkout tasks) or read-only (non-checkout)
+- `adversarial-execution` must use a model distinct from the builder — the
+  builder's own model family cannot review its own output
+  (`adversarial-review.md` founding claim; `builders.md`: builder output is
+  untrusted)
+- Model provenance is verified per task via the `model` field in the API
+  response (method documented in `governance/builders.md`)
+
+Each task emits: `findings/review-t1-{task}-{pr_number}-{run_id}.json`
 
 A task that times out emits a partial artifact marked `"status": "timeout"`.
 A task that completes emits `"status": "complete"` with structured findings.
 
-#### Tier 2 — Adversarial verification (on escalation only)
+#### Tier 2 — Independent adversarial verification (1 pass)
 
-Triggered on **task completion** for checkout tasks (`evasion-analysis`,
-`mutation-testing`, `completeness`), and on **critical findings** for read-only
-tasks. This avoids a self-sealing failure: if Tier 2 only triggers on critical
-findings and Tier 1 is compromised (same model family as builder), an
-all-clear from Tier 1 would suppress Tier 2 entirely.
+A single independent verification pass that:
 
-- Uses a model from a different provider than Tier 1 (cross-provider when
-  available, different model-family when not)
-- Receives only the specific task output + relevant code, not the full review
-- Bounded: one task per call, 300s timeout
-- Emits: `findings/review-t2-{task}-{pr_number}.json`
+- Verifies blocking findings from Tier 1 (confirms or rejects each)
+- Adversarially challenges a Tier 1 all-clear ("no findings" is a claim that
+  must be tested, not a safe default — this prevents the self-sealing failure
+  where a compromised Tier 1 suppresses Tier 2)
+- Uses a model from a **different provider** than Tier 1 (cross-provider when
+  available; cross-model-family degrades to `PARTIAL_UNVERIFIED`)
+- Receives the Tier 1 task outputs + relevant code, not the full review prompt
+- Bounded: 300s timeout, max 1 retry
+
+Emits: `findings/review-t2-{pr_number}-{run_id}.json`
+
+### Review artifact storage
+
+Review artifacts are **not committed to the reviewed PR branch**. Committing
+review results to the PR would change the PR's HEAD, invalidating the review
+subject and potentially triggering an infinite review loop.
+
+Review artifacts are stored via one of:
+
+- GitHub Check Run annotations (v0, simplest)
+- A dedicated `review-state/` directory on a separate branch or in
+  `.github/review-artifacts/` (if persistence beyond the PR is needed)
+- GitHub Actions Artifacts (if the runner is a workflow)
+
+The existing `findings/` schema is used for the artifact format. The storage
+location is separate from the reviewed branch's content.
+
+### SHA-bound verdicts
+
+Every verdict is bound to an exact review subject. A verdict for PR 178 at
+commit `abc123` is never valid for a later commit on the same PR.
+
+```json
+{
+  "schema": "review-verdict-v1",
+  "run_id": "rv-20260803-001",
+  "pr_number": 178,
+  "subject_head_sha": "abc1234...",
+  "base_sha": "def5678...",
+  "review_input_digest": "sha256:...",
+  "policy_version": "review-pipeline-spec-v0",
+  "timestamp": "2026-08-03T...",
+  "verdict": "REJECT",
+  "risk_class": "HIGH",
+  "tasks": {
+    "intent-and-claims": {"status": "complete", "findings_count": 1},
+    "environment-and-failure-modes": {"status": "complete", "findings_count": 0},
+    "adversarial-execution": {"status": "complete", "findings_count": 2}
+  },
+  "findings": [
+    {
+      "id": "rf-...",
+      "tier": 1,
+      "task": "intent-and-claims",
+      "severity": "blocking",
+      "summary": "...",
+      "evidence": ["ev-...", "ev-..."],
+      "verification_status": "confirmed"
+    }
+  ],
+  "tier2_pass": {
+    "status": "complete",
+    "all_clear_challenged": true
+  },
+  "budget_consumed": {
+    "model_calls": 4,
+    "retries": 0,
+    "wall_time_seconds": 847
+  }
+}
+```
+
+The `review_input_digest` covers: diff content, PR description, linked issues,
+and `policy_version`. A change to any input invalidates the cached verdict.
+
+`verification_status` per finding uses:
+
+| Value | Meaning |
+|---|---|
+| `confirmed` | Tier 2 verified the finding is real |
+| `rejected` | Tier 2 determined the finding is a false positive |
+| `inconclusive` | Tier 2 could not determine |
+| `not_run` | Tier 2 did not execute (provider unreachable or budget exhausted) |
+
+### Deterministic verdict aggregation
+
+The verdict is computed deterministically from task and finding states.
+No model is involved in the verdict decision.
+
+```
+subject_head_sha ≠ current PR HEAD
+    → verdict STALE (must re-run)
+
+Any Tier 0 mandatory check FAIL
+    → verdict REJECT
+
+Any finding with verification_status == "confirmed" and severity == "blocking"
+    → verdict REJECT
+
+Any mandatory task status == "timeout" or "error"
+    → verdict PARTIAL_INCOMPLETE
+
+Tier 2 not_run (provider unreachable or budget exhausted)
+    → verdict PARTIAL_UNVERIFIED
+
+All mandatory tasks complete
+AND no unresolved blocking findings
+AND Tier 2 complete
+    → verdict APPROVE
+
+Everything else
+    → verdict PARTIAL_INCOMPLETE
+```
+
+A `PARTIAL` verdict of any kind is **not merge-eligible**. `PARTIAL` means
+the review is incomplete, not that it is a weaker form of approval.
+
+### Budget limits
+
+Configurable per review run, with defaults for v0:
+
+```
+max_tier1_calls: 3
+max_tier2_calls: 1
+max_retries_per_task: 1 (transport error or timeout only)
+max_wall_time_seconds: 1800
+```
+
+Budget exhaustion produces `PARTIAL_INCOMPLETE`, not a degraded approval.
+Budget is not automatically increased. Increasing the budget is a
+configuration change outside the pipeline's authority.
 
 ### Degraded modes
 
 | Condition | Behavior |
 |---|---|
-| All models unreachable | Tier 0 runs, verdict = `PARTIAL_DETERMINISTIC` |
-| Tier 1 model unreachable | Tier 0 runs, verdict = `PARTIAL_DETERMINISTIC` |
-| Tier 2 model unreachable | Tier 0 + Tier 1 run, critical findings marked `"tier2_verified": false`, verdict = `PARTIAL_UNVERIFIED` |
-| Tier 1 task timeout | Other tasks continue, timed-out task marked, verdict includes `"incomplete_tasks": [...]` |
-| All tiers complete | Full verdict = `APPROVE` or `REJECT` with findings |
-
-**The decision the current system does not make:** when no independent verifier
-is reachable, the pipeline records `PARTIAL_UNVERIFIED` and the PR **does not
-merge autonomously**. This is the same behavior as today ("the change waits")
-but with two differences: (a) the deterministic evidence is captured rather
-than lost, and (b) the degraded state is machine-readable, so the operator
-can resume when a channel becomes available without re-running Tier 0.
-
-### Verdict schema
-
-```json
-{
-  "schema": "review-verdict-v1",
-  "pr_number": 178,
-  "timestamp": "2026-08-03T...",
-  "tiers_completed": [0, 1, 2],
-  "verdict": "REJECT",
-  "risk_class": "HIGH",
-  "findings": [
-    {
-      "id": "rf-...",
-      "tier": 1,
-      "task": "claim-verification",
-      "severity": "critical",
-      "summary": "...",
-      "evidence": ["ev-...", "ev-..."],
-      "tier2_verified": true
-    }
-  ],
-  "incomplete_tasks": [],
-  "degraded": false
-}
-```
+| All models unreachable | Tier 0 runs, verdict = `PARTIAL_INCOMPLETE` |
+| Tier 1 model unreachable | Tier 0 runs, verdict = `PARTIAL_INCOMPLETE` |
+| Tier 2 model unreachable | Tier 0 + Tier 1 run, findings have `verification_status: "not_run"`, verdict = `PARTIAL_UNVERIFIED` |
+| Tier 2 cross-model only (no cross-provider) | Tier 0 + Tier 1 + Tier 2 run, verdict = `PARTIAL_UNVERIFIED` (degrades from full) |
+| Tier 1 task timeout | Other tasks continue, timed-out task marked, verdict = `PARTIAL_INCOMPLETE` |
+| Budget exhausted | Pipeline stops, verdict = `PARTIAL_INCOMPLETE` |
+| All tiers complete, cross-provider Tier 2 | Full verdict = `APPROVE` or `REJECT` |
 
 ### Merge-decision layer
 
-The verdict artifact is consumed by the operator's Phase 4 (INTEGRATE). Rules:
+The verdict artifact is consumed by the operator. Rules:
 
 1. `verdict == "APPROVE"` AND `risk_class == "LOW"` → operator may merge
    through protected PR path (existing authority)
-2. `verdict == "APPROVE"` AND `risk_class == "HIGH"` → merge requires Tier 2
-   verification of all critical findings (existing requirement, now enforced
-   by artifact rather than prose)
+2. `verdict == "APPROVE"` AND `risk_class == "HIGH"` → operator may merge;
+   all blocking findings must have `verification_status == "confirmed"` or
+   `"rejected"` (none `"not_run"` or `"inconclusive"`)
 3. `verdict == "REJECT"` → operator must not merge; findings feed back to
    builder
 4. `verdict` starts with `PARTIAL_` → operator must not merge; record state
    for resumption
-5. Envelope/guardrail changes → OWNER-ONLY regardless of verdict (existing
+5. `verdict == "STALE"` → operator must re-run review
+6. Envelope/guardrail changes → OWNER-ONLY regardless of verdict (existing
    requirement, unchanged)
+
+The merge-decision layer **checks `subject_head_sha == current PR HEAD`**
+before applying any verdict. A stale verdict is never applied.
 
 ## What this does NOT change
 
@@ -197,21 +318,19 @@ The verdict artifact is consumed by the operator's Phase 4 (INTEGRATE). Rules:
 - **Phase 4 unimplemented.** The merge-decision layer describes rules; it does
   not implement auto-merge. Phase 4 remains "reserved; v1 does not merge."
 - **Stewardship boundary.** The operator's fiduciary obligations are unchanged.
+- **Dispatcher invariant.** "No LLM is in the dispatcher" is preserved.
 
 ## What this DOES change (requires adoption PR)
 
 - **Review process.** Replaces the monolithic cross-provider adversarial review
   with a tiered, decomposed, checkpointed pipeline.
 - **Review trigger.** Currently manual (operator invokes `consult-opencode.sh`).
-  Becomes automatic on PR creation/update, within the heartbeat loop. This
-  inverts a stated dispatcher invariant: `CLAUDE.md` says "No LLM is in the
-  dispatcher" and "v1.2 only reports an action; it does not execute actions."
-  Placing model calls in the heartbeat is a fundamental change to the
-  dispatcher's design, not just a process adjustment.
+  Becomes signal-based: heartbeat emits `REVIEW_REQUIRED`, operator or
+  workflow invokes the review runner. The dispatcher remains LLM-free.
 - **Degraded mode.** Currently undefined ("the change waits" is implicit).
   Becomes explicit with `PARTIAL_*` verdicts.
 - **Adversarial-review.md.** The 11-question template is preserved but
-  decomposed into bounded tasks. The template document becomes the reference
+  grouped into three bounded tasks. The template document becomes the reference
   for what the tasks must cover, not the prompt for a single call.
 
 These are envelope changes. Adoption requires its own PR with OWNER
@@ -219,45 +338,37 @@ authorization per `docs/amendments.md`.
 
 ## Implementation plan
 
-Sequenced to respect WIP ≤ 1 and the separation between spec and adoption:
+Sequenced to respect WIP ≤ 1 and the separation between spec and adoption.
+Steps 2–4 add capability that is **inert and manually invocable only** — no
+step hooks into the live process until the adoption PR.
 
 1. **This document** — design spec, LOW risk, normal PR path
-2. **Verdict schema + Tier 0 implementation** — deterministic only, emits
-   artifacts in existing schema, LOW risk
-3. **Tier 1 task decomposition** — bounded model calls with checkpointing,
-   LOW risk (no authority change)
-4. **Tier 2 verification** — adversarial check on critical findings, LOW risk
+2. **Verdict schema + Tier 0 implementation** — deterministic only, instruments
+   existing gate, emits SHA-bound artifacts, LOW risk
+3. **Tier 1 tasks + Tier 2 pass** — bounded model calls with checkpointing,
+   disposable worktree isolation, LOW risk (no authority change)
+4. **Review runner script** — `scripts/review.sh` orchestrates Tiers 0–2,
+   manually invocable, LOW risk
 5. **Adoption PR** — amends governance to replace current review process,
    OWNER-ONLY, per `docs/amendments.md`. This step cannot be reviewed by
    the pipeline it creates (independence), so it requires either the
    restored cross-provider process or explicit owner review.
 
-Each step is a separate PR. Steps 2–4 add capability without changing
-authority. Step 5 is the governance change.
+Each step is a separate PR.
 
-**WIP constraint on sequencing:** `heartbeat.sh` counts draft PRs toward
-WIP ≤ 1. With #177 and #178 both open, no new PR can be opened. #177 must
-merge or close before step 1 can become a PR. This is a hard sequencing
-constraint, not a footnote.
+**WIP constraint:** `heartbeat.sh` counts draft PRs toward WIP ≤ 1. #177 is
+now merged. #178 remains open as draft (WIP = 1). Step 1 can become a PR only
+after #178 merges or closes, or by owner authorization to temporarily exceed
+WIP during the pipeline transition.
 
-## Prerequisite issues
+## Current rollout blockers
 
-Before implementation can begin:
+These are operational blockers, not permanent architectural dependencies:
 
-- **#177** (census observation) must merge or close to restore WIP ≤ 1. This
-  is an owner merge decision — the operator cannot merge.
 - **#171** (budget never resets) blocks the heartbeat from dispatching reviews.
   Fix touches guardrails → OWNER-ONLY.
 - **#176** (gate leaves debris) should be fixed before Tier 0 can rely on
   clean tree-state checks.
-
-## Open questions for owner
-
-1. Should Tier 2 (adversarial verification) require cross-provider independence,
-   or is cross-model (different model family, same provider) sufficient?
-2. What is the budget ceiling for Tier 1 model calls per review cycle?
-3. Should `PARTIAL_DETERMINISTIC` verdicts on LOW-risk PRs be sufficient for
-   merge (i.e., can a fully-deterministic review approve a LOW-risk change)?
 
 ## Amendment note
 
