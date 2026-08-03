@@ -327,10 +327,14 @@ assert_diagnostic_logs() {
   # Wait for the disposable worktree to appear and its first reproduce step
   # to have started (marker.txt is written by the stand-in recon-run.sh with
   # the worktree as CWD).
+  # Resolve symlinks: macOS mktemp returns /var/folders/... but git worktree
+  # list --porcelain resolves to /private/var/folders/...
+  local main_resolved
+  main_resolved="$(cd "$dir" && pwd -P)"
   local wt_path=""
   local i=0
-  while [ "$i" -lt 200 ]; do
-    wt_path="$(git -C "$dir" worktree list --porcelain 2>/dev/null | awk -v main="$dir" '/^worktree / && $2 != main { print $2; exit }')"
+  while [ "$i" -lt 600 ]; do
+    wt_path="$(git -C "$dir" worktree list --porcelain 2>/dev/null | awk -v main="$main_resolved" '/^worktree / && $2 != main { print $2; exit }')"
     if [ -n "$wt_path" ] && [ -f "$wt_path/marker.txt" ]; then
       break
     fi
