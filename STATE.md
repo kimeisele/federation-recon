@@ -10,7 +10,7 @@
 |---|---|---|---|
 | `node-census-v1` | `v1` | 2026-08-01T04:02 | - |
 | `v0-boundary-drift` | `v0` | 2026-08-01T04:03 | claims=30, coverage_records=7, drift_records=2, evidence=35, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
-| `v1-census` | `v1` | 2026-08-01T04:02 | coverage_records=7, error_nodes=0, evidence=55, findings=28, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
+| `v1-census` | `v1` | 2026-08-01T04:02 | coverage_records=7, error_nodes=0, evidence=60, findings=33, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
 | `v2-consumption` | `v2` | 2026-08-01T04:03 | coverage_records=6, cycle=7, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
 
 ## Ranked Attention (needs operator decision)

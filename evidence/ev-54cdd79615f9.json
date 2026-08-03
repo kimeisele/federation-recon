@@ -4,5 +4,5 @@
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
   "observation_type": "file_existence",
-  "value": true, "paths": ["docs/authority/charter.md"]
+  "value": true, "paths": [".well-known/agent-federation.json"]
 }

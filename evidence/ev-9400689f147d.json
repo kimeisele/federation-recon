@@ -1,8 +1,8 @@
 {
-  "evidence_id": "ev-d431ca4f9177",
+  "evidence_id": "ev-9400689f147d",
   "repository_pin": "pins/v1-census/steward-protocol.json",
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
   "observation_type": "file_existence",
-  "value": true, "paths": [".well-known/agent-federation.json"]
+  "value": false, "paths": ["docs/authority/charter.md"]
 }

@@ -31,8 +31,8 @@
       "run_timestamp": "2026-08-01T04:02:43Z",
       "summary": {
         "pins": 7,
-        "evidence": 55,
-        "findings": 28,
+        "evidence": 60,
+        "findings": 33,
         "coverage_records": 7,
         "observed_nodes": 7,
         "stale_nodes": 1,
