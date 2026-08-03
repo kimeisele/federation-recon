@@ -45,7 +45,11 @@ distinct failure events were internal orchestration, not provider availability.
    run in a disposable git worktree created at the subject HEAD SHA. A timeout
    or crash destroys the worktree, not the primary checkout. A lockdir
    (`mkdir`-atomic, same mechanism as `heartbeat.lock`) prevents concurrent
-   pipeline runs.
+   pipeline runs. Model API keys are held by the runner process; PR-authored
+   code executes in a child process that does not inherit secrets. This is why
+   the local runner is the correct v0 — a CI workflow running untrusted PR
+   code with reviewer API keys is the `pull_request_target` privilege-escalation
+   shape.
 6. **Machine-readable verdicts.** Each review task produces a structured
    artifact. The merge-decision layer consumes artifacts, not prose.
 7. **Separation of trigger and execution.** The heartbeat dispatcher remains
@@ -135,7 +139,10 @@ Each task:
   (`adversarial-review.md` founding claim; `builders.md`: builder output is
   untrusted)
 - Model provenance is verified per task via the `model` field in the API
-  response (method documented in `governance/builders.md`)
+  response (method documented in `governance/builders.md`). If the readback
+  shows the builder's model, the task status is `error`, never `complete` —
+  `reviewers.md` records that jcode's silent failover is how three reviews
+  came to be answered by the builder's own provider
 
 Each task emits: `findings/review-t1-{task}-{pr_number}-{run_id}.json`
 
@@ -152,7 +159,9 @@ A single independent verification pass that:
   where a compromised Tier 1 suppresses Tier 2)
 - Uses a model from a **different provider** than Tier 1 (cross-provider when
   available; cross-model-family degrades to `PARTIAL_UNVERIFIED`)
-- Receives the Tier 1 task outputs + relevant code, not the full review prompt
+- Receives the Tier 1 task outputs + relevant code for finding verification;
+  for the all-clear challenge, receives the **full diff** (not a Tier-1-selected
+  excerpt) so that a Tier 1 miss does not scope Tier 2's visibility
 - Bounded: 300s timeout, max 1 retry
 
 Emits: `findings/review-t2-{pr_number}-{run_id}.json`
@@ -186,7 +195,7 @@ commit `abc123` is never valid for a later commit on the same PR.
   "subject_head_sha": "abc1234...",
   "base_sha": "def5678...",
   "review_input_digest": "sha256:...",
-  "policy_version": "review-pipeline-spec-v0",
+  "policy_version": "sha256:...(hash of spec + adversarial-review.md + task defs)",
   "timestamp": "2026-08-03T...",
   "verdict": "REJECT",
   "risk_class": "HIGH",
@@ -221,6 +230,12 @@ commit `abc123` is never valid for a later commit on the same PR.
 The `review_input_digest` covers: diff content, PR description, linked issues,
 and `policy_version`. A change to any input invalidates the cached verdict.
 
+`policy_version` is a hash over the review pipeline spec, the adversarial
+review template (`governance/adversarial-review.md`), and the task definitions.
+If the template changes, old verdicts are stale by digest — not "valid under a
+different question set." This repo's history is precisely "a checklist changed
+and nobody noticed which version fired."
+
 `verification_status` per finding uses:
 
 | Value | Meaning |
@@ -252,7 +267,8 @@ Tier 2 not_run (provider unreachable or budget exhausted)
     → verdict PARTIAL_UNVERIFIED
 
 All mandatory tasks complete
-AND no unresolved blocking findings
+AND no unresolved blocking findings (unresolved = verification_status is
+    "confirmed", "inconclusive", or "not_run"; "rejected" = resolved)
 AND Tier 2 complete
     → verdict APPROVE
 
@@ -369,6 +385,26 @@ These are operational blockers, not permanent architectural dependencies:
   Fix touches guardrails → OWNER-ONLY.
 - **#176** (gate leaves debris) should be fixed before Tier 0 can rely on
   clean tree-state checks.
+
+## Resolved defaults (owner may override)
+
+Three questions from the initial draft, now resolved based on external review:
+
+1. **Cross-provider vs. cross-model for Tier 2:** Cross-provider required for
+   a full `APPROVE`. Cross-model-only degrades to `PARTIAL_UNVERIFIED`.
+   *Rationale:* preserves the existing governance independence requirement
+   rather than silently weakening it.
+
+2. **Budget ceiling for Tier 1:** 3 Tier-1 calls + 1 Tier-2 call, max 1
+   retry on transport error/timeout, 1800s total wall time. Exhaustion
+   produces `PARTIAL_INCOMPLETE`.
+   *Rationale:* matches the 3-task decomposition; budget is never auto-raised.
+
+3. **PARTIAL verdicts and merge eligibility:** `PARTIAL` is never
+   merge-eligible, regardless of risk class. No deterministic-only approval
+   class exists in v0. If a future version introduces one, it will be a named
+   class (not a reinterpretation of `PARTIAL`).
+   *Rationale:* `PARTIAL` means incomplete, not "good enough."
 
 ## Amendment note
 
