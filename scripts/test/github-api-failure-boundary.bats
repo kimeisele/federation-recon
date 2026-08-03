@@ -57,17 +57,31 @@ emit_failure() {
 # nodes while marking only the failed node partial.
 case "$endpoint" in
   repos/kimeisele/agent-city/git/trees/*)
-    case "${FAKE_GH_MODE:-stable}" in stable|varying) emit_failure 403 ;; esac
+    [ "$#" -eq 4 ] && [ "${3:-}" = "--jq" ] && [ "${4:-}" = ".tree | length" ] || {
+      printf '%s\n' '{"message":"tree jq filter was not passed as one argument","status":"500"}'
+      exit 1
+    }
+    case "${FAKE_GH_MODE:-stable}" in
+      stable|varying) emit_failure 403 ;;
+      bad_integer) printf '%s\n' 'not-a-number'; exit 0 ;;
+    esac
     printf '%s\n' 7
     ;;
   repos/kimeisele/agent-city/contents/.well-known/agent-federation.json*)
     case "${FAKE_GH_MODE:-stable}" in
       stable|varying) emit_failure 403 ;;
       not_found) emit_failure 404 ;;
+      bad_content) printf '%s\n' '%%%'; exit 0 ;;
     esac
+    printf '%s\n' 'eyJyb2xlIjoiZml4dHVyZSIsInRpZXIiOiJ0ZXN0In0='
     ;;
   */contents/.well-known/agent-federation.json*)
     printf '%s\n' 'eyJyb2xlIjoiZml4dHVyZSIsInRpZXIiOiJ0ZXN0In0='
+    ;;
+  */contents/docs/REPO_BOUNDARIES.md*)
+    # Minimal valid table row; without one, an existing pipefail in the
+    # boundary-row counter aborts before the API-failure property is reached.
+    printf '%s\n' 'fCBgYWdlbnQtd29ybGRgIHwgZml4dHVyZSB8IHggfCB5IHwgeiB8Cg=='
     ;;
   */contents/*)
     case "$*" in
@@ -118,7 +132,7 @@ assert_transport_failure_is_not_evidence() {
   [ "$census_status" -eq 75 ]
   [[ "$census_output" == *"kimeisele/"* ]]
 
-  if rg -n 'API rate limit exceeded|request-(stable|[0-9]+)' \
+  if rg -n 'API rate limit exceeded|request-(stable|[0-9]+)|not-a-number' \
       "$RUN_ROOT/claims" "$RUN_ROOT/evidence" "$RUN_ROOT/findings" \
       "$RUN_ROOT/coverage" "$RUN_ROOT/digest" "$RUN_ROOT/STATE.md" 2>/dev/null; then
     echo "transport error body reached an artifact"
@@ -128,6 +142,7 @@ assert_transport_failure_is_not_evidence() {
   local after_missing
   after_missing="$({ rg -l 'missing \.well-known/agent-federation\.json descriptor' "$RUN_ROOT/findings" 2>/dev/null || true; } | wc -l | tr -d ' ')"
   [ "$after_missing" -le "$BEFORE_MISSING" ]
+  ! rg -q 'Coverage: 7/7 repositories successfully observed|No boundary drift detected' "$RUN_ROOT/findings"
 
   python3 - "$RUN_ROOT" <<'PY'
 import json
@@ -148,17 +163,16 @@ for path in (root / "coverage").glob("*.json"):
 if seen != expected:
     raise SystemExit(f"affected coverage was not partial: {sorted(expected - seen)}")
 
-# An unaffected node still has affirmative descriptor evidence.
+# An unaffected node still reaches its normal successful finding. Evidence IDs
+# cannot be used for this assertion until #164 is fixed: descriptor and charter
+# existence currently collide and one overwrites the other.
 ok = False
-for path in (root / "evidence").glob("*.json"):
+for path in (root / "findings").glob("*.json"):
     data = json.loads(path.read_text())
-    if (data.get("repository_pin") == "pins/v1-census/steward-protocol.json"
-            and data.get("observation_type") == "file_existence"
-            and data.get("value") is True
-            and ".well-known/agent-federation.json" in data.get("paths", [])):
+    if data.get("statement", "").startswith("Node kimeisele/steward-protocol is OK"):
         ok = True
 if not ok:
-    raise SystemExit("unaffected node lost its affirmative descriptor evidence")
+    raise SystemExit("unaffected node lost its normal successful finding")
 PY
 }
 
@@ -168,6 +182,38 @@ PY
 
 @test "GitHub boundary: changing 403 metadata cannot become observation data" {
   assert_transport_failure_is_not_evidence varying
+}
+
+@test "GitHub boundary: malformed successful content is an observation failure" {
+  assert_transport_failure_is_not_evidence bad_content
+}
+
+@test "GitHub boundary: a non-integer tree count cannot become file_count evidence" {
+  export FAKE_GH_MODE=bad_integer
+  export FAKE_GH_COUNTER="$TEST_ROOT/gh-counter"
+  export PATH="$BIN:$PATH"
+
+  run env RECON_PINS_DIR=pins bash "$RUN_ROOT/scripts/recon-run.sh" --reproduce
+  [ "$status" -eq 75 ]
+  [[ "$output" == *"kimeisele/agent-city"* ]]
+  ! rg -q 'not-a-number|Coverage: 7/7 repositories successfully observed|No boundary drift detected' \
+    "$RUN_ROOT/claims" "$RUN_ROOT/evidence" "$RUN_ROOT/findings" "$RUN_ROOT/coverage" "$RUN_ROOT/digest"
+
+  python3 - "$RUN_ROOT" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+for path in (root / "coverage").glob("*.json"):
+    data = json.loads(path.read_text())
+    if (data.get("procedure_id") == "boundary-drift-recon-v0"
+            and data.get("repository_pin") == "pins/v0-boundary-drift/agent-city.json"
+            and data.get("result") == "partial"):
+        break
+else:
+    raise SystemExit("non-integer tree count did not make agent-city coverage partial")
+PY
 }
 
 @test "GitHub boundary: an explicit content 404 remains legitimate absence" {

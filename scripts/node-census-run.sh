@@ -35,6 +35,7 @@ export PIN_NAMESPACE="v1-census"
 source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
+source "$SCRIPT_DIR/lib/github-api.sh"
 # Note: we do NOT source digest.sh — census digest is structurally different.
 
 # ---- Configuration -----------------------------------------------------
@@ -68,6 +69,8 @@ declare -A PIN_FILES         # slug → pin file path
 declare -A EVIDENCE_FILES    # key → evidence file path
 declare -A FINDING_FILES     # key → finding file path
 declare -A COVERAGE_FILES    # key → coverage file path
+declare -A NODE_OBS_FAILED   # slug → "1" if any GitHub observation read failed
+declare -A NODE_OBS_REASON   # slug → human-readable reason for the failure
 
 # Per-node census data for ranking
 declare -A NODE_STATUS       # slug → ok|stale|error
@@ -84,6 +87,22 @@ CANDIDATE_SLUGS=()   # discovered slugs NOT in the adopted set — written to ca
 RUN_TIMESTAMP=""
 RUN_RESULT="success"
 PARTIAL_FAILURES=0
+
+# mark_node_observation_failed <repo> <what>
+#   Records an explicit observation failure for REPO (named in the log) and
+#   routes the run to the partial/terminal exit path (75). The caller MUST NOT
+#   have emitted a "missing descriptor" finding, an absence claim, or zero
+#   evidence: a transport failure is not an observation of absence (#175).
+mark_node_observation_failed() {
+  local repo="$1" what="$2"
+  local slug="${repo#*/}"
+  if [ "${NODE_OBS_FAILED[$slug]:-0}" != "1" ]; then
+    NODE_OBS_FAILED["$slug"]=1
+    PARTIAL_FAILURES=$(( PARTIAL_FAILURES + 1 ))
+  fi
+  NODE_OBS_REASON["$slug"]="${what} failed"
+  warn "  GitHub read failed for ${repo} (${what}) — no absence/zero observation recorded"
+}
 
 # ---- Phase 1: Discover nodes via GitHub topic (§12.3-ish op 1) ---------
 
@@ -258,10 +277,14 @@ for n in state.get('nodes',[]):
     fi
 
     if [ -z "$sha" ]; then
-      sha=$(gh api "repos/${repo}/git/ref/heads/${ref}" --jq '.object.sha' 2>/dev/null || true)
+      # Try the requested ref, then fall back to the repo's default branch.
+      sha="$(gh_api_read "repos/${repo}/git/ref/heads/${ref}" --jq '.object.sha')" || sha=""
       if [ -z "$sha" ]; then
-        # Try fetching the repo info to get default branch SHA another way
-        sha=$(gh api "repos/${repo}" --jq '.default_branch' 2>/dev/null | xargs -I{} gh api "repos/${repo}/git/ref/heads/{}" --jq '.object.sha' 2>/dev/null || true)
+        local default_branch=""
+        default_branch="$(gh_api_read "repos/${repo}" --jq '.default_branch')" || default_branch=""
+        if [ -n "$default_branch" ]; then
+          sha="$(gh_api_read "repos/${repo}/git/ref/heads/${default_branch}" --jq '.object.sha')" || sha=""
+        fi
       fi
     fi
 
@@ -277,13 +300,17 @@ for n in state.get('nodes',[]):
     # Also get updatedAt — in reproduce mode use loaded state, otherwise fetch live
     local updated="${REPO_UPDATED[$repo]:-}"
     if [ -z "$updated" ] && ! $repro; then
-      updated=$(gh api "repos/${repo}" --jq '.pushed_at' 2>/dev/null || true)
+      updated="$(gh_api_read "repos/${repo}" --jq '.pushed_at')" || updated=""
       REPO_UPDATED["$repo"]="$updated"
     fi
     # In reproduce mode, if no saved state, we still need updatedAt — fetch live as fallback
     if [ -z "$updated" ]; then
-      updated=$(gh api "repos/${repo}" --jq '.pushed_at' 2>/dev/null || true)
+      updated="$(gh_api_read "repos/${repo}" --jq '.pushed_at')" || updated=""
       REPO_UPDATED["$repo"]="$updated"
+      if [ -z "$updated" ]; then
+        # A failed liveness read must not become "unknown": mark the node partial.
+        mark_node_observation_failed "$repo" "pushed_at fetch"
+      fi
     fi
 
     local pin_file
@@ -354,8 +381,16 @@ collect_evidence() {
     log "  Collecting evidence for ${repo}..."
 
     # --- Evidence: .well-known/agent-federation.json existence ---
-    local wk_content=""
-    wk_content=$(gh api "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+    # A transport failure (HTTP 403/5xx) is NOT a missing descriptor: no
+    # file_existence=false evidence and no "missing descriptor" finding may be
+    # emitted; the node is marked partial (#175). Only an explicit 404 is
+    # legitimate absence.
+    local wk_content="" wk_rc=0
+    wk_content="$(gh_api_read_content "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}")" || wk_rc=$?
+    if [ "$wk_rc" -eq $GH_API_FAILURE ]; then
+      mark_node_observation_failed "$repo" ".well-known descriptor fetch"
+      continue
+    fi
 
     if [ -z "$wk_content" ]; then
       NODE_DESCRIPTOR["$slug"]="false"
@@ -435,8 +470,13 @@ except: print('')
     # --- Evidence: Charter existence ---
     local charter_found="false"
     for charter_path in "docs/authority/charter.md" "docs/CHARTER.md" "CHARTER.md"; do
-      local charter_name=""
-      charter_name=$(gh api "repos/${repo}/contents/${charter_path}?ref=${sha}" --jq '.name' 2>/dev/null || true)
+      local charter_name="" charter_rc=0
+      charter_name="$(gh_api_read "repos/${repo}/contents/${charter_path}?ref=${sha}" --jq '.name')" || charter_rc=$?
+      if [ "$charter_rc" -eq $GH_API_FAILURE ]; then
+        # A transport failure is not "no charter at this path": mark partial.
+        mark_node_observation_failed "$repo" "charter fetch (${charter_path})"
+        break
+      fi
       if [ -n "$charter_name" ]; then
         charter_found="true"
         break
@@ -454,17 +494,23 @@ except: print('')
     # --- Evidence: last commit date (liveness) ---
     local last_commit="${REPO_UPDATED[$repo]:-}"
     if [ -z "$last_commit" ]; then
-      last_commit=$(gh api "repos/${repo}" --jq '.pushed_at' 2>/dev/null || echo "unknown")
+      last_commit="$(gh_api_read "repos/${repo}" --jq '.pushed_at')" || last_commit=""
+      if [ -z "$last_commit" ]; then
+        # A failed liveness read must not become "unknown" evidence.
+        mark_node_observation_failed "$repo" "pushed_at fetch"
+      fi
     fi
     NODE_LAST_COMMIT["$slug"]="$last_commit"
 
-    local ev_liveness
-    ev_liveness=$(gen_evidence "$pin_file" "manifest_field" "$last_commit" \
-      "/ (repo root)" \
-      "field=last_commit_date")
-    EVIDENCE_FILES["liveness-${slug}"]="$ev_liveness"
-    budget_track "$ev_liveness"
-    log "    Last commit: ${last_commit}"
+    if [ -n "$last_commit" ]; then
+      local ev_liveness
+      ev_liveness=$(gen_evidence "$pin_file" "manifest_field" "$last_commit" \
+        "/ (repo root)" \
+        "field=last_commit_date")
+      EVIDENCE_FILES["liveness-${slug}"]="$ev_liveness"
+      budget_track "$ev_liveness"
+      log "    Last commit: ${last_commit}"
+    fi
   done
 }
 
@@ -476,6 +522,22 @@ generate_findings() {
   for slug in "${ADOPTED_SLUGS[@]}"; do
     local repo="kimeisele/${slug}"
     local sha="${REPO_SHA[$repo]:-}"
+
+    # A node with a failed GitHub observation gets a failure finding — never a
+    # "missing descriptor" finding, which would assert absence the transport
+    # failure did not establish (#175).
+    if [ "${NODE_OBS_FAILED[$slug]:-0}" = "1" ]; then
+      NODE_STATUS["$slug"]="error"
+      local ev_ref="${EVIDENCE_FILES["wk-exists-${slug}"]:-}"
+      [ -z "$ev_ref" ] && ev_ref="pins/v1-census/${slug}.json"
+
+      local finding_fail
+      finding_fail=$(gen_finding "Node ${repo} observation incomplete — ${NODE_OBS_REASON[$slug]:-GitHub read failure}; no absence or zero observation recorded" \
+        "$ev_ref" "node_census" "warning" "observed")
+      FINDING_FILES["error-${slug}"]="$finding_fail"
+      budget_track "$finding_fail"
+      continue
+    fi
 
     if [ -z "$sha" ]; then
       NODE_STATUS["$slug"]="error"
@@ -579,7 +641,9 @@ record_coverage() {
     [ -z "$pin_file" ] && continue
 
     local result="success"
-    [ "${NODE_STATUS[$slug]:-}" = "error" ] && result="partial"
+    if [ "${NODE_OBS_FAILED[$slug]:-0}" = "1" ] || [ "${NODE_STATUS[$slug]:-}" = "error" ]; then
+      result="partial"
+    fi
 
     local cov
     cov=$(gen_coverage_record "$pin_file" "$result" "$caps_used" "$caps_missing")
@@ -716,7 +780,11 @@ generate_census_digest() {
     local attn_status="$status"
 
     if [ "$status" = "error" ]; then
-      headline="Node ${repo} could not be resolved"
+      if [ "${NODE_OBS_FAILED[$slug]:-0}" = "1" ]; then
+        headline="Node ${repo} observation incomplete — ${NODE_OBS_REASON[$slug]:-GitHub read failure}"
+      else
+        headline="Node ${repo} could not be resolved"
+      fi
       attn_rank=5
     elif [ "$status" = "stale" ]; then
       if [ "$descriptor" = "false" ]; then
