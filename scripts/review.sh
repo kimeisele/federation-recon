@@ -718,19 +718,23 @@ verdict_word="$(finalize "$head_sha" "$tier0_status" "$tier1a_status" "$tier1b_s
 # ---- 11. Post commit status ------------------------------------------------
 # GH_TOKEN_REVIEWER posts as federation-operator; the status context
 # "review-pipeline" can become a required check in branch protection.
-# APPROVE → success, everything else → failure.
-if [ -n "${GH_TOKEN_REVIEWER:-}" ]; then
-  if [ "$verdict_word" = "APPROVE" ]; then
-    _status_state="success"
-  else
-    _status_state="failure"
+# APPROVE → success, REJECT/PARTIAL → failure, infra error → error.
+if [ -n "${GH_TOKEN_REVIEWER:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  case "$verdict_word" in
+    APPROVE) _status_state="success" ;;
+    REJECT)  _status_state="failure" ;;
+    *)       _status_state="error"   ;;
+  esac
+  if ! GH_TOKEN="$GH_TOKEN_REVIEWER" gh api -X POST \
+      "repos/${GITHUB_REPOSITORY}/statuses/$head_sha" \
+      -f state="$_status_state" \
+      -f context="review-pipeline" \
+      -f description="$verdict_word ($run_id)" \
+      > "$run_dir/status.log" 2>&1; then
+    echo "review: WARNING — status post failed ($(tail -n1 "$run_dir/status.log" 2>/dev/null))" >&2
   fi
-  GH_TOKEN="$GH_TOKEN_REVIEWER" gh api -X POST \
-    "repos/${GITHUB_REPOSITORY:-kimeisele/federation-recon}/statuses/$head_sha" \
-    -f state="$_status_state" \
-    -f context="review-pipeline" \
-    -f description="$verdict_word ($run_id)" \
-    > "$run_dir/status.log" 2>&1 || true
+elif [ -z "${GITHUB_REPOSITORY:-}" ]; then
+  echo "review: status not posted — GITHUB_REPOSITORY not set" >&2
 fi
 
 # ---- 12. Summary ----------------------------------------------------------
