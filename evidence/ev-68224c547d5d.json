@@ -1,8 +1,8 @@
 {
-  "evidence_id": "ev-bbbe83833a19",
+  "evidence_id": "ev-68224c547d5d",
   "repository_pin": "pins/v1-census/agent-city.json",
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
   "observation_type": "file_existence",
-  "value": true, "paths": [".well-known/agent-federation.json"]
+  "value": false, "paths": ["docs/authority/charter.md"]
 }
