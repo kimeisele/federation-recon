@@ -2,22 +2,24 @@
 # review-runner.bats — the review runner (scripts/review.sh) end to end.
 #
 # scripts/review.sh orchestrates one review of a PR: resolve the head SHA,
-# cut a disposable worktree at that SHA, run the gate in it (Tier 0), record
-# the stub tiers, assemble the verdict artifact, and let the deterministic
-# aggregator (scripts/review-verdict.sh) recompute the final word. It is
-# inert — manually invoked only, no heartbeat wiring — and reads no reviewer
-# credential and makes no model call.
+# cut a disposable worktree at that SHA, run the gate in it (Tier 0), make
+# one model call each for Tier 1A and Tier 1B, assemble the verdict artifact,
+# and let the deterministic aggregator (scripts/review-verdict.sh) recompute
+# the final word. It is inert — manually invoked only, no heartbeat wiring.
 #
 # These tests drive the REAL review.sh inside a disposable fixture repository
 # whose HEAD carries a stand-in gate.sh, so Tier 0 is fast and offline. The
-# mock gh returns the fixture's committed HEAD SHA; HOME is pointed at a
-# sandbox so verdict artifacts never touch a real review history; TMPDIR is
-# pointed at the sandbox so the disposable worktree can be asserted created
-# and destroyed. The runner's own constraints under test:
+# mock gh returns the fixture's committed HEAD SHA, the mock curl returns a
+# canned provider response, HOME is pointed at a sandbox so verdict artifacts
+# never touch a real review history; TMPDIR is pointed at the sandbox so the
+# disposable worktree can be asserted created and destroyed. The runner's own
+# constraints under test:
 #
 #   * verdict artifacts are written OUTSIDE the repository
 #   * the disposable worktree is created at the head SHA and destroyed
 #   * the deterministic aggregator is called and its word is stored
+#   * Tier 1A/1B record "complete" with the response's model field, or
+#     "error" on a failed provider call — never a crash
 #   * a review that cannot start (gh failure) records PARTIAL and exits 0
 #   * the only non-zero exit is a usage error
 
@@ -57,7 +59,8 @@ GATESCRIPT
   git -C "$FIXTURE" commit -qm "fixture"
   export MOCK_HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
-  # Mock gh: the runner only calls `pr view ... --json headRefOid`.
+  # Mock gh: the runner calls `pr view ... --json headRefOid` (head SHA),
+  # `pr view ... --json body` (PR description) and `pr diff` (the diff).
   cat > "$SANDBOX/mockbin/gh" <<'GHSCRIPT'
 #!/usr/bin/env bash
 if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
@@ -65,13 +68,50 @@ if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
   exit 1
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
-  printf '%s\n' "$MOCK_HEAD_SHA"
+  case "$*" in
+    *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "diff" ]; then
+  printf '%s\n' "$MOCK_PR_DIFF"
   exit 0
 fi
 echo "mock gh: unexpected invocation: $*" >&2
 exit 2
 GHSCRIPT
   chmod +x "$SANDBOX/mockbin/gh"
+
+  # Mock curl: the runner makes one provider call per tier. The mock records
+  # its arguments (so tests can assert the endpoint and timeout reached the
+  # wire), fails on demand, and otherwise prints a canned chat-completions
+  # response. The default response carries the requested model and a clean
+  # APPROVE, so runs that are not about the provider path still aggregate.
+  cat > "$SANDBOX/mockbin/curl" <<'CURLSCRIPT'
+#!/usr/bin/env bash
+if [ -n "${MOCK_CURL_ARGS_FILE:-}" ]; then
+  printf '%s\n' "$*" >> "$MOCK_CURL_ARGS_FILE"
+fi
+if [ "${MOCK_CURL_FAIL:-0}" = "1" ]; then
+  echo "mock curl: failing on request" >&2
+  exit 7
+fi
+printf '%s\n' "$MOCK_CURL_RESPONSE"
+exit 0
+CURLSCRIPT
+  chmod +x "$SANDBOX/mockbin/curl"
+  export MOCK_CURL_ARGS_FILE="$SANDBOX/mock-curl-args.txt"
+  export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"No blocking findings.\nverdict: APPROVE"}}]}'
+
+  export MOCK_PR_BODY="${MOCK_PR_BODY:-Fixture PR body: a stand-in description.}"
+  export MOCK_PR_DIFF="${MOCK_PR_DIFF:-diff --git a/fixture.txt b/fixture.txt
+index 0000000..1111111 100644
+--- a/fixture.txt
++++ b/fixture.txt
+@@ -0,0 +1 @@
++fixture
+}"
 
   export REVIEWS_ROOT="$SANDBOX/home/.local/share/federation-recon/reviews"
   mkdir -p "$REVIEWS_ROOT"
@@ -97,6 +137,8 @@ latest_run_dir() {
   find "$REVIEWS_ROOT" -maxdepth 1 -type d -name 'rv-*' | sort | tail -1
 }
 
+# _verdict_field <json-artifact> <dotted.path> — read a dotted field from any
+# JSON artifact (the verdict, or a tier artifact).
 _verdict_field() {
   python3 -c "
 import json, sys
@@ -241,12 +283,14 @@ print(value)
   [ -s "$run_dir/tier0.log" ]
   grep -q "fixture gate" "$run_dir/tier0.log"
 
-  # The stubs record their placeholder status in per-phase artifacts.
+  # Tier 1A and 1B ran their model calls (against the mocked provider) and
+  # recorded "complete" in their per-phase artifacts.
   [ -f "$run_dir/tier1a.json" ]
   [ -f "$run_dir/tier1b.json" ]
-  grep -q '"not_run"' "$run_dir/tier1a.json"
-  grep -q '"not_run"' "$run_dir/tier1b.json"
-  # No escalation, so Tier 2 did not run and left no artifact.
+  grep -q '"complete"' "$run_dir/tier1a.json"
+  grep -q '"complete"' "$run_dir/tier1b.json"
+  # No escalation (LOW risk, no findings wired into the verdict), so Tier 2
+  # did not run and left no artifact.
   [ ! -e "$run_dir/tier2.json" ]
 
   # The summary names the run, the PR, and the artifact directory.
@@ -315,4 +359,137 @@ print(value)
   run_id="$(_verdict_field "$run_dir/verdict.json" run_id)"
   [ "$run_id" = "rv-${today}-002" ]
   [[ "$run_id" =~ ^rv-[0-9]{8}-[0-9]{3}$ ]]
+}
+
+# ────────────────────────────────────────────────────────────
+#  10. TIER 1A — the model call: complete on a mocked success
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: tier1a mock success returns complete and writes a valid artifact" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"1. The claims are overstated.\n2. The gate is untested.\nverdict: REJECT"}}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ -f "$run_dir/tier1a.json" ]
+  [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "complete" ]
+  [ "$(_verdict_field "$run_dir/tier1a.json" task)" = "review-analysis" ]
+
+  # Model provenance: the model field from the provider RESPONSE is recorded
+  # verbatim, for the future reviewer-differs-from-builder verification.
+  [ "$(_verdict_field "$run_dir/tier1a.json" model)" = "mock-reviewer-model" ]
+  [ "$(_verdict_field "$run_dir/tier1a.json" provider)" = "deepseek" ]
+
+  # Findings extraction: the numbered lines became findings, the closing
+  # verdict line was read, and the full model output is preserved.
+  [ "$(_verdict_field "$run_dir/tier1a.json" verdict_line)" = "REJECT" ]
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+assert len(artifact["findings"]) == 2
+assert artifact["findings"][0]["summary"] == "1. The claims are overstated."
+assert artifact["findings"][1]["summary"] == "2. The gate is untested."
+assert artifact["response_text"].startswith("1. The claims are overstated.")
+PYEOF
+
+  # The request actually reached the configured endpoint with the configured
+  # timeout: the mock curl recorded the invocation.
+  grep -q "https://api.deepseek.com/v1/chat/completions" "$MOCK_CURL_ARGS_FILE"
+  grep -q -- "--max-time 300" "$MOCK_CURL_ARGS_FILE"
+  grep -q '"model": "deepseek-chat"' "$run_dir/tier1a.request.json"
+}
+
+# ────────────────────────────────────────────────────────────
+#  11. TIER 1A — a failed provider call is an error, never a crash
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: tier1a mock curl failure returns error and exits 0" {
+  export MOCK_CURL_FAIL=1
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ -f "$run_dir/tier1a.json" ]
+  [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1a.json" task)" = "review-analysis" ]
+  [[ "$(_verdict_field "$run_dir/tier1a.json" error)" == *"curl failed"* ]]
+
+  # A failed model call is a PARTIAL review — the runner exits 0 but never
+  # reports green.
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  12. TIER 1B — the model call: complete on a mocked success
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: tier1b mock success returns complete and writes a valid artifact" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"1. Execute the evasion in the worktree.\n2. Mutate the gate check.\nverdict: REJECT"}}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ -f "$run_dir/tier1b.json" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "complete" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" task)" = "adversarial-execution" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" model)" = "mock-reviewer-model" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" provider)" = "deepseek" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" verdict_line)" = "REJECT" ]
+  python3 - "$run_dir/tier1b.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+assert len(artifact["findings"]) == 2
+assert artifact["findings"][0]["summary"] == "1. Execute the evasion in the worktree."
+assert artifact["findings"][1]["summary"] == "2. Mutate the gate check."
+PYEOF
+}
+
+# ────────────────────────────────────────────────────────────
+#  13. TIER 1B — a failed provider call is an error, never a crash
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: tier1b mock curl failure returns error and exits 0" {
+  export MOCK_CURL_FAIL=1
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ -f "$run_dir/tier1b.json" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" task)" = "adversarial-execution" ]
+  [[ "$(_verdict_field "$run_dir/tier1b.json" error)" == *"curl failed"* ]]
+
+  # A failed model call is a PARTIAL review — never green.
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "error" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  14. MODEL PROVENANCE — the recorded model is who answered,
+#     not who was asked
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: model provenance records the response model, not the requested model" {
+  # The provider answers with a different model than the request asked for;
+  # the artifact must record the response's model. Bootstrapping records only,
+  # no enforcement — but the record is the evidence a future check reads.
+  export MOCK_CURL_RESPONSE='{"model":"served-by-another-provider","choices":[{"message":{"content":"No numbered findings.\nverdict: APPROVE"}}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/tier1a.json" model)" = "served-by-another-provider" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" model)" = "served-by-another-provider" ]
+
+  # The request asked for the configured model; who answered is recorded
+  # separately. And a response with no numbered findings still parses: the
+  # findings array is empty, not an error.
+  grep -q '"model": "deepseek-chat"' "$run_dir/tier1a.request.json"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+assert artifact["findings"] == []
+assert artifact["verdict_line"] == "APPROVE"
+PYEOF
 }
