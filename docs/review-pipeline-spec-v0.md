@@ -31,6 +31,12 @@ Five targeted improvements to the existing review process:
 
 4. **Checkpointing per phase.** A lost call destroys one phase, not the
    entire run. Each phase writes its own artifact before the next begins.
+   Verdict and per-phase artifacts are written outside the reviewed branch
+   and outside the fixpoint-snapshotted directories (`findings/`, `evidence/`,
+   etc.) — writing a review result must never change the PR HEAD. v0 stores
+   review artifacts in a local directory outside the repo (e.g.
+   `~/.local/share/federation-recon/reviews/`). A CI trigger path (step 3)
+   requires that PR-authored code execute without reviewer credentials.
 
 5. **PARTIAL is never approval.** An incomplete review stays incomplete.
    No degraded-mode reinterpretation.
@@ -175,7 +181,7 @@ Tier 0 has its own time budget (gate runtime, ~18 min). Model call timeout:
 
 1. `APPROVE` + LOW → operator may merge (existing authority)
 2. `APPROVE` + HIGH → operator may merge only if Tier 2 complete and no
-   blocking findings with status `confirmed` or `inconclusive`
+   blocking findings with status `confirmed`, `inconclusive`, or `not_run`
 3. `REJECT` → operator must not merge; findings go to builder
 4. `PARTIAL` → operator must not merge; resume when conditions change
 5. `STALE` → re-run review
@@ -209,10 +215,20 @@ requires either the restored cross-provider process or explicit owner review.
 
 ## Current rollout blockers
 
-- **#171** (budget never resets): blocks heartbeat from dispatching. Fix
-  touches guardrails → OWNER-ONLY. Owner-authorized.
+- **#171** (budget never resets): latent defect — counter is 2/3, not yet
+  blocking, but will permanently brick the heartbeat when exhausted because
+  no cycle-terminal transition resets it. Fix touches guardrails → OWNER-ONLY.
+  Owner-authorized.
 - **#176** (gate leaves debris in worktree): should be fixed before Tier 0
-  runs in production. Owner-authorized.
+  runs in production. Owner-authorized. Dispatch first — does not touch
+  guardrails.
+
+## Parked work
+
+- **#175** (API failure boundary): PR #178 closed, branch
+  `operator/175-api-failure-boundary` preserved at `eb328d1`. Resume: reopen
+  PR from existing branch when WIP slot is available. See closing comment on
+  PR #178 for documented resume conditions.
 
 ## Amendment note
 
