@@ -84,6 +84,8 @@ Covers the non-executing questions from `adversarial-review.md`:
 - Environment and workflows (Q2)
 - Failure modes (Q5, Q6)
 - Completeness (Q8)
+- Prior-round conditions (Q10, follow-up rounds only)
+- General hazard sweep (Q11)
 
 The 11 questions remain as the internal checklist. They do not become 11
 separate tasks or artifacts.
@@ -151,6 +153,8 @@ provider than Tier 1. One call, one artifact.
 ```
 subject_head_sha ≠ current PR HEAD → STALE
 
+Tier 0 CI status pending/error/missing → PARTIAL
+
 Any Tier 0 mandatory check FAIL → REJECT
 
 Any finding: severity == "blocking"
@@ -179,13 +183,16 @@ Tier 0 has its own time budget (gate runtime, ~18 min). Model call timeout:
 
 ### Merge-decision rules
 
-1. `APPROVE` + LOW → operator may merge (existing authority)
-2. `APPROVE` + HIGH → operator may merge only if Tier 2 complete and no
+1. `APPROVE` + LOW → integration-eligible under the existing protected path
+2. `APPROVE` + HIGH → integration-eligible only if Tier 2 complete and no
    blocking findings with status `confirmed`, `inconclusive`, or `not_run`
 3. `REJECT` → operator must not merge; findings go to builder
 4. `PARTIAL` → operator must not merge; resume when conditions change
 5. `STALE` → re-run review
 6. Envelope/guardrail changes → OWNER-ONLY regardless of verdict
+
+This specification grants no new merge authority. Integration eligibility
+is governed by the existing Phase 4 rules and CLAUDE.md constraints.
 
 ## What this does NOT change
 
