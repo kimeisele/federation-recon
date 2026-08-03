@@ -1,6 +1,6 @@
 # Federation Digest
 
-**Composed:** 2026-08-01T04:03:23Z
+**Composed:** 2026-08-03T04:10:03Z
 **Procedures:** 4 (see digest/ for per-procedure details)
 **Attention items:** 4 (1 observatory)
 
@@ -8,16 +8,16 @@
 
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
-| `node-census-v1` | `v1` | 2026-08-01T04:02 | - |
-| `v0-boundary-drift` | `v0` | 2026-08-01T04:03 | claims=30, coverage_records=7, drift_records=2, evidence=35, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
-| `v1-census` | `v1` | 2026-08-01T04:02 | coverage_records=7, error_nodes=0, evidence=55, findings=28, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
-| `v2-consumption` | `v2` | 2026-08-01T04:03 | coverage_records=6, cycle=7, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
+| `node-census-v1` | `v1` | 2026-08-03T04:09 | - |
+| `v0-boundary-drift` | `v0` | 2026-08-03T04:09 | claims=30, coverage_records=7, drift_records=2, evidence=35, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
+| `v1-census` | `v1` | 2026-08-03T04:09 | coverage_records=7, error_nodes=0, evidence=59, findings=31, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
+| `v2-consumption` | `v2` | 2026-08-03T04:10 | coverage_records=6, cycle=8, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
 
 ## Ranked Attention (needs operator decision)
 
 | # | Target | Status | Procedure | Headline | Evidence |
 |---|---|---|---|---|---|
-| 1 | `kimeisele/*` | ✅ observed | `v2-consumption` | ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 7 of 10 — F-02 falsifier is active if this persists across ten cycles. | consumption/ |
+| 1 | `kimeisele/*` | ✅ observed | `v2-consumption` | ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 8 of 10 — F-02 falsifier is active if this persists across ten cycles. | consumption/ |
 | 2 | `kimeisele/steward` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-5cd51c7f5fed.json, drift/drift-0064abff93ac.json |
 | 3 | `kimeisele/agent-internet` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-194863fb230b.json, drift/drift-d2d7cfe7156b.json |
 | 4 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
