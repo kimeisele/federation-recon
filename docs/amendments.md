@@ -76,3 +76,4 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 > operate fail-closed — a stricter machine control may keep blocking during
 > regularisation. It confers no merge, governance, or constitutional authority,
 > and the amendment is not valid retroactively. See #55.
+
