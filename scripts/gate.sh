@@ -192,23 +192,67 @@ set -m
   elif ! command -v gh >/dev/null 2>&1; then
     bad "gh is required for --full and is not installed"
   else
-    snap() { find pins claims evidence drift findings coverage consumption self digest STATE.md \
-              -type f 2>/dev/null | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | awk '{print $1}'; }
-    run()  { RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce       >/dev/null 2>&1
-             RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >/dev/null 2>&1
-             RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce >/dev/null 2>&1
-             bash scripts/compose-digest.sh                                  >/dev/null 2>&1; }
+    # Baseline of the source tree before this phase creates anything. Taken
+    # before the disposable worktree exists so the worktree record it would
+    # add is not part of either side of the tree-diff below.
     snap_pre_reproduce="$(tree_snapshot)"
-    before="$(snap)"; run; a="$(snap)"; run; b="$(snap)"
-    if [ "$a" != "$b" ]; then
-      bad "not deterministic: two consecutive runs differ"
-    elif [ "$before" != "$a" ]; then
-      bad "committed artifacts are not the fixpoint — regenerate and commit"
-    elif ! new_records="$(tree_diff "$snap_pre_reproduce" "$(tree_snapshot)")"; then
-      bad "the reproduce run $(tree_change_kind "$new_records")"
-      printf '%s\n' "$new_records" | sed 's/^/    /'
+    # The reproduce fixpoint overwrites STATE.md, the digest, and
+    # claims/evidence/findings in whatever tree it runs in. Running it in the
+    # source checkout meant a failed reproduce left that damage behind: the
+    # gate reported failure but could not restore what it had overwritten.
+    # The work therefore runs in a disposable git worktree at HEAD, and the
+    # source tree is only ever read. See issue #176.
+    wt_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-reproduce.XXXXXX")"
+    if ! git worktree add "$wt_dir" HEAD --detach --quiet 2>/dev/null; then
+      bad "could not create reproduce worktree (fixpoint not checked)"
+      rm -rf "$wt_dir" 2>/dev/null || true
     else
-      good "committed == run1 == run2, tree clean"
+      # Remove the worktree on every exit path — pass, fail, signal. Idempotent,
+      # so the explicit call before the tree check and the EXIT trap cannot
+      # conflict with each other. On INT/TERM the cleanup is followed by exit
+      # with 128+SIGNO: a signal-killed gate must not keep running against a
+      # worktree it has already removed.
+      reproduce_cleanup() {
+        git worktree remove --force "$wt_dir" 2>/dev/null || {
+          # The removal failed (e.g. the directory is already gone); unregister
+          # whatever stale admin state the failed remove left behind.
+          git worktree prune 2>/dev/null || true
+        }
+        rm -rf "$wt_dir" 2>/dev/null || true
+      }
+      trap reproduce_cleanup EXIT
+      trap 'reproduce_cleanup; exit 130' INT
+      trap 'reproduce_cleanup; exit 143' TERM
+
+      snap() { find pins claims evidence drift findings coverage consumption self digest STATE.md \
+                -type f 2>/dev/null | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | awk '{print $1}'; }
+      # Run with the worktree as CWD, in a subshell so the cd cannot leak:
+      # the four steps write into the disposable copy, never into the source
+      # checkout. Each step's log lands in LOGDIR so a failed run leaves an
+      # explicit diagnostic path.
+      run()  { ( cd "$wt_dir" || exit 1
+                 RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce       >"$LOGDIR/reproduce-recon.log"       2>&1
+                 RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >"$LOGDIR/reproduce-census.log"     2>&1
+                 RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce >"$LOGDIR/reproduce-consumption.log" 2>&1
+                 bash scripts/compose-digest.sh                                  >"$LOGDIR/reproduce-digest.log"     2>&1 ); }
+      before="$(cd "$wt_dir" && snap)"; run; a="$(cd "$wt_dir" && snap)"; run; b="$(cd "$wt_dir" && snap)"
+      printf 'before %s\nrun1   %s\nrun2   %s\n' "$before" "$a" "$b" > "$LOGDIR/reproduce-hashes.txt"
+      # The worktree is gone before the source tree is re-snapshot: the
+      # tree-diff below must see the source as it was before this phase, not
+      # the disposable copy this phase created.
+      reproduce_cleanup
+      if [ "$a" != "$b" ]; then
+        bad "not deterministic: two consecutive runs differ"
+        printf '  reproduce evidence: %s\n' "$LOGDIR"/reproduce-*.log
+      elif [ "$before" != "$a" ]; then
+        bad "committed artifacts are not the fixpoint — regenerate and commit"
+        printf '  reproduce evidence: %s\n' "$LOGDIR"/reproduce-*.log
+      elif ! new_records="$(tree_diff "$snap_pre_reproduce" "$(tree_snapshot)")"; then
+        bad "the reproduce run $(tree_change_kind "$new_records")"
+        printf '%s\n' "$new_records" | sed 's/^/    /'
+      else
+        good "committed == run1 == run2, tree clean"
+      fi
     fi
   fi
 
