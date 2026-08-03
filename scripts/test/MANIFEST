@@ -7,6 +7,7 @@
 amendment-log.bats
 boundary-agreement.bats
 budget-cap.bats
+budget-cycle-reset.bats
 budget.bats
 builder-jcode.bats
 ci-checks-composer.bats

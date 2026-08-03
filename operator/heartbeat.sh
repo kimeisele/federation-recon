@@ -955,7 +955,7 @@ if [ "$phase" = "0_BOOTSTRAP" ]; then
     exit 0
   fi
 
-  write_state "1_CLASSIFY" "$((cycle + 1))" "$expert_calls" "$now_iso" "bootstrap OK, advancing"
+  write_state "1_CLASSIFY" "$((cycle + 1))" "0" "$now_iso" "bootstrap OK, advancing"
   emit_action "ADVANCE" "bootstrap clean → 1_CLASSIFY"
   exit 0
 fi
