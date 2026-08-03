@@ -17,7 +17,7 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 | 2 | 2026-07-30 | **#107** | `docs/execution-core-adr.md` accepted — Recon gains an execution layer over its own working tree. **Recorded 2026-08-01, two days late**, see below | [107-sol.md](../governance/consultations/107-sol.md), [107-kimi-architecture.md](../governance/consultations/107-kimi-architecture.md), [107-kimi-adoption.md](../governance/consultations/107-kimi-adoption.md) |
 | 3 | 2026-08-01 | **#150** | §5 and FR-CON-002 made decidable for the execution layer and for self-observation | pending — see PR |
 | 4 | 2026-08-01 | *this PR* | `docs/self-remediation-adr.md` accepted — FR-CON-002 exempts Recon's own runtime state; the carve-out narrowed to the *record* of a Finding rather than its repair | [152.md](../governance/consultations/152.md) |
-| 5 | 2026-08-03 | *this PR* | Review pipeline adoption — Tier 1A/1B in `scripts/review.sh` now make real provider model calls per `docs/review-pipeline-spec-v0.md` (implementation step 2) | pending — see PR |
+| 5 | 2026-08-03 | *this PR* | Review pipeline capability landed — Tier 1A/1B in `scripts/review.sh` make real provider calls (implementation step 2). **Not adopted**: pipeline is manually invocable only, not wired to heartbeat, not enforced as a gate. Step 3 was self-approved via `GH_TOKEN_REVIEWER` (operator's own second credential), not independently reviewed. | pending — see PR |
 
 > **Amendment 2 was accepted on 2026-07-30 and entered here on 2026-08-01.**
 >

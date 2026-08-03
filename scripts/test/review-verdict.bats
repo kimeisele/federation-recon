@@ -81,6 +81,14 @@ setup() {
   [ "$output" = "PARTIAL" ]
 }
 
+@test "review-verdict: mandatory Tier 1 not_run → PARTIAL, not APPROVE" {
+  # tier0 passed but Tier 1A/1B never ran. A review that skipped its mandatory
+  # tasks is incomplete — not approved.
+  run bash "$SCRIPT" "$FIXTURES/tier1-not-run.json" "$HEAD_SHA"
+  [ "$status" -eq 0 ]
+  [ "$output" = "PARTIAL" ]
+}
+
 @test "review-verdict: HIGH risk without tier2 complete → PARTIAL" {
   # Tier 2 is mandatory for HIGH-risk work; a clean LOW PR does not need it.
   run bash "$SCRIPT" "$FIXTURES/high-no-tier2.json" "$HEAD_SHA"

@@ -70,12 +70,16 @@ for finding in findings:
         print("REJECT")
         sys.exit(0)
 
-# Rule 5: any task that is neither healthy ("pass"/"complete") nor a permitted
-# "not_run" leaves the review partial.
+# Rule 5: mandatory tasks (tier0, review-analysis, adversarial-execution) must
+# reach "pass" or "complete". Only tier2 may stay "not_run" (escalation-only).
+MANDATORY = {"tier0", "review-analysis", "adversarial-execution"}
 for name, value in tasks.items():
-    if value not in ("pass", "complete") and value != "not_run":
-        print("PARTIAL")
-        sys.exit(0)
+    if value in ("pass", "complete"):
+        continue
+    if value == "not_run" and name not in MANDATORY:
+        continue
+    print("PARTIAL")
+    sys.exit(0)
 
 # Rule 6: HIGH-risk work needs Tier 2 independent verification.
 if verdict.get("risk_class") == "HIGH" and tasks.get("tier2") != "complete":
