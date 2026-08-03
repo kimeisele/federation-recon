@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://federation-recon/schemas/review-verdict.schema.json",
+  "title": "Review Verdict",
+  "description": "Checkpointed result of one review-pipeline run, bound to the reviewed PR head SHA. The verdict field records what the run decided; the deterministic aggregator (scripts/review-verdict.sh) recomputes it from tasks and findings rather than trusting the stored copy. See docs/review-pipeline-spec-v0.md §Verdict schema.",
+  "type": "object",
+  "required": ["schema", "run_id", "pr_number", "subject_head_sha", "risk_class", "timestamp", "tasks", "findings", "verdict"],
+  "properties": {
+    "schema": { "const": "review-verdict-v1" },
+    "run_id": { "type": "string", "pattern": "^rv-[0-9]{8}-[0-9]{3}$" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "subject_head_sha": { "type": "string", "minLength": 7 },
+    "risk_class": { "type": "string", "enum": ["LOW", "HIGH"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "tasks": {
+      "type": "object",
+      "description": "Exactly the four pipeline tiers. tier0 and the two Tier 1 tasks are mandatory; tier2 runs only on escalation.",
+      "required": ["tier0", "review-analysis", "adversarial-execution", "tier2"],
+      "additionalProperties": false,
+      "properties": {
+        "tier0": { "type": "string", "enum": ["pass", "fail", "complete", "not_run", "error"] },
+        "review-analysis": { "type": "string", "enum": ["pass", "fail", "complete", "not_run", "error"] },
+        "adversarial-execution": { "type": "string", "enum": ["pass", "fail", "complete", "not_run", "error"] },
+        "tier2": { "type": "string", "enum": ["pass", "fail", "complete", "not_run", "error"] }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "tier", "task", "severity", "summary", "verification_status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "tier": { "type": "integer", "minimum": 0, "maximum": 2 },
+          "task": { "type": "string" },
+          "severity": { "type": "string", "enum": ["blocking", "non-blocking"] },
+          "summary": { "type": "string" },
+          "verification_status": { "type": "string", "enum": ["confirmed", "rejected", "inconclusive", "not_run"] }
+        }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["APPROVE", "REJECT", "PARTIAL", "STALE"] }
+  },
+  "additionalProperties": false
+}

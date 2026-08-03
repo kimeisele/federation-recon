@@ -1,0 +1,16 @@
+{
+  "schema": "review-verdict-v1",
+  "run_id": "rv-20260803-007",
+  "pr_number": 178,
+  "subject_head_sha": "abc1234def5678",
+  "risk_class": "HIGH",
+  "timestamp": "2026-08-03T12:00:00Z",
+  "tasks": {
+    "tier0": "pass",
+    "review-analysis": "complete",
+    "adversarial-execution": "complete",
+    "tier2": "not_run"
+  },
+  "findings": [],
+  "verdict": "PARTIAL"
+}
