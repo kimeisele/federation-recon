@@ -1,42 +1,42 @@
 {
-  "run_timestamp": "2026-08-03T04:09:23Z",
+  "run_timestamp": "2026-08-04T03:51:31Z",
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
   "candidates": [
     {
       "slug": "agent-music",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "agent-red-team",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "agent-research",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "agent-template-proof-node-01",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "agent-village",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "hermes-sankhya-25",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     },
     {
       "slug": "steward-test",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-03T04:09:23Z"
+      "observation_date": "2026-08-04T03:51:31Z"
     }
   ]
 }

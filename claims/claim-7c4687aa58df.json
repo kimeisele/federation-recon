@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": "docs/FEDERATION_ROLES.md",
   "claim_text": "kimeisele/agent-world/docs/FEDERATION_ROLES.md asserts 9 role definitions; last audited: 2026-03-15; maturity_assessment_table=yes",
-  "observed_at": "2026-08-03T04:09:39Z",
+  "observed_at": "2026-08-04T03:51:47Z",
   "repository_pin": "pins/v0-boundary-drift/agent-world.json"
 }
