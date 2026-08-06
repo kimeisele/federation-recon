@@ -1,19 +1,19 @@
 {
   "digest_type": "composed_federation",
   "composer_version": "v2",
-  "composed_at": "2026-08-05T03:46:58Z",
+  "composed_at": "2026-08-06T03:52:42Z",
   "procedure_count": 4,
   "procedures": [
     {
       "procedure_id": "node-census-v1",
       "procedure_version": "v1",
-      "run_timestamp": "2026-08-05T03:46:21Z",
+      "run_timestamp": "2026-08-06T03:52:11Z",
       "summary": {}
     },
     {
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0",
-      "run_timestamp": "2026-08-05T03:46:35Z",
+      "run_timestamp": "2026-08-06T03:52:24Z",
       "summary": {
         "pins": 7,
         "claims": 30,
@@ -28,7 +28,7 @@
     {
       "procedure_id": "v1-census",
       "procedure_version": "v1",
-      "run_timestamp": "2026-08-05T03:46:21Z",
+      "run_timestamp": "2026-08-06T03:52:11Z",
       "summary": {
         "pins": 7,
         "evidence": 65,
@@ -44,7 +44,7 @@
     {
       "procedure_id": "v2-consumption",
       "procedure_version": "v2",
-      "run_timestamp": "2026-08-05T03:46:58Z",
+      "run_timestamp": "2026-08-06T03:52:42Z",
       "summary": {
         "pins": 6,
         "finding_references": 0,
