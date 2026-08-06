@@ -326,7 +326,7 @@ for i, finding in enumerate(findings):
         continue
 
     if not cmd or not cmd.strip():
-        # Blocking without command -> downgrade
+        finding["claimed_severity"] = "blocking"
         finding["severity"] = "non-blocking"
         finding["verification_status"] = "inconclusive"
         finding["summary"] = "[unverified] " + finding.get("summary", "")
@@ -334,6 +334,7 @@ for i, finding in enumerate(findings):
 
     cmd_count += 1
     if cmd_count > max_cmds:
+        finding["claimed_severity"] = "blocking"
         finding["severity"] = "non-blocking"
         finding["verification_status"] = "inconclusive"
         finding["summary"] = "[unverified] " + finding.get("summary", "")
@@ -361,13 +362,15 @@ for i, finding in enumerate(findings):
         else:
             finding["verification_status"] = "rejected"
     except subprocess.TimeoutExpired:
+        finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
         finding["summary"] = "[timeout] " + finding.get("summary", "")
     except Exception as exc:
+        finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
-        finding["summary"] = "[error] " + finding.get("summary", "")
+        finding["summary"] = "[error: %s] %s" % (exc, finding.get("summary", ""))
 
 artifact["findings"] = findings
 with open(artifact_path, "w") as fh:
@@ -814,19 +817,21 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
 
   # ---- 8. Tier 2 — independent verification (stub) -----------------------
   # Escalation triggers (spec §Tier 2): risk_class HIGH, a confirmed blocking
-  # finding from Tier 1, or an inconclusive Tier 1 (error).
+  # finding, an inconclusive finding (unverifiable claim), or a Tier 1 error.
   for _stem in tier1a tier1b; do
     _artifact="$run_dir/${_stem}.json"
     if [ -f "$_artifact" ]; then
-      _has_blocking="$(python3 -c "
+      _escalate="$(python3 -c "
 import json
 a = json.load(open('$_artifact'))
-print('yes' if any(
+findings = a.get('findings', [])
+has_confirmed = any(
     f.get('severity')=='blocking' and f.get('verification_status')=='confirmed'
-    for f in a.get('findings',[])
-) else 'no')
+    for f in findings)
+has_inconclusive = any(f.get('verification_status')=='inconclusive' for f in findings)
+print('yes' if has_confirmed or has_inconclusive else 'no')
 " 2>/dev/null || echo no)"
-      [ "$_has_blocking" = "yes" ] && has_blocking_finding=true
+      [ "$_escalate" = "yes" ] && has_blocking_finding=true
     fi
   done
   if [ "$tier1a_status" = "error" ] || [ "$tier1b_status" = "error" ]; then

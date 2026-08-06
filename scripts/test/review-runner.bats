@@ -593,12 +593,18 @@ import json, sys
 artifact = json.load(open(sys.argv[1]))
 f = artifact["findings"][0]
 assert f["severity"] == "non-blocking"
+assert f["claimed_severity"] == "blocking"
 assert f["verification_status"] == "inconclusive"
 assert f["summary"].startswith("[unverified] ")
 verdict = json.load(open(sys.argv[2]))
 assert verdict["findings"][0]["severity"] == "non-blocking"
 assert verdict["verdict"] == "APPROVE"
 PYEOF
+
+  # An inconclusive finding IS an escalation trigger: the model made a
+  # blocking claim it couldn't back up, so Tier 2 should investigate.
+  [ -f "$run_dir/tier2.json" ]
+  [ "$(_verdict_field "$run_dir/tier2.json" status)" = "not_run" ]
 }
 
 # ────────────────────────────────────────────────────────────
