@@ -199,6 +199,7 @@ payload = {
 }
 if json_mode == "1":
     payload["response_format"] = {"type": "json_object"}
+payload["max_tokens"] = 32768
 with open(request_path, "w") as handle:
     json.dump(payload, handle, indent=2)
 PYEOF
@@ -207,6 +208,8 @@ PYEOF
     return 0
   fi
 
+  local call_start call_end elapsed_seconds
+  call_start="$(date +%s)"
   if ! curl --silent --show-error --max-time "$REVIEW_TIMEOUT" \
       --request POST \
       --url "${REVIEW_API_BASE}/v1/chat/completions" \
@@ -218,11 +221,14 @@ PYEOF
     printf 'error'
     return 0
   fi
+  call_end="$(date +%s)"
+  elapsed_seconds="$((call_end - call_start))"
 
-  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" <<'PYEOF'; then
+  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" "$elapsed_seconds" <<'PYEOF'; then
 import json, os, sys
 
 run_id, task, stem, provider, run_dir = sys.argv[1:6]
+elapsed_seconds = int(sys.argv[6]) if len(sys.argv) > 6 else None
 response_path = os.path.join(run_dir, stem + ".response.json")
 artifact_path = os.path.join(run_dir, stem + ".json")
 
@@ -260,18 +266,23 @@ except Exception as exc:
     sys.stderr.write("review: non-JSON %s content: %s\n" % (stem, exc))
     sys.exit(1)
 
+usage = response.get("usage", {})
 artifact = {
     "run_id": run_id,
     "task": task,
     "status": "complete",
-    # Model provenance: the model field from the API RESPONSE, not the
-    # requested REVIEW_MODEL. Future verification that the reviewer differs
-    # from the builder reads this. Bootstrapping records only; no enforcement.
     "model": model,
     "provider": provider,
     "findings": findings,
     "commentary": parsed.get("commentary", ""),
     "response_json": parsed,
+    "timing": {
+        "elapsed_seconds": elapsed_seconds,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "reasoning_tokens": usage.get("completion_tokens_details", {}).get("reasoning_tokens"),
+        "finish_reason": finish_reason,
+    },
 }
 
 with open(artifact_path, "w") as handle:
