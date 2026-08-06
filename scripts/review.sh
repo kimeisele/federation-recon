@@ -15,8 +15,10 @@
 # writing a review result must never change the branch under review
 # (docs/review-pipeline-spec-v0.md). Tier 1A and Tier 1B make one model call
 # each against a swappable provider (REVIEW_* environment) and record their
-# status in per-phase artifacts; Tier 2 remains a stub recording "not_run"
-# until a later PR wires escalation.
+# status in per-phase artifacts. The model returns strict JSON: findings with
+# severity and, for blocking findings, a verification_command that is executed
+# in the worktree before the verdict is assembled. Tier 2 remains a stub
+# recording "not_run" until a later PR wires escalation.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -79,14 +81,16 @@ mkdir -p "$run_dir"
 
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# ---- Constants for the stub pipeline --------------------------------------
+# ---- Constants for the review pipeline --------------------------------------
 
 # Risk classification is a separate concern (spec: "What this does NOT
 # change"); until a classifier exists every run records LOW.
 risk_class="LOW"
-# Tier artifacts record findings for the operator, but v0 does not wire them
-# into the verdict: verdict aggregation stays deterministic (finalize always
-# writes an empty findings list) and finding-driven escalation stays inert.
+# Tier artifacts record structured JSON findings. Blocking findings carry a
+# verification_command that is executed in the worktree, and only findings
+# whose verification confirms them can escalate to Tier 2 or reject the PR.
+# Verdict aggregation stays deterministic in scripts/review-verdict.sh;
+# finalize never fabricates an empty findings list.
 has_blocking_finding=false
 tier1_inconclusive=false     # tiers report complete/error only, never inconclusive
 
@@ -130,13 +134,20 @@ fi
 # $DEEPSEEK_API_KEY inside the default would abort when neither variable is
 # set.
 REVIEW_PROVIDER="${REVIEW_PROVIDER:-deepseek}"
-REVIEW_MODEL="${REVIEW_MODEL:-deepseek-chat}"
+REVIEW_MODEL="${REVIEW_MODEL:-deepseek-v4-flash}"
 REVIEW_API_KEY="${REVIEW_API_KEY:-${DEEPSEEK_API_KEY:-}}"
 REVIEW_API_BASE="${REVIEW_API_BASE:-https://api.deepseek.com}"
 # Model call timeout, from docs/review-pipeline-spec-v0.md ("Model call
 # timeout: 300s per call"). Overridable so a test can exercise the timeout
 # path without waiting five minutes.
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-300}"
+
+# JSON output mode: the model contract (both system prompts) is strict JSON,
+# and the request advertises it via response_format so the provider does not
+# wrap the answer in prose or markdown fencing. The parser always expects a
+# JSON object; this flag only controls whether the format hint reaches the
+# provider as a schema hint on the wire.
+REVIEW_JSON_MODE="${REVIEW_JSON_MODE:-1}"
 
 # _write_tier_error <task> <artifact-path> <message> — record a failed tier as
 # an "error" artifact. The runner's contract is "exit 0 always": a failed
@@ -171,10 +182,10 @@ _tier_call() {
   local curl_log="$run_dir/${stem}.curl.log"
   local artifact_path="$run_dir/${stem}.json"
 
-  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" <<'PYEOF'; then
+  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" "$REVIEW_JSON_MODE" <<'PYEOF'; then
 import json, sys
 
-request_path, system_path, user_path, model = sys.argv[1:5]
+request_path, system_path, user_path, model, json_mode = sys.argv[1:6]
 with open(system_path) as handle:
     system = handle.read()
 with open(user_path) as handle:
@@ -186,6 +197,8 @@ payload = {
         {"role": "user", "content": user},
     ],
 }
+if json_mode == "1":
+    payload["response_format"] = {"type": "json_object"}
 with open(request_path, "w") as handle:
     json.dump(payload, handle, indent=2)
 PYEOF
@@ -207,7 +220,7 @@ PYEOF
   fi
 
   if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" <<'PYEOF'; then
-import json, os, re, sys
+import json, os, sys
 
 run_id, task, stem, provider, run_dir = sys.argv[1:6]
 response_path = os.path.join(run_dir, stem + ".response.json")
@@ -221,30 +234,31 @@ try:
         response = json.load(handle)
     model = response["model"]
     content = response["choices"][0]["message"]["content"]
+    finish_reason = response["choices"][0].get("finish_reason")
 except Exception as exc:
     sys.stderr.write("review: unparseable %s response: %s\n" % (stem, exc))
     sys.exit(1)
 
-# Findings extraction, best effort: numbered lines in the report are the
-# findings, and a closing "verdict: APPROVE|REJECT" line is the direction the
-# model chose. This is a record for the operator, not the verdict — the
-# deterministic aggregator (scripts/review-verdict.sh) remains the only
-# authority on the verdict word. A parsing hiccup must never crash the
-# runner: unparseable content yields an empty findings array, not a failure.
-findings = []
-verdict_line = None
-for line in content.splitlines():
-    stripped = line.strip()
-    m = re.match(r"^(\*\*)?verdict:\s*(approve|reject)(\*\*)?\s*$", stripped, re.IGNORECASE)
-    if m:
-        verdict_line = m.group(2).upper()
-        continue
-    # Headings ("## 1. ...") are structure, not findings.
-    if re.match(r"^#{1,6}\s", stripped):
-        continue
-    # Numbered findings look like "1. ...", "2b. ...", "**2b. ...**".
-    if re.match(r"^(\*\*)?\d{1,3}[a-z]?\.(\*\*)?\s", stripped):
-        findings.append({"summary": stripped})
+# A "length" finish_reason means the completion was cut off: the model
+# stopped mid-JSON. Half an object is neither parsable nor trustworthy, so
+# the tier is an error, never an empty-findings approval.
+if finish_reason == "length":
+    sys.exit("truncated response (finish_reason: length)")
+
+# The model contract (system prompt) is strict JSON: a JSON object with
+# "findings" and "commentary". Anything else is a contract violation and an
+# error, NOT empty findings — a model that stopped following the format
+# decided nothing. The parsed object is preserved as response_json.
+try:
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise ValueError("content is not a JSON object")
+    findings = parsed.get("findings", [])
+    if not isinstance(findings, list):
+        findings = []
+except Exception as exc:
+    sys.stderr.write("review: non-JSON %s content: %s\n" % (stem, exc))
+    sys.exit(1)
 
 artifact = {
     "run_id": run_id,
@@ -255,11 +269,10 @@ artifact = {
     # from the builder reads this. Bootstrapping records only; no enforcement.
     "model": model,
     "provider": provider,
-    "response_text": content,
     "findings": findings,
+    "commentary": parsed.get("commentary", ""),
+    "response_json": parsed,
 }
-if verdict_line is not None:
-    artifact["verdict_line"] = verdict_line
 
 with open(artifact_path, "w") as handle:
     json.dump(artifact, handle, indent=2)
@@ -271,6 +284,97 @@ PYEOF
   fi
 
   printf 'complete'
+}
+
+# ---- 7.5 Finding verification ---------------------------------------------
+
+# Blocking findings are executed in the worktree, never trusted on the model's
+# word: a blocking claim without a verification_command, or one that times out
+# or errors, is downgraded to non-blocking and marked inconclusive. Verified
+# findings get a per-finding log (verify.<stem>.<i>.log) recording the command,
+# its exit code, and stdout/stderr.
+REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
+REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
+
+# _verify_findings <worktree> — execute every blocking finding's
+# verification_command in the worktree and stamp the finding with its result:
+# confirmed (exit 0), rejected (non-zero), or inconclusive (downgraded).
+_verify_findings() {
+  local wt_dir="$1"
+  for _stem in tier1a tier1b; do
+    local artifact="$run_dir/${_stem}.json"
+    [ -f "$artifact" ] || continue
+    python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
+      "$REVIEW_VERIFY_TIMEOUT" "$REVIEW_VERIFY_MAX" <<'PYEOF'
+import json, os, subprocess, sys
+
+artifact_path, wt_dir, run_dir, stem = sys.argv[1:5]
+timeout_s, max_cmds = int(sys.argv[5]), int(sys.argv[6])
+
+with open(artifact_path) as fh:
+    artifact = json.load(fh)
+
+findings = artifact.get("findings", [])
+cmd_count = 0
+
+for i, finding in enumerate(findings):
+    sev = finding.get("severity", "non-blocking")
+    cmd = finding.get("verification_command", "")
+
+    if sev != "blocking":
+        finding["verification_status"] = "not_run"
+        continue
+
+    if not cmd or not cmd.strip():
+        # Blocking without command -> downgrade
+        finding["severity"] = "non-blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["summary"] = "[unverified] " + finding.get("summary", "")
+        continue
+
+    cmd_count += 1
+    if cmd_count > max_cmds:
+        finding["severity"] = "non-blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["summary"] = "[unverified] " + finding.get("summary", "")
+        continue
+
+    log_path = os.path.join(run_dir, "verify.%s.%d.log" % (stem, i))
+    try:
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=wt_dir,
+            timeout=timeout_s,
+            capture_output=True,
+        )
+        with open(log_path, "wb") as log:
+            log.write(b"=== command ===\n")
+            log.write(cmd.encode() + b"\n")
+            log.write(b"=== exit code: %d ===\n" % result.returncode)
+            log.write(b"=== stdout ===\n")
+            log.write(result.stdout)
+            log.write(b"=== stderr ===\n")
+            log.write(result.stderr)
+
+        if result.returncode == 0:
+            finding["verification_status"] = "confirmed"
+        else:
+            finding["verification_status"] = "rejected"
+    except subprocess.TimeoutExpired:
+        finding["verification_status"] = "inconclusive"
+        finding["severity"] = "non-blocking"
+        finding["summary"] = "[timeout] " + finding.get("summary", "")
+    except Exception as exc:
+        finding["verification_status"] = "inconclusive"
+        finding["severity"] = "non-blocking"
+        finding["summary"] = "[error] " + finding.get("summary", "")
+
+artifact["findings"] = findings
+with open(artifact_path, "w") as fh:
+    json.dump(artifact, fh, indent=2)
+    fh.write("\n")
+PYEOF
+  done
 }
 
 # The system prompts embed the questions they cover, quoted from
@@ -385,11 +489,19 @@ rejecting. If this is not a follow-up round, state that and move on.
 Be blunt. Recommend rejection if warranted. A rubber-stamp review is worse than
 no review, because it manufactures the appearance of a check.
 
-If you approve **with conditions**, return `verdict: REJECT` and list them.
-An `APPROVE` carrying unmet blocking conditions has already been merged past
-once in this repository, because the reader stopped at the verdict line.
+You MUST respond with a JSON object. Your response must be valid JSON and nothing else — no markdown fencing, no preamble, no trailing text.
 
-End with a line reading exactly `verdict: APPROVE` or `verdict: REJECT`.
+Return your analysis as:
+
+{"findings":[{"question":"4c","severity":"blocking","category":"substrate-dependency","file":"scripts/review.sh","line":685,"summary":"One-sentence description of the defect","verification_command":"shell command that exits 0 if the defect is real, non-zero if not"}],"commentary":"Your full analysis text here."}
+
+Rules:
+- severity "blocking" means this defect must prevent merge. You MUST provide a verification_command for every blocking finding. A blocking claim without a command will be downgraded to non-blocking.
+- severity "non-blocking" is an observation or suggestion. No verification_command needed.
+- verification_command: a self-contained shell command that runs in the PR worktree and exits 0 if the defect is real, non-zero if it is not. It will be executed. Do not fake it.
+- question: which adversarial-review.md question this finding addresses (1, 1b, 1c, 2, 3, 4, 4b, 4c, 5, 6, 7, 8, 9, 10, 11).
+- file and line are optional but preferred.
+- An empty findings array is a valid response if nothing is wrong.
 PROMPT
 
   {
@@ -411,8 +523,9 @@ PROMPT
 #
 # IMPORTANT: the model call does NOT get shell access. The worktree path and
 # file listing are shown, and the model returns the commands it WOULD run in
-# that worktree and the predicted outcomes. Actual execution is a future
-# enhancement; the artifact records the plan, not a claim that anything ran.
+# that worktree and the predicted outcomes. Blocking findings must carry a
+# verification_command; _verify_findings executes those in the worktree after
+# the call so a blocking claim is checked, not trusted.
 _tier1b() {
   local wt_dir="$1"
   local stem="tier1b"
@@ -483,11 +596,19 @@ change adds a check, give the exact command to execute it against its own diff.
 Be blunt. Recommend rejection if warranted. A rubber-stamp review is worse than
 no review, because it manufactures the appearance of a check.
 
-If you approve **with conditions**, return `verdict: REJECT` and list them.
-An `APPROVE` carrying unmet blocking conditions has already been merged past
-once in this repository, because the reader stopped at the verdict line.
+You MUST respond with a JSON object. Your response must be valid JSON and nothing else — no markdown fencing, no preamble, no trailing text.
 
-End with a line reading exactly `verdict: APPROVE` or `verdict: REJECT`.
+Return your analysis as:
+
+{"findings":[{"question":"4c","severity":"blocking","category":"substrate-dependency","file":"scripts/review.sh","line":685,"summary":"One-sentence description of the defect","verification_command":"shell command that exits 0 if the defect is real, non-zero if not"}],"commentary":"Your full analysis text here."}
+
+Rules:
+- severity "blocking" means this defect must prevent merge. You MUST provide a verification_command for every blocking finding. A blocking claim without a command will be downgraded to non-blocking.
+- severity "non-blocking" is an observation or suggestion. No verification_command needed.
+- verification_command: a self-contained shell command that runs in the PR worktree and exits 0 if the defect is real, non-zero if it is not. It will be executed. Do not fake it.
+- question: which adversarial-review.md question this finding addresses (1, 1b, 1c, 2, 3, 4, 4b, 4c, 5, 6, 7, 8, 9, 10, 11).
+- file and line are optional but preferred.
+- An empty findings array is a valid response if nothing is wrong.
 PROMPT
 
   {
@@ -526,9 +647,9 @@ PYEOF
 # ---- Verdict assembly and aggregation (functions) -------------------------
 
 # write_verdict <subject_sha> <tier0> <tier1a> <tier1b> <tier2> — assemble the
-# verdict artifact via python3 so escaping cannot corrupt the JSON. Collects
-# findings from tier artifacts and promotes verdict_line: REJECT to a blocking
-# finding so the aggregator can act on it.
+# verdict artifact via python3 so escaping cannot corrupt the JSON. Passes
+# tier findings through with their severity and verification status so the
+# deterministic aggregator can act on verified blocking findings.
 write_verdict() {
   local subject_sha="$1" t0="$2" t1a="$3" t1b="$4" t2="$5"
   python3 - "$run_id" "$pr_number" "$subject_sha" "$risk_class" "$timestamp" \
@@ -556,24 +677,14 @@ for stem, meta in TIER_MAP.items():
     except Exception:
         continue
 
-    if artifact.get("verdict_line") == "REJECT":
-        findings.append({
-            "id": "%s-verdict" % stem,
-            "tier": meta["tier"],
-            "task": meta["task"],
-            "severity": "blocking",
-            "summary": "reviewer returned verdict: REJECT",
-            "verification_status": "confirmed",
-        })
-
     for i, raw in enumerate(artifact.get("findings", []), 1):
         findings.append({
             "id": "%s-%03d" % (stem, i),
             "tier": meta["tier"],
             "task": meta["task"],
-            "severity": "non-blocking",
+            "severity": raw.get("severity", "non-blocking"),
             "summary": raw.get("summary", "(unparseable)")[:500],
-            "verification_status": "not_run",
+            "verification_status": raw.get("verification_status", "not_run"),
         })
 
 verdict = {
@@ -694,14 +805,28 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   # ---- 7. Tier 1B — adversarial execution (model call) --------------------
   tier1b_status="$(_tier1b "$wt_dir")"
 
+  # ---- 7.5 Verify findings -------------------------------------------------
+  # Execute every blocking finding's verification_command in the worktree so
+  # only verified findings can drive the verdict or escalation.
+  if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
+    _verify_findings "$wt_dir"
+  fi
+
   # ---- 8. Tier 2 — independent verification (stub) -----------------------
-  # Escalation triggers (spec §Tier 2): risk_class HIGH, a blocking finding
-  # (verdict_line REJECT from Tier 1), or an inconclusive Tier 1 (error).
+  # Escalation triggers (spec §Tier 2): risk_class HIGH, a confirmed blocking
+  # finding from Tier 1, or an inconclusive Tier 1 (error).
   for _stem in tier1a tier1b; do
     _artifact="$run_dir/${_stem}.json"
     if [ -f "$_artifact" ]; then
-      _vl="$(python3 -c "import json; print(json.load(open('$_artifact')).get('verdict_line',''))" 2>/dev/null || true)"
-      [ "$_vl" = "REJECT" ] && has_blocking_finding=true
+      _has_blocking="$(python3 -c "
+import json
+a = json.load(open('$_artifact'))
+print('yes' if any(
+    f.get('severity')=='blocking' and f.get('verification_status')=='confirmed'
+    for f in a.get('findings',[])
+) else 'no')
+" 2>/dev/null || echo no)"
+      [ "$_has_blocking" = "yes" ] && has_blocking_finding=true
     fi
   done
   if [ "$tier1a_status" = "error" ] || [ "$tier1b_status" = "error" ]; then
