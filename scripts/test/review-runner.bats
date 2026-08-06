@@ -25,27 +25,28 @@
 #   * a review that cannot start (gh failure) records PARTIAL and exits 0
 #   * the only non-zero exit is a usage error
 
-setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
-  SANDBOX="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
-  mkdir -p "$SANDBOX/mockbin" "$SANDBOX/tmp" "$SANDBOX/home"
+# ────────────────────────────────────────────────────────────
+# setup_file / teardown_file — heavy lifting once per file
+# ────────────────────────────────────────────────────────────
 
-  # A disposable fixture repository that looks like a federation-recon
-  # checkout: the real review.sh, the real aggregator, the real schema, and a
-  # stand-in gate.sh. The worktree the runner cuts is carved from this
-  # fixture, so the gate that runs inside it is the stand-in — fast and
-  # offline — never the real gate (which would recurse into this very suite).
-  FIXTURE="$SANDBOX/fixture"
+setup_file() {
+  # Tests share one fixture git repo and assert worktree counts, so they
+  # must not run concurrently within this file. Cross-file parallelism is ok.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
+  export REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
+
+  FILE_SANDBOX="$BATS_FILE_TMPDIR/shared"
+  mkdir -p "$FILE_SANDBOX/mockbin"
+
+  export FIXTURE="$FILE_SANDBOX/fixture"
   mkdir -p "$FIXTURE/scripts" "$FIXTURE/schemas"
   cp "$REPO_ROOT/scripts/review.sh" "$FIXTURE/scripts/review.sh"
   cp "$REPO_ROOT/scripts/review-verdict.sh" "$FIXTURE/scripts/review-verdict.sh"
   cp "$REPO_ROOT/schemas/review-verdict.schema.json" "$FIXTURE/schemas/"
 
-  # Stand-in gate: records the directory it ran in (which must be the
-  # disposable worktree) and exits with the configured status.
   cat > "$FIXTURE/scripts/gate.sh" <<'GATESCRIPT'
 #!/usr/bin/env bash
-# Stand-in gate for review-runner tests: fast, offline, deterministic.
 echo "fixture gate: ${MOCK_GATE_STATUS:-0}"
 if [ -n "${MOCK_GATE_CWD_FILE:-}" ]; then
   printf '%s\n' "$PWD" > "$MOCK_GATE_CWD_FILE"
@@ -61,9 +62,7 @@ GATESCRIPT
   git -C "$FIXTURE" commit -qm "fixture"
   export MOCK_HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
-  # Mock gh: the runner calls `pr view ... --json headRefOid` (head SHA),
-  # `pr view ... --json body` (PR description) and `pr diff` (the diff).
-  cat > "$SANDBOX/mockbin/gh" <<'GHSCRIPT'
+  cat > "$FILE_SANDBOX/mockbin/gh" <<'GHSCRIPT'
 #!/usr/bin/env bash
 if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
   echo "mock gh: failing on request" >&2
@@ -83,15 +82,9 @@ fi
 echo "mock gh: unexpected invocation: $*" >&2
 exit 2
 GHSCRIPT
-  chmod +x "$SANDBOX/mockbin/gh"
+  chmod +x "$FILE_SANDBOX/mockbin/gh"
 
-  # Mock curl: the runner makes one provider call per tier. The mock records
-  # its arguments (so tests can assert the endpoint and timeout reached the
-  # wire), fails on demand, and otherwise prints a canned chat-completions
-  # response. The model contract is strict JSON, so the default content field
-  # holds a JSON object with an empty findings array and a clean commentary;
-  # runs that are not about the provider path still aggregate to APPROVE.
-  cat > "$SANDBOX/mockbin/curl" <<'CURLSCRIPT'
+  cat > "$FILE_SANDBOX/mockbin/curl" <<'CURLSCRIPT'
 #!/usr/bin/env bash
 if [ -n "${MOCK_CURL_ARGS_FILE:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_CURL_ARGS_FILE"
@@ -103,25 +96,43 @@ fi
 printf '%s\n' "$MOCK_CURL_RESPONSE"
 exit 0
 CURLSCRIPT
-  chmod +x "$SANDBOX/mockbin/curl"
+  chmod +x "$FILE_SANDBOX/mockbin/curl"
+
+  export MOCKBIN="$FILE_SANDBOX/mockbin"
+}
+
+teardown_file() {
+  if [ -d "${FIXTURE:-}/.git" ]; then
+    git -C "$FIXTURE" worktree prune 2>/dev/null || true
+  fi
+}
+
+# ────────────────────────────────────────────────────────────
+# setup / teardown — lightweight per-test isolation
+# ────────────────────────────────────────────────────────────
+
+setup() {
+  SANDBOX="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
+  mkdir -p "$SANDBOX/tmp" "$SANDBOX/home"
+
   export MOCK_CURL_ARGS_FILE="$SANDBOX/mock-curl-args.txt"
   export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
 
-  export MOCK_PR_BODY="${MOCK_PR_BODY:-Fixture PR body: a stand-in description.}"
-  export MOCK_PR_DIFF="${MOCK_PR_DIFF:-diff --git a/fixture.txt b/fixture.txt
+  unset MOCK_GH_FAIL MOCK_CURL_FAIL MOCK_GATE_STATUS MOCK_GATE_CWD_FILE
+  export MOCK_PR_BODY="Fixture PR body: a stand-in description."
+  export MOCK_PR_DIFF="diff --git a/fixture.txt b/fixture.txt
 index 0000000..1111111 100644
 --- a/fixture.txt
 +++ b/fixture.txt
 @@ -0,0 +1 @@
 +fixture
-}"
+"
 
   export REVIEWS_ROOT="$SANDBOX/home/.local/share/federation-recon/reviews"
   mkdir -p "$REVIEWS_ROOT"
 }
 
 teardown() {
-  # Safety net: stop any background review a test left behind.
   for pid in $(jobs -pr); do
     kill -TERM "$pid" 2>/dev/null || true
   done
@@ -132,7 +143,7 @@ teardown() {
 # environment: mocked gh on PATH, HOME redirected so artifacts land in the
 # sandbox, TMPDIR redirected so worktrees land where the tests look.
 run_review() {
-  HOME="$SANDBOX/home" PATH="$SANDBOX/mockbin:$PATH" TMPDIR="$SANDBOX/tmp" \
+  HOME="$SANDBOX/home" PATH="$MOCKBIN:$PATH" TMPDIR="$SANDBOX/tmp" \
     bash "$FIXTURE/scripts/review.sh" "$@"
 }
 
