@@ -255,7 +255,7 @@ try:
         raise ValueError("content is not a JSON object")
     findings = parsed.get("findings", [])
     if not isinstance(findings, list):
-        findings = []
+        raise ValueError("findings field is not a list")
 except Exception as exc:
     sys.stderr.write("review: non-JSON %s content: %s\n" % (stem, exc))
     sys.exit(1)
@@ -318,6 +318,9 @@ findings = artifact.get("findings", [])
 cmd_count = 0
 
 for i, finding in enumerate(findings):
+    if not isinstance(finding, dict):
+        findings[i] = {"severity": "non-blocking", "summary": "(malformed)", "verification_status": "not_run"}
+        continue
     sev = finding.get("severity", "non-blocking")
     cmd = finding.get("verification_command", "")
 
@@ -681,6 +684,8 @@ for stem, meta in TIER_MAP.items():
         continue
 
     for i, raw in enumerate(artifact.get("findings", []), 1):
+        if not isinstance(raw, dict):
+            continue
         findings.append({
             "id": "%s-%03d" % (stem, i),
             "tier": meta["tier"],
