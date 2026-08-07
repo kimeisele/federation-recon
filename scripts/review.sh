@@ -315,7 +315,7 @@ _verify_findings() {
   for _stem in tier1a tier1b; do
     local artifact="$run_dir/${_stem}.json"
     [ -f "$artifact" ] || continue
-    python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
+    if ! python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
       "$REVIEW_VERIFY_TIMEOUT" "$REVIEW_VERIFY_MAX" <<'PYEOF'
 import json, os, subprocess, sys
 
@@ -391,6 +391,9 @@ with open(artifact_path, "w") as fh:
     json.dump(artifact, fh, indent=2)
     fh.write("\n")
 PYEOF
+    then
+      echo "WARNING: verification failed for $_stem; findings not verified" >&2
+    fi
   done
 }
 

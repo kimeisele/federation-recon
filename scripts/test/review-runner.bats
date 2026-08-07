@@ -644,3 +644,34 @@ PYEOF
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
   [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
 }
+
+# ────────────────────────────────────────────────────────────
+#  20. VERIFICATION — a corrupt tier artifact does not crash
+#      the runner (exit 0 always)
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: corrupt tier artifact does not crash the runner" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"real finding\",\"verification_command\":\"true\"}],\"commentary\":\"ok\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  # Corrupt the tier artifact before verification would have run —
+  # but since verification already ran inline, we corrupt and re-run
+  # _verify_findings manually by writing garbage to the artifact and
+  # checking the runner didn't crash on the first run.
+  # Instead: prove the property directly — corrupt the JSON and invoke
+  # the function, confirming it does not crash.
+  echo "NOT JSON" > "$run_dir/tier1a.json"
+  (
+    cd "$REPO_ROOT"
+    export run_dir
+    export REVIEW_VERIFY_TIMEOUT=5
+    export REVIEW_VERIFY_MAX=20
+    # Source the function and call it; set -e is on by default.
+    set -euo pipefail
+    eval "$(sed -n '/_verify_findings()/,/^}/p' scripts/review.sh)"
+    _verify_findings "$FIXTURE" 2>/dev/null
+  )
+  # If we get here, the function did not crash under set -e.
+}
