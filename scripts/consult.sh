@@ -84,6 +84,12 @@ if [ ! -f "$PROMPT" ] && [ -z "${CONSULT_SKIP_RUN:-}" ]; then
   exit 2
 fi
 
+if [ "${CONSULT_AUTHORIZED:-}" != "1" ]; then
+  echo "consult: REFUSED — paid consultation requires explicit owner authorization." >&2
+  echo "  Set CONSULT_AUTHORIZED=1 after owner approval. See governance/reviewers.md." >&2
+  exit 1
+fi
+
 if [ -L "$OUTPUT" ]; then
   echo "consult: refusing — the output path is a symlink: $OUTPUT" >&2
   echo "  The artifact must be the bytes at the path it is cited by; writing" >&2

@@ -59,10 +59,22 @@ _log_for() {
   esac > "$LOG"
 }
 
+@test "consult: refuses without CONSULT_AUTHORIZED" {
+  unset CONSULT_AUTHORIZED 2>/dev/null || true
+  _log_for openai
+  echo "BODY" > "$OUT.stdout"
+  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+      bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REFUSED"* ]]
+  [[ "$output" == *"owner authorization"* ]]
+  [ ! -f "$OUT" ]
+}
+
 @test "consult: the requested provider actually serving is accepted" {
   _log_for openai
   echo "REPORT BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -78,7 +90,7 @@ _log_for() {
   # tool exited 0. This is the test the repository did not have.
   _log_for deepseek
   echo "PLAUSIBLE REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -93,7 +105,7 @@ _log_for() {
   # even when the one asked for is among them.
   _log_for both
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -105,7 +117,7 @@ _log_for() {
   # Not measured must never produce the same outcome as measured-and-fine.
   _log_for empty
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -115,7 +127,7 @@ _log_for() {
 
 @test "consult: an unreadable log is a refusal, not a shrug" {
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$BATS_TEST_TMPDIR/does-not-exist.log" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$BATS_TEST_TMPDIR/does-not-exist.log" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -127,7 +139,7 @@ _log_for() {
   # The check must not simply prefer one provider — it compares.
   _log_for deepseek
   echo "BUILD REPORT" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" deepseek deepseek-v4-flash "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -154,7 +166,7 @@ _log_for() {
   # a consultation.
   _log_for deepseek
   echo "FINDINGS NOBODY SHOULD LOSE" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -174,7 +186,7 @@ _log_for() {
   # the review that found the flaw.
   _log_for openai
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -197,7 +209,7 @@ _log_for() {
     printf '[%s] [INFO] [ses:session_other_1785500000000_ffffffffffffffff|prv:OpenRouter|mod:deepseek] theirs\n' "$now"
   } > "$LOG"
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -252,7 +264,7 @@ _log_for() {
     done
   } > "$LOG"
   echo "REPORT BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -273,7 +285,7 @@ _log_for() {
     done
   } > "$LOG"
   echo "REPORT NOBODY SHOULD KEEP" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -302,7 +314,7 @@ _log_for() {
   # `[ -s dir ]` is true because a directory has a size. consult exited 0 with
   # the requested artifact existing only as <output>/<output>.tmp.
   mkdir -p "$BATS_TEST_TMPDIR/asdir.md"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$BATS_TEST_TMPDIR/asdir.md" "$PROMPT"
   echo "$output"
   [ "$status" -eq 2 ]
@@ -316,7 +328,7 @@ _log_for() {
   _log_for deepseek
   echo "FINDINGS NOBODY SHOULD LOSE" > "$OUT.stdout"
   mkdir -p "$OUT.unattributed"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -339,7 +351,7 @@ _log_for() {
   local truncated="${full:0:20}"
   printf '[%s] [INFO] [ses:%s|prv:OpenAI|mod:gpt-5.6-sol] real shape\n' "$now" "$truncated" > "$LOG"
   echo "BODY" > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$full" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$full" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -369,7 +381,7 @@ _log_for() {
   _log_for openai
   printf 'THE AGENT REPORT\n\nverdict: REJECT\n' > "$OUT"
   printf 'console transcript, tool calls, token counts\n' > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -386,7 +398,7 @@ _log_for() {
   _log_for openai
   rm -f "$OUT"
   printf 'the only output there was\n' > "$OUT.stdout"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -405,7 +417,7 @@ _log_for() {
   target="$BATS_TEST_TMPDIR/elsewhere.txt"
   printf 'DO NOT OVERWRITE ME\n' > "$target"
   ln -s "$target" "$OUT.tmp"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -ne 0 ]
@@ -418,7 +430,7 @@ _log_for() {
   target="$BATS_TEST_TMPDIR/quarantine-elsewhere.txt"
   printf 'DO NOT OVERWRITE ME EITHER\n' > "$target"
   ln -s "$target" "$OUT.unattributed"
-  run env CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
+  run env CONSULT_AUTHORIZED=1 CONSULT_LOG="$LOG" CONSULT_SKIP_RUN=1 CONSULT_TEST_SESSION="$SESSION" \
       bash "$CONSULT" openai gpt-5.6-sol "$OUT" "$PROMPT"
   echo "$output"
   [ "$status" -eq 1 ]
