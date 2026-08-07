@@ -20,6 +20,8 @@
 #   * the deterministic aggregator is called and its word is stored
 #   * Tier 1A/1B record "complete" with the response's model field, or
 #     "error" on a failed provider call — never a crash
+#   * blocking findings are verified by executing their verification_command
+#     in the worktree; only confirmed blocking findings can reject
 #   * a review that cannot start (gh failure) records PARTIAL and exits 0
 #   * the only non-zero exit is a usage error
 
@@ -86,8 +88,9 @@ GHSCRIPT
   # Mock curl: the runner makes one provider call per tier. The mock records
   # its arguments (so tests can assert the endpoint and timeout reached the
   # wire), fails on demand, and otherwise prints a canned chat-completions
-  # response. The default response carries the requested model and a clean
-  # APPROVE, so runs that are not about the provider path still aggregate.
+  # response. The model contract is strict JSON, so the default content field
+  # holds a JSON object with an empty findings array and a clean commentary;
+  # runs that are not about the provider path still aggregate to APPROVE.
   cat > "$SANDBOX/mockbin/curl" <<'CURLSCRIPT'
 #!/usr/bin/env bash
 if [ -n "${MOCK_CURL_ARGS_FILE:-}" ]; then
@@ -102,7 +105,7 @@ exit 0
 CURLSCRIPT
   chmod +x "$SANDBOX/mockbin/curl"
   export MOCK_CURL_ARGS_FILE="$SANDBOX/mock-curl-args.txt"
-  export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"No blocking findings.\nverdict: APPROVE"}}]}'
+  export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
 
   export MOCK_PR_BODY="${MOCK_PR_BODY:-Fixture PR body: a stand-in description.}"
   export MOCK_PR_DIFF="${MOCK_PR_DIFF:-diff --git a/fixture.txt b/fixture.txt
@@ -366,7 +369,7 @@ print(value)
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1a mock success returns complete and writes a valid artifact" {
-  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"1. The claims are overstated.\n2. The gate is untested.\nverdict: REJECT"}}]}'
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate misses a check.\",\"verification_command\":\"test -f scripts/gate.sh\"},{\"question\":\"1c\",\"severity\":\"non-blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -380,23 +383,34 @@ print(value)
   [ "$(_verdict_field "$run_dir/tier1a.json" model)" = "mock-reviewer-model" ]
   [ "$(_verdict_field "$run_dir/tier1a.json" provider)" = "deepseek" ]
 
-  # Findings extraction: the numbered lines became findings, the closing
-  # verdict line was read, and the full model output is preserved.
-  [ "$(_verdict_field "$run_dir/tier1a.json" verdict_line)" = "REJECT" ]
+  # Structured findings: severity and verification_command come from the
+  # model's JSON, the blocking finding was executed in the worktree and
+  # confirmed, the non-blocking finding was never run, and the full analysis
+  # is preserved as commentary plus the parsed response_json. There is no
+  # verdict_line and no raw response_text anymore.
   python3 - "$run_dir/tier1a.json" <<'PYEOF'
 import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert len(artifact["findings"]) == 2
-assert artifact["findings"][0]["summary"] == "1. The claims are overstated."
-assert artifact["findings"][1]["summary"] == "2. The gate is untested."
-assert artifact["response_text"].startswith("1. The claims are overstated.")
+assert artifact["findings"][0]["severity"] == "blocking"
+assert artifact["findings"][0]["verification_command"] == "test -f scripts/gate.sh"
+assert artifact["findings"][0]["verification_status"] == "confirmed"
+assert artifact["findings"][1]["severity"] == "non-blocking"
+assert artifact["findings"][1]["verification_status"] == "not_run"
+assert artifact["commentary"] == "Full analysis text."
+assert artifact["response_json"]["findings"][0]["question"] == "4c"
+assert "verdict_line" not in artifact
+assert "response_text" not in artifact
 PYEOF
 
   # The request actually reached the configured endpoint with the configured
-  # timeout: the mock curl recorded the invocation.
+  # timeout, asked for the configured model, and advertised the JSON output
+  # contract via response_format.
   grep -q "https://api.deepseek.com/v1/chat/completions" "$MOCK_CURL_ARGS_FILE"
   grep -q -- "--max-time 300" "$MOCK_CURL_ARGS_FILE"
-  grep -q '"model": "deepseek-chat"' "$run_dir/tier1a.request.json"
+  grep -q '"model": "deepseek-v4-flash"' "$run_dir/tier1a.request.json"
+  grep -q '"response_format"' "$run_dir/tier1a.request.json"
+  grep -q '"json_object"' "$run_dir/tier1a.request.json"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -425,7 +439,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1b mock success returns complete and writes a valid artifact" {
-  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"1. Execute the evasion in the worktree.\n2. Mutate the gate check.\nverdict: REJECT"}}]}'
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"3\",\"severity\":\"blocking\",\"summary\":\"The gate check is untested.\",\"verification_command\":\"test -f scripts/gate.sh\"},{\"question\":\"1b\",\"severity\":\"non-blocking\",\"summary\":\"The diff itself is the attack.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -435,13 +449,17 @@ PYEOF
   [ "$(_verdict_field "$run_dir/tier1b.json" task)" = "adversarial-execution" ]
   [ "$(_verdict_field "$run_dir/tier1b.json" model)" = "mock-reviewer-model" ]
   [ "$(_verdict_field "$run_dir/tier1b.json" provider)" = "deepseek" ]
-  [ "$(_verdict_field "$run_dir/tier1b.json" verdict_line)" = "REJECT" ]
   python3 - "$run_dir/tier1b.json" <<'PYEOF'
 import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert len(artifact["findings"]) == 2
-assert artifact["findings"][0]["summary"] == "1. Execute the evasion in the worktree."
-assert artifact["findings"][1]["summary"] == "2. Mutate the gate check."
+assert artifact["findings"][0]["severity"] == "blocking"
+assert artifact["findings"][0]["verification_command"] == "test -f scripts/gate.sh"
+assert artifact["findings"][0]["verification_status"] == "confirmed"
+assert artifact["findings"][1]["severity"] == "non-blocking"
+assert artifact["findings"][1]["verification_status"] == "not_run"
+assert artifact["commentary"] == "Full analysis text."
+assert "verdict_line" not in artifact
 PYEOF
 }
 
@@ -474,7 +492,7 @@ PYEOF
   # The provider answers with a different model than the request asked for;
   # the artifact must record the response's model. Bootstrapping records only,
   # no enforcement — but the record is the evidence a future check reads.
-  export MOCK_CURL_RESPONSE='{"model":"served-by-another-provider","choices":[{"message":{"content":"No numbered findings.\nverdict: APPROVE"}}]}'
+  export MOCK_CURL_RESPONSE='{"model":"served-by-another-provider","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -483,13 +501,177 @@ PYEOF
   [ "$(_verdict_field "$run_dir/tier1b.json" model)" = "served-by-another-provider" ]
 
   # The request asked for the configured model; who answered is recorded
-  # separately. And a response with no numbered findings still parses: the
-  # findings array is empty, not an error.
-  grep -q '"model": "deepseek-chat"' "$run_dir/tier1a.request.json"
+  # separately. And an empty findings array is a valid, complete response:
+  # the tier is complete with no findings, not an error.
+  grep -q '"model": "deepseek-v4-flash"' "$run_dir/tier1a.request.json"
   python3 - "$run_dir/tier1a.json" <<'PYEOF'
 import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert artifact["findings"] == []
-assert artifact["verdict_line"] == "APPROVE"
+assert artifact["commentary"] == "No issues found."
+assert artifact["status"] == "complete"
 PYEOF
+}
+
+# ────────────────────────────────────────────────────────────
+#  15. VERIFICATION — a blocking finding whose command exits 0
+#      is confirmed and rejects
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: blocking finding verified by its command aggregates to REJECT" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate would miss a real defect.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"The blocking defect is real.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  # The verification command ran in the worktree and exited 0, so the
+  # finding is confirmed — and a confirmed blocking finding rejects.
+  python3 - "$run_dir/tier1a.json" "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "blocking"
+assert f["verification_command"] == "test -f scripts/gate.sh"
+assert f["verification_status"] == "confirmed"
+verdict = json.load(open(sys.argv[2]))
+assert verdict["findings"][0]["severity"] == "blocking"
+assert verdict["findings"][0]["verification_status"] == "confirmed"
+assert verdict["verdict"] == "REJECT"
+PYEOF
+
+  # The verification log records the command, the exit code, stdout, stderr.
+  [ -f "$run_dir/verify.tier1a.0.log" ]
+  grep -q "test -f scripts/gate.sh" "$run_dir/verify.tier1a.0.log"
+  grep -q "exit code: 0" "$run_dir/verify.tier1a.0.log"
+
+  # A confirmed blocking finding is an escalation trigger: Tier 2 ran (stub).
+  [ -f "$run_dir/tier2.json" ]
+  [ "$(_verdict_field "$run_dir/tier2.json" status)" = "not_run" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  16. VERIFICATION — a blocking finding whose command exits 1
+#      is refuted and does not reject
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: blocking finding refuted by its command aggregates to APPROVE" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"A file that must exist does not.\",\"verification_command\":\"test -f nonexistent-file\"}],\"commentary\":\"Suspected defect.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "blocking"
+assert f["verification_status"] == "rejected"
+verdict = json.load(open(sys.argv[2]))
+assert verdict["findings"][0]["severity"] == "blocking"
+assert verdict["findings"][0]["verification_status"] == "rejected"
+assert verdict["verdict"] == "APPROVE"
+PYEOF
+
+  # The refuted finding is not an escalation trigger: Tier 2 stayed a stub
+  # and left no artifact.
+  [ ! -e "$run_dir/tier2.json" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  17. VERIFICATION — a blocking finding without a command is
+#      downgraded to non-blocking and cannot reject
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: blocking finding without a verification command is downgraded" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"1c\",\"severity\":\"blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Suspected but unverifiable.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "non-blocking"
+assert f["claimed_severity"] == "blocking"
+assert f["verification_status"] == "inconclusive"
+assert f["summary"].startswith("[unverified] ")
+verdict = json.load(open(sys.argv[2]))
+assert verdict["findings"][0]["severity"] == "non-blocking"
+assert verdict["verdict"] == "APPROVE"
+PYEOF
+
+  # An inconclusive finding IS an escalation trigger: the model made a
+  # blocking claim it couldn't back up, so Tier 2 should investigate.
+  [ -f "$run_dir/tier2.json" ]
+  [ "$(_verdict_field "$run_dir/tier2.json" status)" = "not_run" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  18. PARSING — non-JSON model content is a tier error, never
+#      empty findings, and the review is PARTIAL
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: non-JSON model content is a tier error, never empty findings" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"No blocking findings. verdict: APPROVE"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  # A model that stopped following the format decided nothing: the review is
+  # incomplete — PARTIAL, never approval, and never a fabricated reject.
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "error" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  19. PARSING — a truncated completion (finish_reason length)
+#      is a tier error, and the review is PARTIAL
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: a truncated model response (finish_reason length) is a tier error" {
+  # The content would parse fine; the truncation alone makes the tier error.
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"length"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  20. VERIFICATION — a corrupt tier artifact does not crash
+#      the runner (exit 0 always)
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: corrupt tier artifact does not crash the runner" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"real finding\",\"verification_command\":\"true\"}],\"commentary\":\"ok\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  # Corrupt the tier artifact before verification would have run —
+  # but since verification already ran inline, we corrupt and re-run
+  # _verify_findings manually by writing garbage to the artifact and
+  # checking the runner didn't crash on the first run.
+  # Instead: prove the property directly — corrupt the JSON and invoke
+  # the function, confirming it does not crash.
+  echo "NOT JSON" > "$run_dir/tier1a.json"
+  (
+    cd "$REPO_ROOT"
+    export run_dir
+    export REVIEW_VERIFY_TIMEOUT=5
+    export REVIEW_VERIFY_MAX=20
+    # Source the function and call it; set -e is on by default.
+    set -euo pipefail
+    eval "$(sed -n '/_verify_findings()/,/^}/p' scripts/review.sh)"
+    _verify_findings "$FIXTURE" 2>/dev/null
+  )
+  # If we get here, the function did not crash under set -e.
 }
