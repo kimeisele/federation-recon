@@ -11,8 +11,8 @@
 }],
   "summary": {
   "pins": 7,
-  "evidence": 69,
-  "findings": 38,
+  "evidence": 74,
+  "findings": 46,
   "coverage_records": 7,
   "observed_nodes": 7,
   "stale_nodes": 1,
@@ -21,12 +21,12 @@
   "staleness_threshold_days": 60
 },
   "budget": {
-  "total_bytes": 17043,
+  "total_bytes": 17054,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:1828] [evidence:11347] [findings:14374] [coverage:16601] [self-observation:17043]"
+  "checkpoints": " [discovery:0] [pins:1828] [evidence:11353] [findings:14385] [coverage:16612] [self-observation:17054]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }

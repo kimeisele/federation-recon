@@ -32,6 +32,7 @@ source "$SCRIPT_DIR/lib/helpers.sh"
 source "$SCRIPT_DIR/lib/artifacts.sh"
 source "$SCRIPT_DIR/lib/budget.sh"
 source "$SCRIPT_DIR/lib/boundary-agreement.sh"
+source "$SCRIPT_DIR/lib/github-api.sh"
 
 # ---- Configuration -----------------------------------------------------
 
@@ -82,10 +83,26 @@ declare -A EVIDENCE_FILES    # evidence_id → evidence file path
 declare -A DRIFT_FILES       # drift_id → drift file path
 declare -A FINDING_FILES     # finding_id → finding file path
 declare -A COVERAGE_FILES    # coverage_id → coverage file path
+declare -A REPO_OBS_FAILED   # repo slug → "1" if any GitHub observation read failed
 
 RUN_TIMESTAMP=""
 RUN_RESULT="success"
 PARTIAL_FAILURES=0
+
+# mark_observation_failed <repo> <what>
+#   Records an explicit observation failure for REPO (named in the log) and
+#   routes the run to the partial/terminal exit path (75). The caller MUST NOT
+#   have emitted any claim/evidence/finding that asserts absence or zero: a
+#   transport failure is not an observation of absence (#175).
+mark_observation_failed() {
+  local repo="$1" what="$2"
+  local slug="${repo#*/}"
+  if [ "${REPO_OBS_FAILED[$slug]:-0}" != "1" ]; then
+    REPO_OBS_FAILED["$slug"]=1
+    PARTIAL_FAILURES=$(( PARTIAL_FAILURES + 1 ))
+  fi
+  warn "  GitHub read failed for ${repo} (${what}) — marking observation partial; no absence/zero observation recorded"
+}
 
 # ---- Phase 1: Resolve & Pin (§12.3 ops 1-2) ---------------------------
 
@@ -108,8 +125,12 @@ resolve_pins() {
 
     # Resolve live if we don't have a pinned SHA
     if [ -z "$sha" ]; then
-      ref=$(gh api "repos/${repo}" --jq '.default_branch' 2>/dev/null || echo "main")
-      sha=$(gh api "repos/${repo}/git/ref/heads/${ref}" --jq '.object.sha' 2>/dev/null || true)
+      if ! ref="$(gh_api_read "repos/${repo}" --jq '.default_branch')"; then
+        ref="main"
+      fi
+      if ! sha="$(gh_api_read "repos/${repo}/git/ref/heads/${ref}" --jq '.object.sha')"; then
+        sha=""
+      fi
     fi
 
     if [ -z "$sha" ]; then
@@ -148,9 +169,16 @@ extract_well_known_claims() {
     # the Claim -> Pin -> raw repo navigation chain resolves (#11).
     local repo_pin_id="${PIN_FILES[$slug]}"
 
-    # Fetch the .well-known/agent-federation.json content at this commit
-    local content=""
-    content=$(gh api "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+    # Fetch the .well-known/agent-federation.json content at this commit.
+    # A transport failure (HTTP 403/5xx) is NOT absence: no "not found" claim
+    # is emitted and the repository is marked partial (#175). Only an explicit
+    # 404 may become an absence claim.
+    local content="" rc=0
+    content="$(gh_api_read_content "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}")" || rc=$?
+    if [ "$rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$repo" ".well-known descriptor fetch"
+      continue
+    fi
 
     if [ -z "$content" ]; then
       warn "  .well-known/agent-federation.json not found in ${repo} at ${sha}"
@@ -211,8 +239,12 @@ extract_boundary_table_claims() {
 
   local pin_id="${PIN_FILES[agent-world]}"
 
-  local content=""
-  content=$(gh api "repos/${repo}/contents/docs/REPO_BOUNDARIES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  local content="" rc=0
+  content="$(gh_api_read_content "repos/${repo}/contents/docs/REPO_BOUNDARIES.md?ref=${sha}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "$repo" "REPO_BOUNDARIES.md fetch"
+    return
+  fi
 
   if [ -z "$content" ]; then
     warn "  REPO_BOUNDARIES.md not found in ${repo} at ${sha}"
@@ -277,9 +309,11 @@ extract_constitution_claims() {
   local sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
     local pin_id="${PIN_FILES[steward-protocol]}"
-    local content=""
-    content=$(gh api "repos/${repo}/contents/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-    if [ -n "$content" ]; then
+    local content="" rc=0
+    content="$(gh_api_read_content "repos/${repo}/contents/CONSTITUTION.md?ref=${sha}")" || rc=$?
+    if [ "$rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$repo" "CONSTITUTION.md fetch"
+    elif [ -n "$content" ]; then
       local has_supreme_law="no"
       printf '%s' "$content" | rg -q 'SUPREME LAW' && has_supreme_law="yes"
 
@@ -300,9 +334,11 @@ extract_constitution_claims() {
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
     local pin_id="${PIN_FILES[agent-city]}"
-    local content=""
-    content=$(gh api "repos/${repo}/contents/docs/CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-    if [ -n "$content" ]; then
+    local content="" rc=0
+    content="$(gh_api_read_content "repos/${repo}/contents/docs/CONSTITUTION.md?ref=${sha}")" || rc=$?
+    if [ "$rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$repo" "CONSTITUTION.md fetch"
+    elif [ -n "$content" ]; then
       local has_murali="no"
       printf '%s' "$content" | rg -q 'MURALI' && has_murali="yes"
 
@@ -323,9 +359,11 @@ extract_constitution_claims() {
   sha="${REPO_SHA[$repo]:-}"
   if [ -n "$sha" ]; then
     local pin_id="${PIN_FILES[agent-internet]}"
-    local content=""
-    content=$(gh api "repos/${repo}/contents/docs/PUBLIC_FEDERATION_SURFACE.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-    if [ -n "$content" ]; then
+    local content="" rc=0
+    content="$(gh_api_read_content "repos/${repo}/contents/docs/PUBLIC_FEDERATION_SURFACE.md?ref=${sha}")" || rc=$?
+    if [ "$rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$repo" "PUBLIC_FEDERATION_SURFACE.md fetch"
+    elif [ -n "$content" ]; then
       local has_github_primary="no"
       printf '%s' "$content" | rg -q 'GitHub-native' && has_github_primary="yes"
       local has_lotus_operator="no"
@@ -376,8 +414,12 @@ extract_world_constitution_claims() {
 
   local pin_id="${PIN_FILES[agent-world]}"
 
-  local content=""
-  content=$(gh api "repos/${repo}/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  local content="" rc=0
+  content="$(gh_api_read_content "repos/${repo}/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "$repo" "WORLD_CONSTITUTION.md fetch"
+    return
+  fi
 
   if [ -z "$content" ]; then
     local claim
@@ -417,8 +459,12 @@ extract_federation_roles_claims() {
 
   local pin_id="${PIN_FILES[agent-world]}"
 
-  local content=""
-  content=$(gh api "repos/${repo}/contents/docs/FEDERATION_ROLES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  local content="" rc=0
+  content="$(gh_api_read_content "repos/${repo}/contents/docs/FEDERATION_ROLES.md?ref=${sha}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "$repo" "FEDERATION_ROLES.md fetch"
+    return
+  fi
 
   if [ -z "$content" ]; then
     local claim
@@ -458,8 +504,12 @@ extract_cross_node_boundary_agreement() {
   [ -z "$aw_sha" ] && { warn "  No pin for agent-world — skipping cross-node agreement"; return; }
 
   # Fetch REPO_BOUNDARIES.md at the pinned agent-world SHA
-  local rb_content=""
-  rb_content=$(gh api "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${aw_sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  local rb_content="" rb_rc=0
+  rb_content="$(gh_api_read_content "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${aw_sha}")" || rb_rc=$?
+  if [ "$rb_rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "kimeisele/agent-world" "REPO_BOUNDARIES.md fetch"
+    return
+  fi
   [ -z "$rb_content" ] && { warn "  REPO_BOUNDARIES.md not found in agent-world at ${aw_sha}"; return; }
 
   local aw_pin="${PIN_FILES[agent-world]:-}"
@@ -504,8 +554,12 @@ extract_cross_node_boundary_agreement() {
     [ -z "$central_claim" ] && { warn "  No central role claim for ${repo_in_row} — skipping"; continue; }
 
     # ---- Fetch .well-known/agent-federation.json at repo's pinned SHA ----
-    local wk_content=""
-    wk_content=$(gh api "repos/${full_repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+    local wk_content="" wk_rc=0
+    wk_content="$(gh_api_read_content "repos/${full_repo}/contents/.well-known/agent-federation.json?ref=${sha}")" || wk_rc=$?
+    if [ "$wk_rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$full_repo" ".well-known descriptor fetch"
+      continue
+    fi
 
     # Issue #24 only compares repositories that actually have a descriptor.
     if [ -z "$wk_content" ]; then
@@ -607,8 +661,14 @@ run_deterministic_observations() {
     local pin_file="${PIN_FILES[$slug]}"
     [ -z "$pin_file" ] && continue
 
-    local content=""
-    content=$(gh api "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+    # A transport failure here is NOT a missing descriptor: no file_existence
+    # false evidence is emitted and the repository is marked partial (#175).
+    local content="" rc=0
+    content="$(gh_api_read_content "repos/${repo}/contents/.well-known/agent-federation.json?ref=${sha}")" || rc=$?
+    if [ "$rc" -eq $GH_API_FAILURE ]; then
+      mark_observation_failed "$repo" ".well-known descriptor fetch"
+      continue
+    fi
 
     if [ -z "$content" ]; then
       local ev
@@ -670,8 +730,12 @@ except: print('')
 
 observe_boundary_table() {
   local pin_file="$1"
-  local content=""
-  content=$(gh api "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${REPO_SHA[kimeisele/agent-world]}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+  local content="" rc=0
+  content="$(gh_api_read_content "repos/kimeisele/agent-world/contents/docs/REPO_BOUNDARIES.md?ref=${REPO_SHA[kimeisele/agent-world]}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "kimeisele/agent-world" "REPO_BOUNDARIES.md fetch"
+    return
+  fi
 
   if [ -z "$content" ]; then
     local ev
@@ -690,9 +754,15 @@ observe_boundary_table() {
   EVIDENCE_FILES["rb-exists"]="$ev_exists"
   budget_track "$ev_exists"
 
-  # Count the number of repo rows in the boundary table
+  # Count the number of repo rows in the boundary table. The count is
+  # semantically numeric — validate it before it becomes file_count evidence.
   local row_count=0
   row_count=$(printf '%s' "$content" | rg '^\| \`' 2>/dev/null | wc -l | tr -d ' ')
+  if ! is_pure_integer "$row_count"; then
+    warn "  REPO_BOUNDARIES.md row count is not an integer — marking partial"
+    mark_observation_failed "kimeisele/agent-world" "boundary table row count"
+    return
+  fi
   local file_hash
   file_hash=$(sha256_of "$content")
 
@@ -712,9 +782,11 @@ observe_constitution_documents() {
   if [ -n "$sp_sha" ]; then
     local sp_pin="${PIN_FILES[steward-protocol]}"
     if [ -n "$sp_pin" ]; then
-      local content=""
-      content=$(gh api "repos/kimeisele/steward-protocol/contents/CONSTITUTION.md?ref=${sp_sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-      if [ -n "$content" ]; then
+      local content="" rc=0
+      content="$(gh_api_read_content "repos/kimeisele/steward-protocol/contents/CONSTITUTION.md?ref=${sp_sha}")" || rc=$?
+      if [ "$rc" -eq $GH_API_FAILURE ]; then
+        mark_observation_failed "kimeisele/steward-protocol" "CONSTITUTION.md fetch"
+      elif [ -n "$content" ]; then
         local char_count
         char_count=$(printf '%s' "$content" | wc -c | tr -d ' ')
         local section_count
@@ -735,9 +807,11 @@ observe_constitution_documents() {
   if [ -n "$ac_sha" ]; then
     local ac_pin="${PIN_FILES[agent-city]}"
     if [ -n "$ac_pin" ]; then
-      local content=""
-      content=$(gh api "repos/kimeisele/agent-city/contents/docs/CONSTITUTION.md?ref=${ac_sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-      if [ -n "$content" ]; then
+      local content="" rc=0
+      content="$(gh_api_read_content "repos/kimeisele/agent-city/contents/docs/CONSTITUTION.md?ref=${ac_sha}")" || rc=$?
+      if [ "$rc" -eq $GH_API_FAILURE ]; then
+        mark_observation_failed "kimeisele/agent-city" "CONSTITUTION.md fetch"
+      elif [ -n "$content" ]; then
         local char_count
         char_count=$(printf '%s' "$content" | wc -c | tr -d ' ')
         local article_count
@@ -763,9 +837,15 @@ observe_repo_metrics() {
     [ -z "$sha" ] && continue
     [ -z "$pin_file" ] && continue
 
-    # Count files in the repo root (top-level, excluding .git)
-    local root_files=0
-    root_files=$(gh api "repos/${repo}/git/trees/${sha}" --jq '.tree | length' 2>/dev/null || echo 0)
+    # Count files in the repo root (top-level, excluding .git). The count is
+    # semantically numeric — it is validated as an integer before evidence is
+    # generated, and a failed read never degrades into a zero count (#175).
+    local root_files="" rc=0
+    root_files="$(gh_api_read_int "repos/${repo}/git/trees/${sha}" --jq '.tree | length')" || rc=$?
+    if [ "$rc" -ne $GH_API_OK ]; then
+      mark_observation_failed "$repo" "root tree count"
+      continue
+    fi
 
     local ev
     ev=$(gen_evidence "$pin_file" "file_count" \
@@ -784,10 +864,11 @@ observe_agent_world_boundary_docs() {
   local pin_file="${PIN_FILES[agent-world]}"
 
   # WORLD_CONSTITUTION.md
-  local content=""
-  content=$(gh api "repos/kimeisele/agent-world/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-
-  if [ -z "$content" ]; then
+  local content="" rc=0
+  content="$(gh_api_read_content "repos/kimeisele/agent-world/contents/docs/WORLD_CONSTITUTION.md?ref=${sha}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "kimeisele/agent-world" "WORLD_CONSTITUTION.md fetch"
+  elif [ -z "$content" ]; then
     local ev
     ev=$(gen_evidence "$pin_file" "file_existence" \
       "false" \
@@ -818,9 +899,10 @@ observe_agent_world_boundary_docs() {
 
   # FEDERATION_ROLES.md
   content=""
-  content=$(gh api "repos/kimeisele/agent-world/contents/docs/FEDERATION_ROLES.md?ref=${sha}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-
-  if [ -z "$content" ]; then
+  content="$(gh_api_read_content "repos/kimeisele/agent-world/contents/docs/FEDERATION_ROLES.md?ref=${sha}")" || rc=$?
+  if [ "$rc" -eq $GH_API_FAILURE ]; then
+    mark_observation_failed "kimeisele/agent-world" "FEDERATION_ROLES.md fetch"
+  elif [ -z "$content" ]; then
     local ev
     ev=$(gen_evidence "$pin_file" "file_existence" \
       "false" \
@@ -933,6 +1015,8 @@ generate_findings() {
   local drift_finding_text=""
   if [ "$drift_count" -gt 0 ]; then
     drift_finding_text="Detected ${drift_count} drift(s) between documented boundary claims and current observations"
+  elif [ "$PARTIAL_FAILURES" -gt 0 ]; then
+    drift_finding_text="Drift assessment incomplete — ${PARTIAL_FAILURES} repository observation(s) partial; no all-clear conclusion"
   else
     drift_finding_text="No boundary drift detected — all observed claims match current repository state"
   fi
@@ -968,7 +1052,7 @@ generate_findings() {
   local finding_drift
   finding_drift=$(gen_finding "$drift_finding_text" "$drift_ev_refs" \
     "cross_repository_boundaries" \
-    "$([ "$drift_count" -gt 0 ] && echo 'warning' || echo 'info')")
+    "$([ "$drift_count" -gt 0 ] || [ "$PARTIAL_FAILURES" -gt 0 ] && echo 'warning' || echo 'info')")
   FINDING_FILES["drift-status"]="$finding_drift"
   budget_track "$finding_drift"
 
@@ -1001,7 +1085,7 @@ print(m.group(1) if m else 'unknown')
   for repo in "${OBSERVED_REPOS[@]}"; do
     total=$(( total + 1 ))
     local slug="${repo#*/}"
-    if [ -n "${PIN_FILES[$slug]}" ]; then
+    if [ -n "${PIN_FILES[$slug]}" ] && [ "${REPO_OBS_FAILED[$slug]:-0}" != "1" ]; then
       covered=$(( covered + 1 ))
     fi
   done
@@ -1047,8 +1131,11 @@ record_coverage() {
 
     local result="success"
     if [ "$PARTIAL_FAILURES" -gt 0 ]; then
-      # If this specific repo failed, mark partial
-      [ -z "${REPO_SHA[$repo]:-}" ] && result="partial"
+      # A transport-failed observation is partial, exactly like an unpinned repo:
+      # the node was observed but not completely (#175).
+      if [ -z "${REPO_SHA[$repo]:-}" ] || [ "${REPO_OBS_FAILED[$slug]:-0}" = "1" ]; then
+        result="partial"
+      fi
     fi
 
     local cov
