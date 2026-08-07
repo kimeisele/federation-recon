@@ -149,6 +149,13 @@ REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-300}"
 # provider as a schema hint on the wire.
 REVIEW_JSON_MODE="${REVIEW_JSON_MODE:-1}"
 
+# Progress output to stderr so operators can distinguish "stuck" from "working".
+_review_start="$(date +%s)"
+_progress() {
+  local elapsed="$(( $(date +%s) - _review_start ))"
+  printf '[review %s] %3ds  %s\n' "$run_id" "$elapsed" "$*" >&2
+}
+
 # _write_tier_error <task> <artifact-path> <message> — record a failed tier as
 # an "error" artifact. The runner's contract is "exit 0 always": a failed
 # model call is a PARTIAL review, never a crash.
@@ -765,6 +772,7 @@ finalize() {
 # A review is bound to a specific commit: the PR's head SHA. A verdict for
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
+_progress "starting review of PR #$pr_number"
 if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>"$run_dir/gh.log")" || [ -z "$head_sha" ]; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
@@ -808,8 +816,10 @@ tier1a_status="not_run"
 tier1b_status="not_run"
 tier2_status="not_run"
 
+_progress "worktree at ${head_sha:0:12}"
 if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.log"; then
   # ---- 5. Tier 0 — run the gate ------------------------------------------
+  _progress "tier0: gate starting"
   # The gate runs in the worktree with the worktree as CWD, in a subshell so
   # the cd cannot leak into the primary checkout. Exit mapping: 0 -> pass;
   # non-zero with a gate script present -> fail (the gate ran and failed);
@@ -820,18 +830,25 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   elif [ -f "$wt_dir/scripts/gate.sh" ]; then
     tier0_status="fail"
   fi
+  _progress "tier0: $tier0_status"
 
   # ---- 6. Tier 1A — review analysis (model call) --------------------------
+  _progress "tier1a: model call starting ($REVIEW_MODEL via $REVIEW_PROVIDER)"
   tier1a_status="$(_tier1a "$wt_dir")"
+  _progress "tier1a: $tier1a_status"
 
   # ---- 7. Tier 1B — adversarial execution (model call) --------------------
+  _progress "tier1b: model call starting"
   tier1b_status="$(_tier1b "$wt_dir")"
+  _progress "tier1b: $tier1b_status"
 
   # ---- 7.5 Verify findings -------------------------------------------------
   # Execute every blocking finding's verification_command in the worktree so
   # only verified findings can drive the verdict or escalation.
   if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
+    _progress "verification: executing finding commands"
     _verify_findings "$wt_dir"
+    _progress "verification: complete"
   fi
 
   # ---- 8. Tier 2 — independent verification (stub) -----------------------
@@ -862,7 +879,9 @@ print('yes' if has_confirmed or has_inconclusive else 'no')
 fi
 
 # ---- 9 + 10. Verdict JSON and deterministic aggregation -------------------
+_progress "finalizing verdict"
 verdict_word="$(finalize "$head_sha" "$tier0_status" "$tier1a_status" "$tier1b_status" "$tier2_status")"
+_progress "verdict: $verdict_word"
 
 # ---- 11. Post commit status ------------------------------------------------
 # GH_TOKEN_REVIEWER posts as federation-operator; the status context
