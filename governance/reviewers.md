@@ -206,6 +206,7 @@ fails; use another. If none can be reached, the change waits.
 
 With the `CONSULT_AUTHORIZED` guard in place, any PR touching constitutional
 files (`CLAUDE.md`, `docs/founding-package-v0.2.md`, `docs/*-adr.md`) becomes
-blocked pending owner authorization — the consultation gate demands an artifact,
-and the only producers now refuse without the env var. This is correct: changes
+blocked for the operator pending owner authorization — the consultation gate
+demands an artifact, and the only producers now refuse without the env var. The
+owner sets `CONSULT_AUTHORIZED=1` and the path opens. This is correct: changes
 to the constitution should not be autonomous.
