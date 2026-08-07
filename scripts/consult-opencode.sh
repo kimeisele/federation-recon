@@ -33,6 +33,11 @@ if [ "$TIMEOUT_SECONDS" -lt 1 ] || [ "$TIMEOUT_SECONDS" -gt 3600 ]; then
   echo "consult-opencode: timeout must be between 1 and 3600 seconds" >&2
   exit 2
 fi
+if [ "${CONSULT_AUTHORIZED:-}" != "1" ]; then
+  echo "consult-opencode: REFUSED — paid consultation requires explicit owner authorization." >&2
+  echo "  Set CONSULT_AUTHORIZED=1 after owner approval. See governance/reviewers.md." >&2
+  exit 1
+fi
 [ -f "$PROMPT" ] || { echo "consult-opencode: prompt is not a regular file" >&2; exit 2; }
 git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "consult-opencode: source is not a git worktree" >&2

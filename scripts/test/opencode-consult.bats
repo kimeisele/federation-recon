@@ -76,9 +76,18 @@ teardown() {
 
 run_consult() {
   run env FAKE_MODE="${1:-ok}" OPENCODE_BIN="$OPENCODE_BIN" FAKE_ARGS="$FAKE_ARGS" \
-    OPENCODE_REVIEW_TIMEOUT_SECONDS="${2:-30}" \
+    OPENCODE_REVIEW_TIMEOUT_SECONDS="${2:-30}" CONSULT_AUTHORIZED=1 \
     bash "$CONSULT" qwen3.7-max "$OUT" "$PROMPT" "$SOURCE"
   echo "$output"
+}
+
+@test "opencode consult: refuses without CONSULT_AUTHORIZED" {
+  unset CONSULT_AUTHORIZED 2>/dev/null || true
+  run bash "$CONSULT" qwen3.7-max "$OUT" "$PROMPT" "$SOURCE"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REFUSED"* ]]
+  [[ "$output" == *"owner authorization"* ]]
+  [ ! -e "$OUT" ]
 }
 
 @test "opencode consult: binds an accepted report to the exported session provider and model" {

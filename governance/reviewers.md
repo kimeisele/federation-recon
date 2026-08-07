@@ -1,4 +1,4 @@
-# Independent reviewers
+# Reviewers
 
 > The **builder** is documented separately in `governance/builders.md`. It is
 > not a reviewer and must never be counted as one: it produces the work under
@@ -6,6 +6,36 @@
 > §3.2). Both files live outside `CLAUDE.md` for the same reason — a model name
 > is a vendor snapshot and will rot.
 
+## Primary review channel: the review pipeline
+
+The **review pipeline** (`scripts/review.sh`) is the primary review channel for
+all non-constitutional PRs. It is free (uses the builder's API key), automated,
+and produces structured JSON findings with mechanical verification — each
+blocking finding must include a `verification_command` that is executed in the
+worktree. Only findings whose command exits 0 can block merge. A finding
+without a command is downgraded.
+
+The review pipeline replaces the cross-provider consultation process for routine
+work. The model is exchangeable via environment variables (`REVIEW_PROVIDER`,
+`REVIEW_MODEL`, `REVIEW_API_KEY`, `REVIEW_API_BASE`); the default is DeepSeek.
+
+Invocation: `bash scripts/review.sh --pr <N>`
+
+The pipeline writes verdicts to `~/.local/share/federation-recon/reviews/`,
+never inside the repository. The aggregator (`scripts/review-verdict.sh`)
+decides APPROVE/REJECT/PARTIAL based on the findings — the model's prose essay
+has zero effect on the outcome.
+
+## Paid consultation roster (OWNER-ONLY)
+
+> **All paid consultation calls are classified OWNER-ONLY / STOP.** The
+> operator must never invoke `scripts/consult.sh`, `scripts/consult-opencode.sh`,
+> or any command that calls a paid external API without explicit prior owner
+> authorization. A governance requirement that demands a paid call does not
+> authorize the spend — it means STOP and escalate with a cost estimate.
+>
+> Enforcement: both scripts refuse at entry unless `CONSULT_AUTHORIZED=1` is
+> set. This guard is the control; the text here is the description.
 
 Concrete roster for the independence requirement in `CLAUDE.md` → Delegated
 judgment. Kept out of the constitution on purpose: model names are a vendor
@@ -133,8 +163,9 @@ curl -s https://api.moonshot.ai/v1/chat/completions \
 
 | Reviewer | Cost | Use for |
 |---|---|---|
-| **Sol 5.6** | subscription — effectively free | **default.** Every routine cross-provider review, every HIGH-risk round, every re-review. |
-| **Kimi K3** | per token, real money | **judgments only.** Decisions where the operator distrusts its own reasoning, security review, adversarial code analysis. |
+| **Review pipeline** | free (builder API key) | **default.** Every routine PR review. Structured findings with verification. |
+| **Sol 5.6** | subscription — effectively free | Cross-provider review when the consultation gate fires (constitutional files touched). OWNER-ONLY to invoke. |
+| **Kimi K3** | per token, real money | **judgments only.** OWNER-ONLY to invoke. |
 | Fable 5 | max-plan only, not available here | do not plan around it |
 
 **Kimi is for judgments, not for rounds.** One targeted Kimi consultation caught
@@ -170,3 +201,12 @@ data disproved it. Use the alias, and check `jcode usage` if it matters.
 
 Availability is not an exemption. If a reviewer's budget is exhausted the call
 fails; use another. If none can be reached, the change waits.
+
+## Consequence
+
+With the `CONSULT_AUTHORIZED` guard in place, any PR touching constitutional
+files (`CLAUDE.md`, `docs/founding-package-v0.2.md`, `docs/*-adr.md`) becomes
+blocked for the operator pending owner authorization — the consultation gate
+demands an artifact, and the only producers now refuse without the env var. The
+owner sets `CONSULT_AUTHORIZED=1` and the path opens. This is correct: changes
+to the constitution should not be autonomous.
