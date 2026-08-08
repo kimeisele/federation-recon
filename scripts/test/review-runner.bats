@@ -45,6 +45,15 @@ setup_file() {
   cp "$REPO_ROOT/scripts/review-verdict.sh" "$FIXTURE/scripts/review-verdict.sh"
   cp "$REPO_ROOT/schemas/review-verdict.schema.json" "$FIXTURE/schemas/"
 
+  chmod +x "$FIXTURE/scripts/review.sh"
+
+  git -C "$FIXTURE" init -q
+  git -C "$FIXTURE" config user.email "review-fixture@test"
+  git -C "$FIXTURE" config user.name "Review Fixture"
+  git -C "$FIXTURE" add -A
+  git -C "$FIXTURE" commit -qm "base"
+  export MOCK_BASE_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+
   cat > "$FIXTURE/scripts/gate.sh" <<'GATESCRIPT'
 #!/usr/bin/env bash
 echo "fixture gate: ${MOCK_GATE_STATUS:-0}"
@@ -53,13 +62,9 @@ if [ -n "${MOCK_GATE_CWD_FILE:-}" ]; then
 fi
 exit "${MOCK_GATE_STATUS:-0}"
 GATESCRIPT
-  chmod +x "$FIXTURE/scripts/gate.sh" "$FIXTURE/scripts/review.sh"
-
-  git -C "$FIXTURE" init -q
-  git -C "$FIXTURE" config user.email "review-fixture@test"
-  git -C "$FIXTURE" config user.name "Review Fixture"
-  git -C "$FIXTURE" add -A
-  git -C "$FIXTURE" commit -qm "fixture"
+  chmod +x "$FIXTURE/scripts/gate.sh"
+  git -C "$FIXTURE" add scripts/gate.sh
+  git -C "$FIXTURE" commit -qm "add gate"
   export MOCK_HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
   cat > "$FILE_SANDBOX/mockbin/gh" <<'GHSCRIPT'
@@ -71,6 +76,7 @@ fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   case "$*" in
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *baseRefOid*) printf '%s\n' "$MOCK_BASE_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
   esac
   exit 0
@@ -657,7 +663,37 @@ PYEOF
 }
 
 # ────────────────────────────────────────────────────────────
-#  20. VERIFICATION — a corrupt tier artifact does not crash
+#  20. DISCRIMINATION — a blocking finding whose command exits 0
+#      on BOTH head and base is non-discriminating → APPROVE
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: finding confirmed on head but also on base is non-discriminating → APPROVE" {
+  # `test -d scripts` exits 0 on BOTH base and head (scripts/ dir exists in both commits)
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"pre-existing\",\"file\":\"scripts/review.sh\",\"line\":1,\"summary\":\"The scripts directory exists.\",\"verification_command\":\"test -d scripts\"}],\"commentary\":\"Pre-existing condition.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "non-blocking", f"expected non-blocking, got {f['severity']}"
+assert f["claimed_severity"] == "blocking"
+assert f["verification_status"] == "inconclusive"
+assert "[non-discriminating]" in f["summary"]
+verdict = json.load(open(sys.argv[2]))
+assert verdict["verdict"] == "APPROVE"
+PYEOF
+
+  # The verification log records BOTH head and base runs
+  [ -f "$run_dir/verify.tier1a.0.log" ]
+  grep -q "exit code: 0" "$run_dir/verify.tier1a.0.log"
+  grep -q "base exit code: 0" "$run_dir/verify.tier1a.0.log"
+}
+
+# ────────────────────────────────────────────────────────────
+#  21. VERIFICATION — a corrupt tier artifact does not crash
 #      the runner (exit 0 always)
 # ────────────────────────────────────────────────────────────
 
