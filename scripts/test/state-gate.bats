@@ -161,8 +161,23 @@ setup() {
 # ---------------------------------------------------------------------------
 
 @test "state-gate: green with high threshold returns 0 with GREEN" {
+  local tmp
+  tmp="$(mktemp)"
+  python3 -c "
+import json, datetime
+now = datetime.datetime.now(datetime.timezone.utc)
+ts = (now - datetime.timedelta(hours=199)).strftime('%Y-%m-%dT%H:%M:%SZ')
+json.dump([{
+    'conclusion': 'success',
+    'createdAt': ts,
+    'databaseId': 30211552411,
+    'event': 'schedule',
+    'status': 'completed'
+}], open('$tmp', 'w'))
+"
   STATE_GATE_STALE_THRESHOLD_HOURS=200 \
-    run check_scheduled_run_state "$FIXTURE_DIR/green-history.json" "node-census.yml"
+    run check_scheduled_run_state "$tmp" "node-census.yml"
+  rm -f "$tmp"
   [ "$status" -eq 0 ]
   [[ "$output" == *"STATE: GREEN"* ]]
 }
