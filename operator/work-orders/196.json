@@ -33,43 +33,5 @@
     "scripts/test/MANIFEST"
   ],
   "builder": "operator/builders/jcode.sh",
-  "builder_timeout_seconds": 600,
-  "spec": {
-    "title": "Verification discrimination: base vs head",
-    "problem": "_verify_findings() runs verification commands only in the HEAD worktree. A command that exits 0 is stamped 'confirmed', but it may also exit 0 at BASE — meaning the condition pre-existed this PR. Such a finding is non-discriminating and must not block.",
-    "changes": [
-      {
-        "what": "Resolve base_sha",
-        "where": "scripts/review.sh, after head_sha resolution (~line 776)",
-        "detail": "Add: base_sha=\"$(gh pr view \"$pr_number\" --json baseRefOid --jq '.baseRefOid' 2>>\"$run_dir/gh.log\")\" — if unresolvable, log warning and set base_sha empty (graceful degradation: all head-exit-0 findings get confirmed as before)."
-      },
-      {
-        "what": "Create base worktree",
-        "where": "scripts/review.sh, after head worktree creation (~line 820)",
-        "detail": "Create base_wt_dir using mktemp with prefix 'review-worktree.base.XXXXXX' (the prefix MUST start with 'review-worktree.' so the existing cleanup glob catches leaks). Use 'git worktree add \"$base_wt_dir\" \"$base_sha\" --detach --quiet'. On failure: log to $run_dir/worktree.log, set base_wt_dir empty string."
-      },
-      {
-        "what": "Update cleanup trap",
-        "where": "scripts/review.sh, review_cleanup() (~line 802)",
-        "detail": "Clean up BOTH worktrees. Loop over \"$wt_dir\" and \"${base_wt_dir:-}\", skip empty, git worktree remove --force each, then rm -rf."
-      },
-      {
-        "what": "Pass base worktree to _verify_findings",
-        "where": "scripts/review.sh, call site (~line 850)",
-        "detail": "Change call to: _verify_findings \"$wt_dir\" \"${base_wt_dir:-}\" — second arg may be empty string."
-      },
-      {
-        "what": "Base discrimination logic in _verify_findings",
-        "where": "scripts/review.sh, _verify_findings() embedded Python (~line 381)",
-        "detail": "Accept base_wt_dir as sys.argv[7] (empty string = no base). After head result.returncode == 0: if base_wt_dir is non-empty, run the SAME command in base_wt_dir. Log base exit code/stdout/stderr to the same verify log with '=== base exit code: N ===' prefix. If base also exits 0 → non-discriminating: set claimed_severity='blocking', severity='non-blocking', verification_status='inconclusive', prefix summary with '[non-discriminating] '. If base exits non-zero → truly discriminating: verification_status='confirmed'. On base timeout/exception → treat as confirmed (conservative). If base_wt_dir is empty → confirmed (graceful degradation)."
-      }
-    ],
-    "test_oracle": "Test 20 (non-discriminating → APPROVE) must pass. Tests 15-17 must remain green. Test 15 is the positive discrimination case: test -f scripts/gate.sh exits 0 at head (gate.sh added in head commit) but exits 1 at base (no gate.sh there) → confirmed → REJECT. Test 20: test -d scripts exits 0 on BOTH base and head → non-discriminating → APPROVE.",
-    "discrimination_table": {
-      "head_0_base_nonzero": "confirmed (blocking)",
-      "head_0_base_0": "inconclusive, downgrade to non-blocking, prefix [non-discriminating]",
-      "head_nonzero": "rejected (no base run needed)",
-      "head_timeout": "inconclusive, downgrade to non-blocking"
-    }
-  }
+  "builder_timeout_seconds": 600
 }
