@@ -3,6 +3,6 @@
   "source_repository": "kimeisele/agent-world",
   "source_path": "docs/REPO_BOUNDARIES.md",
   "claim_text": "kimeisele/agent-world/docs/REPO_BOUNDARIES.md asserts steward owns: autonomous execution (CLI/REPL/daemon/bot/API), self-healing, federation participation, multi-LLM orchestration",
-  "observed_at": "2026-08-07T03:32:40Z",
+  "observed_at": "2026-08-08T16:57:39Z",
   "repository_pin": "pins/v0-boundary-drift/agent-world.json"
 }
