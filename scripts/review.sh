@@ -311,23 +311,51 @@ PYEOF
 # or errors, is downgraded to non-blocking and marked inconclusive. Verified
 # findings get a per-finding log (verify.<stem>.<i>.log) recording the command,
 # its exit code, and stdout/stderr.
+#
+# Discrimination (issue #196): a blocking finding is attributable to the PR
+# only if the condition does NOT already exist in the base commit. Every
+# verification command therefore runs in the head worktree AND in a disposable
+# base worktree; a command that exits 0 in both is non-discriminating — the
+# condition predates the PR — and is downgraded to non-blocking/inconclusive so
+# it can never reject this PR. When the base side cannot run at all, a
+# head-confirmed finding is marked inconclusive (escalates to Tier 2) rather
+# than confirmed, so a possibly pre-existing condition is never attributed to
+# the PR.
 REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
 REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 
 # _verify_findings <worktree> — execute every blocking finding's
 # verification_command in the worktree and stamp the finding with its result:
-# confirmed (exit 0), rejected (non-zero), or inconclusive (downgraded).
+# confirmed (exit 0 on head and non-zero on base), rejected (non-zero on head),
+# or inconclusive (downgraded). Non-discriminating conditions (exit 0 on both
+# head and base) are downgraded; base-unverifiable ones are inconclusive.
 _verify_findings() {
   local wt_dir="$1"
+  # The base commit for discrimination, resolved once per call: the PR's
+  # baseRefOid checked out in a second disposable worktree. The worktree is
+  # removed at the end of this function; the EXIT trap also covers signal
+  # paths. The variable is a global on purpose (matching wt_dir) so the trap
+  # sees it; it is initialized empty before the trap is registered.
+  base_wt_dir=""
+  if [ -n "${pr_number:-}" ]; then
+    if base_sha="$(gh pr view "$pr_number" --json baseRefOid --jq '.baseRefOid' 2>"$run_dir/verify.base.gh.log")" && [ -n "$base_sha" ]; then
+      base_wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.base.XXXXXX")" && pwd -P)"
+      if ! git worktree add "$base_wt_dir" "$base_sha" --detach --quiet 2>"$run_dir/verify.base.worktree.log"; then
+        git worktree prune 2>/dev/null || true
+        rm -rf "$base_wt_dir" 2>/dev/null || true
+        base_wt_dir=""
+      fi
+    fi
+  fi
   for _stem in tier1a tier1b; do
     local artifact="$run_dir/${_stem}.json"
     [ -f "$artifact" ] || continue
-    if ! python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
+    if ! python3 - "$artifact" "$wt_dir" "$base_wt_dir" "$run_dir" "$_stem" \
       "$REVIEW_VERIFY_TIMEOUT" "$REVIEW_VERIFY_MAX" <<'PYEOF'
 import json, os, subprocess, sys
 
-artifact_path, wt_dir, run_dir, stem = sys.argv[1:5]
-timeout_s, max_cmds = int(sys.argv[5]), int(sys.argv[6])
+artifact_path, wt_dir, base_wt_dir, run_dir, stem = sys.argv[1:6]
+timeout_s, max_cmds = int(sys.argv[6]), int(sys.argv[7])
 
 with open(artifact_path) as fh:
     artifact = json.load(fh)
@@ -363,35 +391,93 @@ for i, finding in enumerate(findings):
 
     log_path = os.path.join(run_dir, "verify.%s.%d.log" % (stem, i))
     try:
-        result = subprocess.run(
+        head_result = subprocess.run(
             ["bash", "-c", cmd],
             cwd=wt_dir,
             timeout=timeout_s,
             capture_output=True,
         )
-        with open(log_path, "wb") as log:
-            log.write(b"=== command ===\n")
-            log.write(cmd.encode() + b"\n")
-            log.write(b"=== exit code: %d ===\n" % result.returncode)
-            log.write(b"=== stdout ===\n")
-            log.write(result.stdout)
-            log.write(b"=== stderr ===\n")
-            log.write(result.stderr)
-
-        if result.returncode == 0:
-            finding["verification_status"] = "confirmed"
-        else:
-            finding["verification_status"] = "rejected"
     except subprocess.TimeoutExpired:
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
         finding["summary"] = "[timeout] " + finding.get("summary", "")
+        continue
     except Exception as exc:
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
         finding["summary"] = "[error: %s] %s" % (exc, finding.get("summary", ""))
+        continue
+
+    # The per-finding log records the head run and, when a base worktree
+    # exists, the base run, so a human can read exactly what was executed and
+    # with what result on each side.
+    log = bytearray()
+    log += b"=== command ===\n" + cmd.encode() + b"\n"
+    log += b"=== exit code: %d ===\n" % head_result.returncode
+    log += b"=== stdout ===\n" + head_result.stdout + b"=== stderr ===\n" + head_result.stderr
+
+    base_result = None
+    base_status = None   # None = no base worktree; "ok" | "timeout" | "error"
+    base_error = None
+    if base_wt_dir:
+        try:
+            base_result = subprocess.run(
+                ["bash", "-c", cmd],
+                cwd=base_wt_dir,
+                timeout=timeout_s,
+                capture_output=True,
+            )
+            base_status = "ok"
+            log += b"=== base exit code: %d ===\n" % base_result.returncode
+            log += b"=== base stdout ===\n" + base_result.stdout + b"=== base stderr ===\n" + base_result.stderr
+        except subprocess.TimeoutExpired as exc:
+            base_status = "timeout"
+            log += b"=== base: timed out after %ds ===\n" % timeout_s
+            if exc.stdout:
+                log += b"=== base stdout (partial) ===\n" + exc.stdout
+            if exc.stderr:
+                log += b"=== base stderr (partial) ===\n" + exc.stderr
+        except Exception as exc:
+            base_status = "error"
+            base_error = str(exc)
+            log += b"=== base: error: %s ===\n" % base_error.encode()
+
+    with open(log_path, "wb") as log_handle:
+        log_handle.write(bytes(log))
+
+    head_ok = head_result.returncode == 0
+    if head_ok and base_result is not None and base_result.returncode == 0:
+        # The condition exists in BOTH head and base: it predates the PR and
+        # would have blocked the base commit just the same, so it cannot block
+        # this PR. Downgrade and escalate as inconclusive rather than reject.
+        finding["claimed_severity"] = "blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["severity"] = "non-blocking"
+        finding["summary"] = "[non-discriminating] " + finding.get("summary", "")
+    elif head_ok and base_status in ("timeout", "error", None):
+        # The head side confirms the finding but the base side is unknown:
+        # pre-existing and PR-introduced are indistinguishable. Never reject on
+        # evidence we could not complete, and never approve over it silently —
+        # escalate as inconclusive.
+        finding["claimed_severity"] = "blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["severity"] = "non-blocking"
+        if base_status == "timeout":
+            marker = "base-timeout"
+        elif base_status == "error":
+            marker = "base-error: %s" % base_error
+        else:
+            marker = "base-unverified"
+        finding["summary"] = "[%s] %s" % (marker, finding.get("summary", ""))
+    elif head_ok:
+        # Confirmed on head and NOT on base: the defect is introduced by this
+        # PR — a verified blocking finding.
+        finding["verification_status"] = "confirmed"
+    else:
+        # The command refuted the claim at head: the defect is absent.
+        finding["verification_status"] = "rejected"
 
 artifact["findings"] = findings
 with open(artifact_path, "w") as fh:
@@ -402,6 +488,11 @@ PYEOF
       echo "WARNING: verification failed for $_stem; findings not verified" >&2
     fi
   done
+  if [ -n "$base_wt_dir" ]; then
+    git worktree remove --force "$base_wt_dir" 2>/dev/null || git worktree prune 2>/dev/null || true
+    rm -rf "$base_wt_dir" 2>/dev/null || true
+    base_wt_dir=""
+  fi
 }
 
 # The system prompts embed the questions they cover, quoted from
@@ -795,11 +886,21 @@ fi
 # git resolves /private/var/folders.
 wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.XXXXXX")" && pwd -P)"
 
-# Remove the worktree on every exit path — pass, fail, signal — via the EXIT
+# base_wt_dir: the base commit worktree used by _verify_findings for
+# discrimination. Created and removed by that function; this global is what
+# lets the traps below also cover signal paths, so a killed review never
+# leaves either worktree registered.
+base_wt_dir=""
+
+# Remove the worktrees on every exit path — pass, fail, signal — via the EXIT
 # trap alone; no explicit call is needed. On INT/TERM the cleanup is followed
 # by exit with 128+SIGNO: a signal-killed review must not keep running against
 # a worktree it has already removed.
 review_cleanup() {
+  if [ -n "$base_wt_dir" ]; then
+    git worktree remove --force "$base_wt_dir" 2>/dev/null || git worktree prune 2>/dev/null || true
+    rm -rf "$base_wt_dir" 2>/dev/null || true
+  fi
   git worktree remove --force "$wt_dir" 2>/dev/null || {
     # The removal failed (e.g. the directory is already gone); unregister
     # whatever stale admin state the failed remove left behind.
