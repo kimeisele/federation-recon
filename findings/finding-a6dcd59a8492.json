@@ -2,8 +2,8 @@
   "finding_id": "finding-a6dcd59a8492",
   "lifecycle_state": "stale",
   "statement": "Node kimeisele/federation-recon is STALE — missing .well-known/agent-federation.json descriptor",
-  "evidence_refs": ["ev-77e7d43e32bf", "ev-77e7d43e32bf", "ev-76dc9c4d4dfa"],
+  "evidence_refs": ["ev-77e7d43e32bf", "ev-77e7d43e32bf", "ev-e32aeae52c0d"],
   "domain": "node_census",
   "severity": "warning",
-  "created_at": "2026-08-07T03:32:26Z"
+  "created_at": "2026-08-08T02:29:43Z"
 }

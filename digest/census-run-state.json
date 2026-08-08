@@ -1,7 +1,7 @@
 {
-  "run_timestamp": "2026-08-07T03:32:26Z",
+  "run_timestamp": "2026-08-08T02:29:43Z",
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
-  "nodes": [{"repo":"kimeisele/agent-city","slug":"agent-city","updated_at":"2026-08-06T17:04:30Z"},{"repo":"kimeisele/agent-internet","slug":"agent-internet","updated_at":"2026-07-12T10:21:18Z"},{"repo":"kimeisele/agent-world","slug":"agent-world","updated_at":"2026-07-13T08:12:52Z"},{"repo":"kimeisele/federation-recon","slug":"federation-recon","updated_at":"2026-08-06T18:37:51Z"},{"repo":"kimeisele/steward","slug":"steward","updated_at":"2026-08-07T03:17:46Z"},{"repo":"kimeisele/steward-federation","slug":"steward-federation","updated_at":"2026-08-07T03:31:57Z"},{"repo":"kimeisele/steward-protocol","slug":"steward-protocol","updated_at":"2026-08-02T18:12:36Z"}],
+  "nodes": [{"repo":"kimeisele/agent-city","slug":"agent-city","updated_at":"2026-08-06T17:04:30Z"},{"repo":"kimeisele/agent-internet","slug":"agent-internet","updated_at":"2026-07-12T10:21:18Z"},{"repo":"kimeisele/agent-world","slug":"agent-world","updated_at":"2026-07-13T08:12:52Z"},{"repo":"kimeisele/federation-recon","slug":"federation-recon","updated_at":"2026-08-07T19:11:24Z"},{"repo":"kimeisele/steward","slug":"steward","updated_at":"2026-08-08T02:17:17Z"},{"repo":"kimeisele/steward-federation","slug":"steward-federation","updated_at":"2026-08-08T02:29:27Z"},{"repo":"kimeisele/steward-protocol","slug":"steward-protocol","updated_at":"2026-08-02T18:12:36Z"}],
   "candidates": ["agent-music","agent-red-team","agent-research","agent-template-proof-node-01","agent-village","federation-hq","hermes-sankhya-25","steward-test"]
 }

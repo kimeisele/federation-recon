@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-e32aeae52c0d",
+  "repository_pin": "pins/v1-census/federation-recon.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-08-07T19:11:24Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}
