@@ -171,6 +171,16 @@ AND no unresolved blocking findings → APPROVE
 
 ### Budget
 
+Each review configures `REVIEW_TIER_COMPLETION_TOKEN_CAP` (default 8192) and
+`REVIEW_RUN_COMPLETION_TOKEN_CAP` (default 16384). Values must be positive
+decimal integers, and the run cap must be at least the tier cap. Model calls
+reserve `min(tier cap, remaining run cap)` before dispatch, so requested
+completion tokens never exceed the run cap even when provider usage is absent.
+DeepSeek defaults `REVIEW_REASONING_EFFORT` to `low`; supported explicit values
+are `low`, `high`, and `max`. Tier 1B is not run after any Tier 1A error.
+Verdicts may include an additive `budget` object recording configured caps,
+requested and known actual token totals, and requested reasoning effort.
+
 ```
 max_primary_calls: 2  (Tier 1A + Tier 1B)
 max_tier2_calls:   1

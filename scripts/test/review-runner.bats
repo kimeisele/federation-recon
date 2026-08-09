@@ -130,6 +130,7 @@ index 0000000..1111111 100644
 
   export REVIEWS_ROOT="$SANDBOX/home/.local/share/federation-recon/reviews"
   mkdir -p "$REVIEWS_ROOT"
+  unset REVIEW_TIER_COMPLETION_TOKEN_CAP REVIEW_RUN_COMPLETION_TOKEN_CAP REVIEW_REASONING_EFFORT
 }
 
 teardown() {
@@ -420,6 +421,8 @@ PYEOF
   grep -q "https://api.deepseek.com/v1/chat/completions" "$MOCK_CURL_ARGS_FILE"
   grep -q -- "--max-time 300" "$MOCK_CURL_ARGS_FILE"
   grep -q '"model": "deepseek-v4-flash"' "$run_dir/tier1a.request.json"
+  grep -q '"max_tokens": 8192' "$run_dir/tier1a.request.json"
+  grep -q '"reasoning_effort": "low"' "$run_dir/tier1a.request.json"
   grep -q '"response_format"' "$run_dir/tier1a.request.json"
   grep -q '"json_object"' "$run_dir/tier1a.request.json"
 }
@@ -478,20 +481,74 @@ PYEOF
 #  13. TIER 1B — a failed provider call is an error, never a crash
 # ────────────────────────────────────────────────────────────
 
-@test "review-runner: tier1b mock curl failure returns error and exits 0" {
+@test "review-runner: tier1a failure prevents tier1b and exits 0" {
   export MOCK_CURL_FAIL=1
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
   run_dir="$(latest_run_dir)"
   [ -f "$run_dir/tier1b.json" ]
-  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "not_run" ]
   [ "$(_verdict_field "$run_dir/tier1b.json" task)" = "adversarial-execution" ]
-  [[ "$(_verdict_field "$run_dir/tier1b.json" error)" == *"curl failed"* ]]
+  [ "$(wc -l < "$MOCK_CURL_ARGS_FILE" | tr -d ' ')" -eq 1 ]
 
   # A failed model call is a PARTIAL review — never green.
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
-  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "not_run" ]
+}
+
+@test "review-runner: configured caps reserve the remaining run budget" {
+  export REVIEW_TIER_COMPLETION_TOKEN_CAP=6000 REVIEW_RUN_COMPLETION_TOKEN_CAP=10000
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"max_tokens": 6000' "$run_dir/tier1a.request.json"
+  grep -q '"max_tokens": 4000' "$run_dir/tier1b.request.json"
+  python3 - "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+b = json.load(open(sys.argv[1]))["budget"]
+assert b["requested_total"] == 10000
+assert b["configured_tier_completion_token_cap"] == 6000
+assert b["configured_run_completion_token_cap"] == 10000
+PYEOF
+}
+
+@test "review-runner: invalid cap makes zero provider calls" {
+  export REVIEW_TIER_COMPLETION_TOKEN_CAP=bad
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+
+}
+
+@test "review-runner: invalid DeepSeek effort makes zero provider calls" {
+  export REVIEW_REASONING_EFFORT=medium
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+}
+
+@test "review-runner: parse errors retain response usage and provenance" {
+  export MOCK_CURL_RESPONSE='{"model":"served-model","usage":{"prompt_tokens":11,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":3}},"choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"length"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+a = json.load(open(sys.argv[1]))
+assert a["status"] == "error"
+assert a["provider"] == "deepseek" and a["requested_model"] == "deepseek-v4-flash"
+assert a["response_model"] == "served-model" and a["requested_max_tokens"] == 8192
+assert a["timing"]["finish_reason"] == "length"
+assert a["timing"]["prompt_tokens"] == 11 and a["timing"]["completion_tokens"] == 7 and a["timing"]["reasoning_tokens"] == 3
+b = json.load(open(sys.argv[1].replace("tier1a.json", "verdict.json")))["budget"]
+assert b["actual_known_totals"] == {"prompt_tokens": 11, "completion_tokens": 7, "reasoning_tokens": 3}
+assert b["requested_total"] == 8192
+PYEOF
 }
 
 # ────────────────────────────────────────────────────────────
@@ -630,12 +687,13 @@ PYEOF
 
   run_dir="$(latest_run_dir)"
   [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
-  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "not_run" ]
+  [ "$(wc -l < "$MOCK_CURL_ARGS_FILE" | tr -d ' ')" -eq 1 ]
   # A model that stopped following the format decided nothing: the review is
   # incomplete — PARTIAL, never approval, and never a fabricated reject.
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
   [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
-  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "not_run" ]
 }
 
 # ────────────────────────────────────────────────────────────
@@ -651,7 +709,7 @@ PYEOF
 
   run_dir="$(latest_run_dir)"
   [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
-  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "error" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "not_run" ]
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
   [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
 }
