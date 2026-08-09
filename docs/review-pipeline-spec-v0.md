@@ -176,6 +176,17 @@ Each review configures `REVIEW_TIER_COMPLETION_TOKEN_CAP` (default 8192) and
 decimal integers, and the run cap must be at least the tier cap. Model calls
 reserve `min(tier cap, remaining run cap)` before dispatch, so requested
 completion tokens never exceed the run cap even when provider usage is absent.
+The request-side completion caps are enforced before each provider dispatch.
+After a response, a tier fails closed when its reported `completion_tokens` is
+equal to or greater than that tier's requested `max_tokens`, regardless of
+`finish_reason`; `finish_reason: "length"` retains the stronger truncation
+error. Provider usage is telemetry, not client-side enforcement of actual
+provider consumption and may be incomplete. `budget.actual_known_totals` keeps
+numeric sums for counters that are present, while
+`budget.actual_usage_complete` is true only when every attempted provider call
+reports both `prompt_tokens` and `completion_tokens`; missing counters make it
+false. A missing `reasoning_tokens` counter does not make usage incomplete when
+thinking is disabled.
 For DeepSeek, `REVIEW_DEEPSEEK_THINKING_MODE` defaults to `disabled` and sends
 `thinking: {"type":"disabled"}` without `reasoning_effort`. When enabled,
 the effort defaults to `high` and only `high` or `max` is accepted; an effort

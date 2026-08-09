@@ -329,11 +329,19 @@ except Exception as exc:
 
 # A "length" finish_reason means the completion was cut off: the model
 # stopped mid-JSON. Half an object is neither parsable nor trustworthy, so
-# the tier is an error, never an empty-findings approval.
+# the tier is an error, never an empty-findings approval. A provider-reported
+# completion count at or above the requested cap is also fail-closed: the
+# request-side cap remains the hard reservation, while this guards against
+# accepting a response that reports using the entire reserved allowance.
 if finish_reason == "length":
     error = "truncated response (finish_reason: length)"
 else:
     error = None
+
+usage = response.get("usage", {})
+completion_tokens = usage.get("completion_tokens")
+if error is None and type(completion_tokens) is int and completion_tokens >= int(requested_max_tokens):
+    error = "completion usage reached requested maximum (completion_tokens: %d, requested_max_tokens: %s)" % (completion_tokens, requested_max_tokens)
 
 # The model contract (system prompt) is strict JSON: a JSON object with
 # "findings" and "commentary". Anything else is a contract violation and an
@@ -350,7 +358,6 @@ except Exception as exc:
     if error is None:
         error = "non-JSON content: %s" % exc
 
-usage = response.get("usage", {})
 if error:
     artifact = {"run_id": run_id, "task": task, "status": "error", "error": error,
                 "provider": provider, "requested_model": requested_model, "response_model": model,
@@ -796,6 +803,7 @@ TIER_MAP = {
 
 findings = []
 known = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
+actual_usage_complete = True
 for stem, meta in TIER_MAP.items():
     artifact_path = os.path.join(run_dir, stem + ".json")
     if not os.path.isfile(artifact_path):
@@ -806,9 +814,12 @@ for stem, meta in TIER_MAP.items():
     except Exception:
         continue
     timing = artifact.get("timing", {})
+    if os.path.isfile(os.path.join(run_dir, stem + ".request.json")):
+        if type(timing.get("prompt_tokens")) is not int or type(timing.get("completion_tokens")) is not int:
+            actual_usage_complete = False
     for key in known:
         value = timing.get(key)
-        if isinstance(value, int):
+        if type(value) is int:
             known[key] += value
 
     for i, raw in enumerate(artifact.get("findings", []), 1):
@@ -852,6 +863,7 @@ if not config_error:
         "configured_run_completion_token_cap": int(run_cap),
         "requested_total": int(requested_total),
         "actual_known_totals": known,
+        "actual_usage_complete": actual_usage_complete,
         "thinking_mode": thinking_mode if provider == "deepseek" else None,
         "reasoning_effort": effort or None,
     }

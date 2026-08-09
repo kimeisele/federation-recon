@@ -439,15 +439,91 @@ PYEOF
   [ "$status" -eq 0 ]
 
   run_dir="$(latest_run_dir)"
-  [ -f "$run_dir/tier1a.json" ]
-  [ "$(_verdict_field "$run_dir/tier1a.json" status)" = "error" ]
-  [ "$(_verdict_field "$run_dir/tier1a.json" task)" = "review-analysis" ]
-  [[ "$(_verdict_field "$run_dir/tier1a.json" error)" == *"curl failed"* ]]
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+a = json.load(open(sys.argv[1]))
+assert a["status"] == "error"
+assert a["task"] == "review-analysis"
+assert "curl failed" in a["error"]
+assert a["provider"] == "deepseek"
+assert a["requested_model"] == "deepseek-v4-flash"
+assert a["response_model"] is None
+assert a["requested_max_tokens"] == 8192
+PYEOF
+  [ "$(_verdict_field "$run_dir/tier1b.json" status)" = "not_run" ]
+  [ "$(_verdict_field "$run_dir/tier1b.json" reason)" = "Tier 1A error" ]
 
   # A failed model call is a PARTIAL review — the runner exits 0 but never
   # reports green.
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
   [ "$(_verdict_field "$run_dir/verdict.json" tasks.review-analysis)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.adversarial-execution)" = "not_run" ]
+}
+
+@test "review-runner: provider exact-cap completion fails closed" {
+  export REVIEW_TIER_COMPLETION_TOKEN_CAP=10 REVIEW_RUN_COMPLETION_TOKEN_CAP=20
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","usage":{"prompt_tokens":1,"completion_tokens":10},"choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir" <<'PYEOF'
+import json, sys
+run_dir = sys.argv[1]
+a = json.load(open(run_dir + "/tier1a.json"))
+assert a["status"] == "error"
+assert a["timing"]["finish_reason"] == "stop"
+assert a["timing"]["completion_tokens"] == 10
+assert a["requested_max_tokens"] == 10
+assert "completion usage reached requested maximum" in a["error"]
+assert json.load(open(run_dir + "/tier1b.json"))["status"] == "not_run"
+assert json.load(open(run_dir + "/verdict.json"))["verdict"] == "PARTIAL"
+PYEOF
+  [ "$(wc -l < "$MOCK_CURL_ARGS_FILE" | tr -d ' ')" -eq 1 ]
+}
+
+@test "review-runner: provider over-cap completion fails closed" {
+  export REVIEW_TIER_COMPLETION_TOKEN_CAP=10 REVIEW_RUN_COMPLETION_TOKEN_CAP=20
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","usage":{"prompt_tokens":1,"completion_tokens":11},"choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir" <<'PYEOF'
+import json, sys
+run_dir = sys.argv[1]
+a = json.load(open(run_dir + "/tier1a.json"))
+assert a["status"] == "error"
+assert a["timing"]["completion_tokens"] == 11
+assert a["requested_max_tokens"] == 10
+assert "completion usage reached requested maximum" in a["error"]
+assert json.load(open(run_dir + "/tier1b.json"))["status"] == "not_run"
+assert json.load(open(run_dir + "/verdict.json"))["verdict"] == "PARTIAL"
+PYEOF
+  [ "$(wc -l < "$MOCK_CURL_ARGS_FILE" | tr -d ' ')" -eq 1 ]
+}
+
+@test "review-runner: missing provider usage is incomplete telemetry" {
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+b = json.load(open(sys.argv[1]))["budget"]
+assert b["actual_known_totals"] == {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
+assert b["actual_usage_complete"] is False
+PYEOF
+}
+
+@test "review-runner: complete provider usage is complete telemetry" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","usage":{"prompt_tokens":2,"completion_tokens":3},"choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+b = json.load(open(sys.argv[1]))["budget"]
+assert b["actual_known_totals"] == {"prompt_tokens": 4, "completion_tokens": 6, "reasoning_tokens": 0}
+assert b["actual_usage_complete"] is True
+PYEOF
 }
 
 # ────────────────────────────────────────────────────────────
