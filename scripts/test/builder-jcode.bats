@@ -65,16 +65,16 @@ done
 if [ "$IS_RUN" = "yes" ] && [ -n "${JCODE_LOG_DIR:-}" ]; then
   mkdir -p "$JCODE_LOG_DIR"
   printf '[%s] [INFO] [ses:session_stub|prv:%s|mod:%s] API call starting\n' \
-    "$(date -u +'%Y-%m-%d %H:%M:%S')" \
+    "$(date +'%Y-%m-%d %H:%M:%S')" \
     "${JCODE_STUB_PROVIDER:-deepseek}" \
     "${JCODE_STUB_MODEL:-deepseek-v4-flash}" \
-    >> "$JCODE_LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+    >> "$JCODE_LOG_DIR/jcode-$(date +%Y-%m-%d).log"
   if [ -n "${JCODE_STUB_ENDPOINT:-}" ]; then
     printf '[%s] [INFO] API stream attempt 1/1 over HTTPS transport (model: %s, endpoint: %s, auth: TEST_API_KEY)\n' \
-      "$(date -u +'%Y-%m-%d %H:%M:%S')" \
+      "$(date +'%Y-%m-%d %H:%M:%S')" \
       "${JCODE_STUB_MODEL:-deepseek-v4-flash}" \
       "$JCODE_STUB_ENDPOINT" \
-      >> "$JCODE_LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+      >> "$JCODE_LOG_DIR/jcode-$(date +%Y-%m-%d).log"
   fi
 fi
 
