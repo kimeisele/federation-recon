@@ -410,8 +410,8 @@ PYEOF
 # Blocking findings are executed in the worktree, never trusted on the model's
 # word: a blocking claim without a verification_command, or one that times out
 # or errors, is downgraded to non-blocking and marked inconclusive. Verified
-# findings get a per-finding log (verify.<stem>.<i>.log) recording the command,
-# its exit code, and stdout/stderr.
+# findings get a per-finding log (verify.<stem>.<i>.log) recording both the
+# head and base commands, exit codes, and stdout/stderr.
 REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
 REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 
@@ -419,16 +419,16 @@ REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 # verification_command in the worktree and stamp the finding with its result:
 # confirmed (exit 0), rejected (non-zero), or inconclusive (downgraded).
 _verify_findings() {
-  local wt_dir="$1"
+  local wt_dir="$1" base_wt_dir="${2:-}" base_error="${3:-base unavailable}"
   for _stem in tier1a tier1b; do
     local artifact="$run_dir/${_stem}.json"
     [ -f "$artifact" ] || continue
-    if ! python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
+    if ! python3 - "$artifact" "$wt_dir" "$base_wt_dir" "$base_error" "$run_dir" "$_stem" \
       "$REVIEW_VERIFY_TIMEOUT" "$REVIEW_VERIFY_MAX" <<'PYEOF'
 import json, os, subprocess, sys
 
-artifact_path, wt_dir, run_dir, stem = sys.argv[1:5]
-timeout_s, max_cmds = int(sys.argv[5]), int(sys.argv[6])
+artifact_path, wt_dir, base_wt_dir, base_error, run_dir, stem = sys.argv[1:7]
+timeout_s, max_cmds = int(sys.argv[7]), int(sys.argv[8])
 
 with open(artifact_path) as fh:
     artifact = json.load(fh)
@@ -463,6 +463,9 @@ for i, finding in enumerate(findings):
         continue
 
     log_path = os.path.join(run_dir, "verify.%s.%d.log" % (stem, i))
+    log = open(log_path, "wb")
+    log.write(b"=== command (head) ===\n")
+    log.write(cmd.encode() + b"\n")
     try:
         result = subprocess.run(
             ["bash", "-c", cmd],
@@ -470,25 +473,72 @@ for i, finding in enumerate(findings):
             timeout=timeout_s,
             capture_output=True,
         )
-        with open(log_path, "wb") as log:
-            log.write(b"=== command ===\n")
-            log.write(cmd.encode() + b"\n")
-            log.write(b"=== exit code: %d ===\n" % result.returncode)
-            log.write(b"=== stdout ===\n")
-            log.write(result.stdout)
-            log.write(b"=== stderr ===\n")
-            log.write(result.stderr)
+        log.write(b"=== exit code (head): %d ===\n" % result.returncode)
+        log.write(b"=== stdout (head) ===\n")
+        log.write(result.stdout)
+        log.write(b"=== stderr (head) ===\n")
+        log.write(result.stderr)
 
-        if result.returncode == 0:
-            finding["verification_status"] = "confirmed"
-        else:
+        if result.returncode != 0:
             finding["verification_status"] = "rejected"
+            log.close()
+            continue
+
+        if not base_wt_dir:
+            log.write(b"=== base ===\n")
+            log.write((base_error + "\n").encode())
+            finding["claimed_severity"] = "blocking"
+            finding["verification_status"] = "inconclusive"
+            finding["severity"] = "non-blocking"
+            finding["summary"] = "[base-unverified] " + finding.get("summary", "")
+            log.close()
+            continue
+
+        log.write(b"=== command (base) ===\n")
+        log.write(cmd.encode() + b"\n")
+        try:
+            base_result = subprocess.run(
+                ["bash", "-c", cmd],
+                cwd=base_wt_dir,
+                timeout=timeout_s,
+                capture_output=True,
+            )
+            log.write(b"=== exit code (base): %d ===\n" % base_result.returncode)
+            log.write(b"=== stdout (base) ===\n")
+            log.write(base_result.stdout)
+            log.write(b"=== stderr (base) ===\n")
+            log.write(base_result.stderr)
+            if base_result.returncode != 0:
+                finding["verification_status"] = "confirmed"
+            else:
+                finding["claimed_severity"] = "blocking"
+                finding["verification_status"] = "inconclusive"
+                finding["severity"] = "non-blocking"
+                finding["summary"] = "[non-discriminating] " + finding.get("summary", "")
+        except subprocess.TimeoutExpired:
+            log.write(b"=== base timeout ===\n")
+            finding["claimed_severity"] = "blocking"
+            finding["verification_status"] = "inconclusive"
+            finding["severity"] = "non-blocking"
+            finding["summary"] = "[base-timeout] " + finding.get("summary", "")
+        except Exception as exc:
+            log.write(("=== base error: %s ===\n" % exc).encode())
+            finding["claimed_severity"] = "blocking"
+            finding["verification_status"] = "inconclusive"
+            finding["severity"] = "non-blocking"
+            finding["summary"] = "[base-unverified] " + finding.get("summary", "")
+        finally:
+            log.close()
     except subprocess.TimeoutExpired:
+        log.write(b"=== head timeout ===\n")
+        log.close()
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
         finding["summary"] = "[timeout] " + finding.get("summary", "")
     except Exception as exc:
+        log.write(("=== head error: %s ===" % exc).encode())
+        log.close()
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
@@ -904,16 +954,25 @@ finalize() {
 
 # ---- 3. PR metadata -------------------------------------------------------
 
-# A review is bound to a specific commit: the PR's head SHA. A verdict for
+# A review is bound to a specific commit: the PR's head SHA. Resolve the base
+# alongside it so verification compares the same PR revision against its
+# declared base. A verdict for
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
 _progress "starting review of PR #$pr_number"
-if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>"$run_dir/gh.log")" || [ -z "$head_sha" ]; then
+if ! pr_shas="$(gh pr view "$pr_number" --json headRefOid,baseRefOid --jq '[.headRefOid, .baseRefOid] | @tsv' 2>"$run_dir/gh.log")"; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
   # crash. A later process comparing this verdict against the PR's real head
   # sees a mismatch and marks it STALE, which is the correct fate for a
   # review that never started.
+  verdict_word="$(finalize "unresolved" "error" "not_run" "not_run" "not_run")"
+  echo "Review $run_id for PR #$pr_number (head SHA unresolved): $verdict_word"
+  echo "Artifacts: $run_dir/"
+  exit 0
+fi
+IFS=$'\t' read -r head_sha base_sha <<< "$pr_shas"
+if [ -z "$head_sha" ]; then
   verdict_word="$(finalize "unresolved" "error" "not_run" "not_run" "not_run")"
   echo "Review $run_id for PR #$pr_number (head SHA unresolved): $verdict_word"
   echo "Artifacts: $run_dir/"
@@ -929,12 +988,20 @@ fi
 # pwd -P because macOS mktemp may return a symlinked /var/folders path while
 # git resolves /private/var/folders.
 wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.XXXXXX")" && pwd -P)"
+base_wt_dir=""
+base_wt_error="base unavailable: base SHA unresolved"
 
 # Remove the worktree on every exit path — pass, fail, signal — via the EXIT
 # trap alone; no explicit call is needed. On INT/TERM the cleanup is followed
 # by exit with 128+SIGNO: a signal-killed review must not keep running against
 # a worktree it has already removed.
 review_cleanup() {
+  if [ -n "${base_wt_dir:-}" ]; then
+    git worktree remove --force "$base_wt_dir" 2>/dev/null || {
+      git worktree prune 2>/dev/null || true
+    }
+    rm -rf "$base_wt_dir" 2>/dev/null || true
+  fi
   git worktree remove --force "$wt_dir" 2>/dev/null || {
     # The removal failed (e.g. the directory is already gone); unregister
     # whatever stale admin state the failed remove left behind.
@@ -993,7 +1060,15 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   # only verified findings can drive the verdict or escalation.
   if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
     _progress "verification: executing finding commands"
-    _verify_findings "$wt_dir"
+    if [ -n "$base_sha" ]; then
+      base_wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-base-worktree.XXXXXX")" && pwd -P)"
+      if ! git worktree add "$base_wt_dir" "$base_sha" --detach --quiet 2>"$run_dir/base-worktree.log"; then
+        base_wt_error="base unavailable: $(tail -n1 "$run_dir/base-worktree.log" 2>/dev/null || true)"
+        rm -rf "$base_wt_dir" 2>/dev/null || true
+        base_wt_dir=""
+      fi
+    fi
+    _verify_findings "$wt_dir" "$base_wt_dir" "$base_wt_error"
     _progress "verification: complete"
   fi
 

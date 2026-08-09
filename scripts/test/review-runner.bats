@@ -41,6 +41,9 @@ setup_file() {
 
   export FIXTURE="$FILE_SANDBOX/fixture"
   mkdir -p "$FIXTURE/scripts" "$FIXTURE/schemas"
+  git -C "$FIXTURE" init -q
+  git -C "$FIXTURE" config user.email "review-fixture@test"
+  git -C "$FIXTURE" config user.name "Review Fixture"
   cp "$REPO_ROOT/scripts/review.sh" "$FIXTURE/scripts/review.sh"
   cp "$REPO_ROOT/scripts/review-verdict.sh" "$FIXTURE/scripts/review-verdict.sh"
   cp "$REPO_ROOT/schemas/review-verdict.schema.json" "$FIXTURE/schemas/"
@@ -55,11 +58,22 @@ exit "${MOCK_GATE_STATUS:-0}"
 GATESCRIPT
   chmod +x "$FIXTURE/scripts/gate.sh" "$FIXTURE/scripts/review.sh"
 
-  git -C "$FIXTURE" init -q
-  git -C "$FIXTURE" config user.email "review-fixture@test"
-  git -C "$FIXTURE" config user.name "Review Fixture"
   git -C "$FIXTURE" add -A
-  git -C "$FIXTURE" commit -qm "fixture"
+  git -C "$FIXTURE" commit -qm "fixture base"
+  export MOCK_BASE_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+
+  cat > "$FIXTURE/scripts/gate.sh" <<'GATESCRIPT'
+#!/usr/bin/env bash
+echo "fixture gate: ${MOCK_GATE_STATUS:-0}"
+if [ -n "${MOCK_GATE_CWD_FILE:-}" ]; then
+  printf '%s\n' "$PWD" > "$MOCK_GATE_CWD_FILE"
+fi
+exit "${MOCK_GATE_STATUS:-0}"
+GATESCRIPT
+  touch "$FIXTURE/head-only.txt"
+  chmod +x "$FIXTURE/scripts/gate.sh"
+  git -C "$FIXTURE" add -A
+  git -C "$FIXTURE" commit -qm "fixture head"
   export MOCK_HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
   cat > "$FILE_SANDBOX/mockbin/gh" <<'GHSCRIPT'
@@ -69,7 +83,14 @@ if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
   exit 1
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  if [ -n "${MOCK_GH_CALLS_FILE:-}" ]; then
+    case "$*" in
+      *baseRefOid*) printf '%s\t%s\t%s\n' "$*" "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" >> "$MOCK_GH_CALLS_FILE" ;;
+      *) printf '%s\n' "$*" >> "$MOCK_GH_CALLS_FILE" ;;
+    esac
+  fi
   case "$*" in
+    *baseRefOid*) printf '%s\t%s\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
   esac
@@ -116,6 +137,7 @@ setup() {
   mkdir -p "$SANDBOX/tmp" "$SANDBOX/home"
 
   export MOCK_CURL_ARGS_FILE="$SANDBOX/mock-curl-args.txt"
+  export MOCK_GH_CALLS_FILE="$SANDBOX/mock-gh-calls.txt"
   export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
 
   unset MOCK_GH_FAIL MOCK_CURL_FAIL MOCK_GATE_STATUS MOCK_GATE_CWD_FILE
@@ -215,6 +237,8 @@ print(value)
 
   # No worktree directory remains on disk.
   run find "$SANDBOX/tmp" -maxdepth 1 -type d -name 'review-worktree.*'
+  [ -z "$output" ]
+  run find "$SANDBOX/tmp" -maxdepth 1 -type d -name 'review-base-worktree.*'
   [ -z "$output" ]
 }
 
@@ -382,6 +406,7 @@ print(value)
 
 @test "review-runner: tier1a mock success returns complete and writes a valid artifact" {
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate misses a check.\",\"verification_command\":\"test -f scripts/gate.sh\"},{\"question\":\"1c\",\"severity\":\"non-blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
+  export MOCK_CURL_RESPONSE="${MOCK_CURL_RESPONSE//scripts\/gate.sh/head-only.txt}"
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -405,7 +430,7 @@ import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert len(artifact["findings"]) == 2
 assert artifact["findings"][0]["severity"] == "blocking"
-assert artifact["findings"][0]["verification_command"] == "test -f scripts/gate.sh"
+assert artifact["findings"][0]["verification_command"] == "test -f head-only.txt"
 assert artifact["findings"][0]["verification_status"] == "confirmed"
 assert artifact["findings"][1]["severity"] == "non-blocking"
 assert artifact["findings"][1]["verification_status"] == "not_run"
@@ -532,6 +557,7 @@ PYEOF
 
 @test "review-runner: tier1b mock success returns complete and writes a valid artifact" {
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"3\",\"severity\":\"blocking\",\"summary\":\"The gate check is untested.\",\"verification_command\":\"test -f scripts/gate.sh\"},{\"question\":\"1b\",\"severity\":\"non-blocking\",\"summary\":\"The diff itself is the attack.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
+  export MOCK_CURL_RESPONSE="${MOCK_CURL_RESPONSE//scripts\/gate.sh/head-only.txt}"
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -546,7 +572,7 @@ import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert len(artifact["findings"]) == 2
 assert artifact["findings"][0]["severity"] == "blocking"
-assert artifact["findings"][0]["verification_command"] == "test -f scripts/gate.sh"
+assert artifact["findings"][0]["verification_command"] == "test -f head-only.txt"
 assert artifact["findings"][0]["verification_status"] == "confirmed"
 assert artifact["findings"][1]["severity"] == "non-blocking"
 assert artifact["findings"][1]["verification_status"] == "not_run"
@@ -705,12 +731,13 @@ PYEOF
 }
 
 # ────────────────────────────────────────────────────────────
-#  15. VERIFICATION — a blocking finding whose command exits 0
-#      is confirmed and rejects
+#  15. VERIFICATION — a blocking finding whose command exits 0 in the head
+#      and non-zero in the base is confirmed and rejects
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding verified by its command aggregates to REJECT" {
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate would miss a real defect.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"The blocking defect is real.\"}"},"finish_reason":"stop"}]}'
+  export MOCK_CURL_RESPONSE="${MOCK_CURL_RESPONSE//scripts\/gate.sh/head-only.txt}"
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
@@ -722,7 +749,7 @@ import json, sys
 artifact = json.load(open(sys.argv[1]))
 f = artifact["findings"][0]
 assert f["severity"] == "blocking"
-assert f["verification_command"] == "test -f scripts/gate.sh"
+assert f["verification_command"] == "test -f head-only.txt"
 assert f["verification_status"] == "confirmed"
 verdict = json.load(open(sys.argv[2]))
 assert verdict["findings"][0]["severity"] == "blocking"
@@ -732,8 +759,9 @@ PYEOF
 
   # The verification log records the command, the exit code, stdout, stderr.
   [ -f "$run_dir/verify.tier1a.0.log" ]
-  grep -q "test -f scripts/gate.sh" "$run_dir/verify.tier1a.0.log"
-  grep -q "exit code: 0" "$run_dir/verify.tier1a.0.log"
+  grep -q "test -f head-only.txt" "$run_dir/verify.tier1a.0.log"
+  grep -q "exit code (head): 0" "$run_dir/verify.tier1a.0.log"
+  grep -q "exit code (base): 1" "$run_dir/verify.tier1a.0.log"
 
   # A confirmed blocking finding is an escalation trigger: Tier 2 ran (stub).
   [ -f "$run_dir/tier2.json" ]
@@ -796,6 +824,73 @@ PYEOF
   # blocking claim it couldn't back up, so Tier 2 should investigate.
   [ -f "$run_dir/tier2.json" ]
   [ "$(_verdict_field "$run_dir/tier2.json" status)" = "not_run" ]
+}
+
+@test "review-runner: head success and base success is inconclusive and non-blocking" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Same result in both revisions.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"Check both revisions.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["severity"] == "non-blocking"
+assert f["verification_status"] == "inconclusive"
+assert f["summary"].startswith("[non-discriminating] ")
+PYEOF
+}
+
+@test "review-runner: head failure rejects and does not run the base command" {
+  export VERIFY_SHA_FILE="$SANDBOX/verify-shas"
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Head command rejects.\",\"verification_command\":\"printf \\\"%s\\\\n\\\" \\\"$(git rev-parse HEAD)\\\" >> \\\"$VERIFY_SHA_FILE\\\"; false\"}],\"commentary\":\"Head must reject.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "rejected"
+PYEOF
+  [ "$(sort -u "$VERIFY_SHA_FILE" | tr -d '\n')" = "$MOCK_HEAD_SHA" ]
+}
+
+@test "review-runner: unavailable base SHA is inconclusive and marked base-unverified" {
+  export MOCK_BASE_SHA=missing-base-sha
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base cannot be checked.\",\"verification_command\":\"test -f head-only.txt\"}],\"commentary\":\"Base is unavailable.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive"
+assert f["severity"] == "non-blocking"
+assert f["summary"].startswith("[base-unverified] ")
+PYEOF
+}
+
+@test "review-runner: base verification timeout is inconclusive and marked base-timeout" {
+  export REVIEW_VERIFY_TIMEOUT=1
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base command hangs.\",\"verification_command\":\"test -f head-only.txt || sleep 5\"}],\"commentary\":\"Bounded timeout case.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive"
+assert f["summary"].startswith("[base-timeout] ")
+PYEOF
+}
+
+@test "review-runner: one metadata call carries and binds head and base SHAs" {
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  metadata_call="$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE")"
+  [[ "$metadata_call" == *"$MOCK_HEAD_SHA"*"$MOCK_BASE_SHA"* ]]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" subject_head_sha)" = "$MOCK_HEAD_SHA" ]
 }
 
 # ────────────────────────────────────────────────────────────
