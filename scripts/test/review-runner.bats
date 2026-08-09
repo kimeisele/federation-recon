@@ -90,7 +90,13 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
     esac
   fi
   case "$*" in
-    *baseRefOid*) printf '%s\t%s\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
+    *baseRefOid*)
+      if [ "${MOCK_GH_EMPTY_BASE:-0}" = "1" ]; then
+        printf '%s\t\n' "$MOCK_HEAD_SHA"
+      else
+        printf '%s\t%s\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA"
+      fi
+      ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
   esac
@@ -891,6 +897,21 @@ PYEOF
   [[ "$metadata_call" == *"$MOCK_HEAD_SHA"*"$MOCK_BASE_SHA"* ]]
   run_dir="$(latest_run_dir)"
   [ "$(_verdict_field "$run_dir/verdict.json" subject_head_sha)" = "$MOCK_HEAD_SHA" ]
+}
+
+@test "review-runner: missing base SHA fails metadata resolution closed" {
+  export MOCK_GH_EMPTY_BASE=1
+  before_worktrees="$(git -C "$FIXTURE" worktree list --porcelain)"
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.tier0)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" subject_head_sha)" = "$MOCK_HEAD_SHA" ]
+  [ "$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+  [ "$(git -C "$FIXTURE" worktree list --porcelain)" = "$before_worktrees" ]
+  [ "$(find "$SANDBOX/tmp" -maxdepth 1 -type d -name 'review-worktree.*' | wc -l | tr -d ' ')" -eq 0 ]
 }
 
 # ────────────────────────────────────────────────────────────

@@ -972,9 +972,10 @@ if ! pr_shas="$(gh pr view "$pr_number" --json headRefOid,baseRefOid --jq '[.hea
   exit 0
 fi
 IFS=$'\t' read -r head_sha base_sha <<< "$pr_shas"
-if [ -z "$head_sha" ]; then
-  verdict_word="$(finalize "unresolved" "error" "not_run" "not_run" "not_run")"
-  echo "Review $run_id for PR #$pr_number (head SHA unresolved): $verdict_word"
+if [ -z "$head_sha" ] || [ -z "$base_sha" ]; then
+  subject_head_sha="${head_sha:-unresolved}"
+  verdict_word="$(finalize "$subject_head_sha" "error" "not_run" "not_run" "not_run")"
+  echo "Review $run_id for PR #$pr_number (PR metadata SHA resolution failure): $verdict_word"
   echo "Artifacts: $run_dir/"
   exit 0
 fi
