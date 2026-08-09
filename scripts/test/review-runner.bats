@@ -70,6 +70,13 @@ if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   case "$*" in
+    *statusCheckRollup*)
+      # Tier 0 reads the CI rollup out of the same response as the head SHA
+      # (#195). MOCK_PR_CHECKS drives it; the default is one green check, so
+      # tests that do not care about CI keep their previous tier0: pass.
+      printf '{"headRefOid":"%s","statusCheckRollup":%s}\n' \
+        "$MOCK_HEAD_SHA" "$MOCK_PR_CHECKS"
+      ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
   esac
@@ -119,6 +126,9 @@ setup() {
   export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
 
   unset MOCK_GH_FAIL MOCK_CURL_FAIL MOCK_GATE_STATUS MOCK_GATE_CWD_FILE
+  # Tier 0 reads CI, not a local gate (#195). One green check by default, so a
+  # test that says nothing about CI gets tier0: pass, as it did before.
+  export MOCK_PR_CHECKS='[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]'
   export MOCK_PR_BODY="Fixture PR body: a stand-in description."
   export MOCK_PR_DIFF="diff --git a/fixture.txt b/fixture.txt
 index 0000000..1111111 100644
@@ -197,17 +207,33 @@ print(value)
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: disposable worktree is created at the head SHA and destroyed" {
-  MOCK_GATE_CWD_FILE="$SANDBOX/gate-cwd.txt"
-  export MOCK_GATE_CWD_FILE
+  # Tier 0 no longer runs the gate (#195), so the worktree is proven by the
+  # thing that still needs it: a Tier 1B verification command, which executes
+  # with the worktree as its CWD.
+  MOCK_CURL_RESPONSE="$(python3 - "$SANDBOX/verify-cwd.txt" <<'PY'
+import json, sys
+inner = json.dumps({
+    "findings": [{
+        "severity": "blocking",
+        "summary": "worktree probe",
+        "verification_command": "pwd > %s" % sys.argv[1],
+    }],
+    "commentary": "",
+})
+print(json.dumps({
+    "model": "deepseek-chat",
+    "choices": [{"message": {"content": inner}, "finish_reason": "stop"}],
+}))
+PY
+)"
+  export MOCK_CURL_RESPONSE
 
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
-  # The gate ran inside the disposable worktree: the recorded CWD is a
-  # review-worktree.* path under the sandbox TMPDIR.
-  [ -f "$MOCK_GATE_CWD_FILE" ]
-  gate_cwd="$(cat "$MOCK_GATE_CWD_FILE")"
-  [[ "$gate_cwd" == "$SANDBOX/tmp/review-worktree."* ]]
+  [ -f "$SANDBOX/verify-cwd.txt" ]
+  verify_cwd="$(cat "$SANDBOX/verify-cwd.txt")"
+  [[ "$verify_cwd" == "$SANDBOX/tmp/review-worktree."* ]]
 
   # No worktree registration remains — the fixture's own worktree is all.
   run git -C "$FIXTURE" worktree list --porcelain
@@ -294,9 +320,15 @@ print(value)
   [ "$status" -eq 0 ]
 
   run_dir="$(latest_run_dir)"
+  # Tier 0 reads CI (#195). tier0.log survives as the evidence trail, but it
+  # records the rollup the conclusion came from instead of the output of a
+  # gate that ran locally.
   [ -f "$run_dir/tier0.log" ]
   [ -s "$run_dir/tier0.log" ]
-  grep -q "fixture gate" "$run_dir/tier0.log"
+  grep -q "CI status rollup" "$run_dir/tier0.log"
+  grep -q "statusCheckRollup" "$run_dir/tier0.log"
+  ! grep -q "fixture gate" "$run_dir/tier0.log"
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.tier0)" = "pass" ]
 
   # Tier 1A and 1B ran their model calls (against the mocked provider) and
   # recorded "complete" in their per-phase artifacts.
@@ -317,18 +349,15 @@ print(value)
 #  7. GATE FAIL — a failing gate is a REJECT, still exit 0
 # ────────────────────────────────────────────────────────────
 
-@test "review-runner: a failing gate aggregates to REJECT and exits 0" {
-  MOCK_GATE_STATUS=7
-  export MOCK_GATE_STATUS
+@test "review-runner: a failing CI check aggregates to REJECT and exits 0" {
+  export MOCK_PR_CHECKS='[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]'
 
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
   run_dir="$(latest_run_dir)"
-  [ -f "$run_dir/tier0.log" ]
-  grep -q "fixture gate: 7" "$run_dir/tier0.log"
-  # Tier 0 ran and failed -> the aggregator rejects; a run failure is not a
-  # runner crash.
+  # CI ran and rejected the commit -> the aggregator rejects; a failing
+  # subject is not a runner crash.
   [ "$(_verdict_field "$run_dir/verdict.json" tasks.tier0)" = "fail" ]
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "REJECT" ]
 }
