@@ -141,6 +141,35 @@ REVIEW_API_BASE="${REVIEW_API_BASE:-https://api.deepseek.com}"
 # timeout: 300s per call"). Overridable so a test can exercise the timeout
 # path without waiting five minutes.
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-300}"
+REVIEW_TIER_COMPLETION_TOKEN_CAP="${REVIEW_TIER_COMPLETION_TOKEN_CAP:-8192}"
+REVIEW_RUN_COMPLETION_TOKEN_CAP="${REVIEW_RUN_COMPLETION_TOKEN_CAP:-16384}"
+REVIEW_DEEPSEEK_THINKING_MODE="${REVIEW_DEEPSEEK_THINKING_MODE:-disabled}"
+if [ -n "${REVIEW_REASONING_EFFORT+x}" ]; then
+  REVIEW_REASONING_EFFORT_EXPLICIT=true
+  REVIEW_REASONING_EFFORT_VALUE="$REVIEW_REASONING_EFFORT"
+else
+  REVIEW_REASONING_EFFORT_EXPLICIT=false
+  REVIEW_REASONING_EFFORT_VALUE=""
+fi
+config_error=""
+if ! [[ "$REVIEW_TIER_COMPLETION_TOKEN_CAP" =~ ^[0-9]+$ ]] || [ "$REVIEW_TIER_COMPLETION_TOKEN_CAP" -le 0 ]; then
+  config_error="invalid REVIEW_TIER_COMPLETION_TOKEN_CAP"
+elif ! [[ "$REVIEW_RUN_COMPLETION_TOKEN_CAP" =~ ^[0-9]+$ ]] || [ "$REVIEW_RUN_COMPLETION_TOKEN_CAP" -le 0 ]; then
+  config_error="invalid REVIEW_RUN_COMPLETION_TOKEN_CAP"
+elif [ "$REVIEW_RUN_COMPLETION_TOKEN_CAP" -lt "$REVIEW_TIER_COMPLETION_TOKEN_CAP" ]; then
+  config_error="REVIEW_RUN_COMPLETION_TOKEN_CAP is below tier cap"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && ! [[ "$REVIEW_DEEPSEEK_THINKING_MODE" =~ ^(enabled|disabled)$ ]]; then
+  config_error="invalid REVIEW_DEEPSEEK_THINKING_MODE"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && [ "$REVIEW_DEEPSEEK_THINKING_MODE" = "disabled" ] && [ "$REVIEW_REASONING_EFFORT_EXPLICIT" = true ]; then
+  config_error="DeepSeek reasoning effort requires enabled thinking mode"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && [ "$REVIEW_DEEPSEEK_THINKING_MODE" = "enabled" ]; then
+  if [ "$REVIEW_REASONING_EFFORT_EXPLICIT" = false ]; then
+    REVIEW_REASONING_EFFORT_VALUE="high"
+  elif ! [[ "$REVIEW_REASONING_EFFORT_VALUE" =~ ^(high|max)$ ]]; then
+    config_error="invalid DeepSeek REVIEW_REASONING_EFFORT"
+  fi
+fi
+requested_total=0
 
 # JSON output mode: the model contract (both system prompts) is strict JSON,
 # and the request advertises it via response_format so the provider does not
@@ -161,15 +190,22 @@ _progress() {
 # model call is a PARTIAL review, never a crash.
 _write_tier_error() {
   local task="$1" artifact_path="$2" message="$3"
-  python3 - "$run_id" "$task" "$artifact_path" "$message" <<'PYEOF'
+  python3 - "$run_id" "$task" "$artifact_path" "$message" "${_current_requested_tokens:-null}" "$REVIEW_PROVIDER" "$REVIEW_MODEL" "$REVIEW_DEEPSEEK_THINKING_MODE" "$REVIEW_REASONING_EFFORT_VALUE" <<'PYEOF'
 import json, sys
 
-run_id, task, path, message = sys.argv[1:5]
+run_id, task, path, message, requested, provider, requested_model, thinking_mode, effort = sys.argv[1:10]
 artifact = {
     "run_id": run_id,
     "task": task,
     "status": "error",
     "error": message,
+    "requested_max_tokens": None if requested == "null" else int(requested),
+    "provider": provider,
+    "requested_model": requested_model,
+    "response_model": None,
+    "thinking_mode": thinking_mode if provider == "deepseek" else None,
+    "reasoning_effort": effort or None,
+    "timing": {"prompt_tokens": None, "completion_tokens": None, "reasoning_tokens": None, "finish_reason": None},
 }
 with open(path, "w") as handle:
     json.dump(artifact, handle, indent=2)
@@ -188,11 +224,34 @@ _tier_call() {
   local response_file="$run_dir/${stem}.response.json"
   local curl_log="$run_dir/${stem}.curl.log"
   local artifact_path="$run_dir/${stem}.json"
+  local reserved_total
+  reserved_total="$(python3 - "$run_dir" <<'PYEOF'
+import glob, json, sys
+total = 0
+for path in glob.glob(sys.argv[1] + "/*.request.json"):
+    try:
+        total += int(json.load(open(path)).get("max_tokens", 0))
+    except Exception:
+        pass
+print(total)
+PYEOF
+)"
+  local remaining=$((REVIEW_RUN_COMPLETION_TOKEN_CAP - reserved_total))
+  if [ "$remaining" -le 0 ]; then
+    python3 - "$run_id" "$task" "$artifact_path" <<'PYEOF'
+import json, sys
+json.dump({"run_id": sys.argv[1], "task": sys.argv[2], "status": "not_run", "reason": "run completion cap exhausted"}, open(sys.argv[3], "w"), indent=2)
+PYEOF
+    printf 'not_run'
+    return 0
+  fi
+  _current_requested_tokens=$((remaining < REVIEW_TIER_COMPLETION_TOKEN_CAP ? remaining : REVIEW_TIER_COMPLETION_TOKEN_CAP))
+  requested_total=$((requested_total + _current_requested_tokens))
 
-  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" "$REVIEW_JSON_MODE" <<'PYEOF'; then
+  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" "$REVIEW_JSON_MODE" "$_current_requested_tokens" "$REVIEW_PROVIDER" "$REVIEW_REASONING_EFFORT_VALUE" "$REVIEW_REASONING_EFFORT_EXPLICIT" "$REVIEW_DEEPSEEK_THINKING_MODE" <<'PYEOF'; then
 import json, sys
 
-request_path, system_path, user_path, model, json_mode = sys.argv[1:6]
+request_path, system_path, user_path, model, json_mode, max_tokens, provider, effort, effort_explicit, thinking_mode = sys.argv[1:11]
 with open(system_path) as handle:
     system = handle.read()
 with open(user_path) as handle:
@@ -206,7 +265,14 @@ payload = {
 }
 if json_mode == "1":
     payload["response_format"] = {"type": "json_object"}
-payload["max_tokens"] = 32768
+payload["max_tokens"] = int(max_tokens)
+if provider == "deepseek" and thinking_mode == "disabled":
+    payload["thinking"] = {"type": "disabled"}
+elif provider == "deepseek":
+    payload["thinking"] = {"type": "enabled"}
+    payload["reasoning_effort"] = effort
+elif effort_explicit == "true":
+    payload["reasoning_effort"] = effort
 with open(request_path, "w") as handle:
     json.dump(payload, handle, indent=2)
 PYEOF
@@ -231,17 +297,19 @@ PYEOF
   call_end="$(date +%s)"
   elapsed_seconds="$((call_end - call_start))"
 
-  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" "$elapsed_seconds" <<'PYEOF'; then
+  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" "$elapsed_seconds" "$REVIEW_MODEL" "$_current_requested_tokens" "$REVIEW_REASONING_EFFORT_VALUE" "$REVIEW_DEEPSEEK_THINKING_MODE" <<'PYEOF'; then
 import json, os, sys
 
 run_id, task, stem, provider, run_dir = sys.argv[1:6]
 elapsed_seconds = int(sys.argv[6]) if len(sys.argv) > 6 else None
+requested_model, requested_max_tokens, requested_effort, thinking_mode = sys.argv[7:11]
 response_path = os.path.join(run_dir, stem + ".response.json")
 artifact_path = os.path.join(run_dir, stem + ".json")
 
 # A response that is not a chat completion (an API error, a timeout body, a
 # redirect page) carries no model field; nothing can be attributed or
 # recorded, so the tier is an error, not a silent success.
+response = {}
 try:
     with open(response_path) as handle:
         response = json.load(handle)
@@ -249,14 +317,31 @@ try:
     content = response["choices"][0]["message"]["content"]
     finish_reason = response["choices"][0].get("finish_reason")
 except Exception as exc:
-    sys.stderr.write("review: unparseable %s response: %s\n" % (stem, exc))
+    artifact = {"run_id": run_id, "task": task, "status": "error", "error": "unparseable response: %s" % exc,
+                "provider": provider, "requested_model": requested_model, "response_model": response.get("model"),
+                "requested_max_tokens": int(requested_max_tokens), "thinking_mode": thinking_mode if provider == "deepseek" else None, "reasoning_effort": requested_effort or None,
+                "timing": {"elapsed_seconds": elapsed_seconds, "prompt_tokens": response.get("usage", {}).get("prompt_tokens"),
+                            "completion_tokens": response.get("usage", {}).get("completion_tokens"),
+                            "reasoning_tokens": response.get("usage", {}).get("completion_tokens_details", {}).get("reasoning_tokens"),
+                            "finish_reason": response.get("choices", [{}])[0].get("finish_reason") if response.get("choices") else None}}
+    json.dump(artifact, open(artifact_path, "w"), indent=2); open(artifact_path, "a").write("\n")
     sys.exit(1)
 
 # A "length" finish_reason means the completion was cut off: the model
 # stopped mid-JSON. Half an object is neither parsable nor trustworthy, so
-# the tier is an error, never an empty-findings approval.
+# the tier is an error, never an empty-findings approval. A provider-reported
+# completion count at or above the requested cap is also fail-closed: the
+# request-side cap remains the hard reservation, while this guards against
+# accepting a response that reports using the entire reserved allowance.
 if finish_reason == "length":
-    sys.exit("truncated response (finish_reason: length)")
+    error = "truncated response (finish_reason: length)"
+else:
+    error = None
+
+usage = response.get("usage", {})
+completion_tokens = usage.get("completion_tokens")
+if error is None and type(completion_tokens) is int and completion_tokens >= int(requested_max_tokens):
+    error = "completion usage reached requested maximum (completion_tokens: %d, requested_max_tokens: %s)" % (completion_tokens, requested_max_tokens)
 
 # The model contract (system prompt) is strict JSON: a JSON object with
 # "findings" and "commentary". Anything else is a contract violation and an
@@ -270,16 +355,30 @@ try:
     if not isinstance(findings, list):
         raise ValueError("findings field is not a list")
 except Exception as exc:
-    sys.stderr.write("review: non-JSON %s content: %s\n" % (stem, exc))
+    if error is None:
+        error = "non-JSON content: %s" % exc
+
+if error:
+    artifact = {"run_id": run_id, "task": task, "status": "error", "error": error,
+                "provider": provider, "requested_model": requested_model, "response_model": model,
+                "requested_max_tokens": int(requested_max_tokens), "thinking_mode": thinking_mode if provider == "deepseek" else None, "reasoning_effort": requested_effort or None,
+                "timing": {"elapsed_seconds": elapsed_seconds, "prompt_tokens": usage.get("prompt_tokens"),
+                            "completion_tokens": usage.get("completion_tokens"), "reasoning_tokens": usage.get("completion_tokens_details", {}).get("reasoning_tokens"),
+                            "finish_reason": finish_reason}}
+    json.dump(artifact, open(artifact_path, "w"), indent=2); open(artifact_path, "a").write("\n")
     sys.exit(1)
 
-usage = response.get("usage", {})
 artifact = {
     "run_id": run_id,
     "task": task,
     "status": "complete",
     "model": model,
+    "requested_model": requested_model,
     "provider": provider,
+    "response_model": model,
+    "requested_max_tokens": int(requested_max_tokens),
+    "thinking_mode": thinking_mode if provider == "deepseek" else None,
+    "reasoning_effort": requested_effort or None,
     "findings": findings,
     "commentary": parsed.get("commentary", ""),
     "response_json": parsed,
@@ -296,7 +395,9 @@ with open(artifact_path, "w") as handle:
     json.dump(artifact, handle, indent=2)
     handle.write("\n")
 PYEOF
-    _write_tier_error "$task" "$artifact_path" "unparseable response from ${REVIEW_PROVIDER}"
+    if [ ! -e "$artifact_path" ]; then
+      _write_tier_error "$task" "$artifact_path" "unparseable response from ${REVIEW_PROVIDER}"
+    fi
     printf 'error'
     return 0
   fi
@@ -671,6 +772,13 @@ PYEOF
   printf 'not_run'
 }
 
+_write_tier_not_run() {
+  python3 - "$run_id" "$1" "$run_dir/$2.json" "$3" <<'PYEOF'
+import json, sys
+json.dump({"run_id": sys.argv[1], "task": sys.argv[2], "status": "not_run", "reason": sys.argv[4]}, open(sys.argv[3], "w"), indent=2)
+PYEOF
+}
+
 # ---- Verdict assembly and aggregation (functions) -------------------------
 
 # write_verdict <subject_sha> <tier0> <tier1a> <tier1b> <tier2> — assemble the
@@ -680,11 +788,11 @@ PYEOF
 write_verdict() {
   local subject_sha="$1" t0="$2" t1a="$3" t1b="$4" t2="$5"
   python3 - "$run_id" "$pr_number" "$subject_sha" "$risk_class" "$timestamp" \
-    "$t0" "$t1a" "$t1b" "$t2" "$run_dir" <<'PYEOF'
+    "$t0" "$t1a" "$t1b" "$t2" "$run_dir" "$REVIEW_TIER_COMPLETION_TOKEN_CAP" "$REVIEW_RUN_COMPLETION_TOKEN_CAP" "$requested_total" "$REVIEW_PROVIDER" "$REVIEW_DEEPSEEK_THINKING_MODE" "$REVIEW_REASONING_EFFORT_VALUE" "$config_error" <<'PYEOF'
 import json, os, sys
 
 (run_id, pr_number, subject_sha, risk_class, timestamp,
- t0, t1a, t1b, t2, run_dir) = sys.argv[1:11]
+ t0, t1a, t1b, t2, run_dir, tier_cap, run_cap, requested_total, provider, thinking_mode, effort, config_error) = sys.argv[1:18]
 out_path = os.path.join(run_dir, "verdict.json")
 
 TIER_MAP = {
@@ -694,6 +802,8 @@ TIER_MAP = {
 }
 
 findings = []
+known = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
+actual_usage_complete = True
 for stem, meta in TIER_MAP.items():
     artifact_path = os.path.join(run_dir, stem + ".json")
     if not os.path.isfile(artifact_path):
@@ -703,6 +813,14 @@ for stem, meta in TIER_MAP.items():
             artifact = json.load(fh)
     except Exception:
         continue
+    timing = artifact.get("timing", {})
+    if os.path.isfile(os.path.join(run_dir, stem + ".request.json")):
+        if type(timing.get("prompt_tokens")) is not int or type(timing.get("completion_tokens")) is not int:
+            actual_usage_complete = False
+    for key in known:
+        value = timing.get(key)
+        if type(value) is int:
+            known[key] += value
 
     for i, raw in enumerate(artifact.get("findings", []), 1):
         if not isinstance(raw, dict):
@@ -715,6 +833,13 @@ for stem, meta in TIER_MAP.items():
             "summary": raw.get("summary", "(unparseable)")[:500],
             "verification_status": raw.get("verification_status", "not_run"),
         })
+
+requested_total = 0
+for path in __import__("glob").glob(os.path.join(run_dir, "*.request.json")):
+    try:
+        requested_total += int(json.load(open(path)).get("max_tokens", 0))
+    except Exception:
+        pass
 
 verdict = {
     "schema": "review-verdict-v1",
@@ -732,6 +857,16 @@ verdict = {
     "findings": findings,
     "verdict": "PARTIAL",
 }
+if not config_error:
+    verdict["budget"] = {
+        "configured_tier_completion_token_cap": int(tier_cap),
+        "configured_run_completion_token_cap": int(run_cap),
+        "requested_total": int(requested_total),
+        "actual_known_totals": known,
+        "actual_usage_complete": actual_usage_complete,
+        "thinking_mode": thinking_mode if provider == "deepseek" else None,
+        "reasoning_effort": effort or None,
+    }
 
 with open(out_path, "w") as handle:
     json.dump(verdict, handle, indent=2)
@@ -833,14 +968,25 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   _progress "tier0: $tier0_status"
 
   # ---- 6. Tier 1A — review analysis (model call) --------------------------
-  _progress "tier1a: model call starting ($REVIEW_MODEL via $REVIEW_PROVIDER)"
-  tier1a_status="$(_tier1a "$wt_dir")"
-  _progress "tier1a: $tier1a_status"
+  if [ -n "$config_error" ]; then
+    _write_tier_error "review-analysis" "$run_dir/tier1a.json" "$config_error"
+    tier1a_status="error"
+  else
+    _progress "tier1a: model call starting ($REVIEW_MODEL via $REVIEW_PROVIDER)"
+    tier1a_status="$(_tier1a "$wt_dir")"
+    _progress "tier1a: $tier1a_status"
+  fi
 
   # ---- 7. Tier 1B — adversarial execution (model call) --------------------
-  _progress "tier1b: model call starting"
-  tier1b_status="$(_tier1b "$wt_dir")"
-  _progress "tier1b: $tier1b_status"
+  if [ -n "$config_error" ]; then
+    _write_tier_not_run "adversarial-execution" tier1b "invalid review configuration"
+  elif [ "$tier1a_status" = "error" ]; then
+    _write_tier_not_run "adversarial-execution" tier1b "Tier 1A error"
+  else
+    _progress "tier1b: model call starting"
+    tier1b_status="$(_tier1b "$wt_dir")"
+    _progress "tier1b: $tier1b_status"
+  fi
 
   # ---- 7.5 Verify findings -------------------------------------------------
   # Execute every blocking finding's verification_command in the worktree so

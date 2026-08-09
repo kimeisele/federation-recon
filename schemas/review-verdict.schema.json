@@ -40,6 +40,28 @@
         }
       }
     },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configured_tier_completion_token_cap", "configured_run_completion_token_cap", "requested_total", "actual_known_totals", "actual_usage_complete", "thinking_mode", "reasoning_effort"],
+      "properties": {
+        "configured_tier_completion_token_cap": { "type": "integer", "minimum": 1 },
+        "configured_run_completion_token_cap": { "type": "integer", "minimum": 1 },
+        "requested_total": { "type": "integer", "minimum": 0 },
+        "actual_known_totals": {
+          "type": "object", "additionalProperties": false,
+          "required": ["prompt_tokens", "completion_tokens", "reasoning_tokens"],
+          "properties": {
+            "prompt_tokens": { "type": "integer", "minimum": 0 },
+            "completion_tokens": { "type": "integer", "minimum": 0 },
+            "reasoning_tokens": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "actual_usage_complete": { "type": "boolean" },
+        "thinking_mode": { "type": ["string", "null"], "enum": ["enabled", "disabled", null] },
+        "reasoning_effort": { "type": ["string", "null"] }
+      }
+    },
     "verdict": { "type": "string", "enum": ["APPROVE", "REJECT", "PARTIAL", "STALE"] }
   },
   "additionalProperties": false
