@@ -62,7 +62,15 @@ if [ -z "$REQUESTED_PROVIDER" ] || [ -z "$REQUESTED_MODEL" ] || [ -z "$OUT_FILE"
 fi
 
 LOG_DIR="${JCODE_LOG_DIR:-$HOME/.jcode/logs}"
-LOG_FILE="$LOG_DIR/jcode-$(date -u +%Y-%m-%d).log"
+# jcode timestamps its log lines, and names its log file, in LOCAL time. The
+# window below is compared against those timestamps as strings, so it must be
+# taken from the same clock. Both used to use `date -u`: on a host at UTC+2
+# the window opened two hours early and admitted routes from unrelated earlier
+# calls, which the comparison then reported as AMBIGUOUS and every build was
+# refused (#222). The filename had the worse variant of the same defect —
+# between local midnight and UTC midnight the probe read yesterday's log and
+# found no route at all. The offset is zero in CI, which is why this survived.
+LOG_FILE="$LOG_DIR/jcode-$(date +%Y-%m-%d).log"
 
 _record() {
   {
@@ -84,7 +92,8 @@ _record() {
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-WINDOW_FROM="$(date -u +"%Y-%m-%d %H:%M:%S")"
+# Local time, for the reason recorded above the log filename.
+WINDOW_FROM="$(date +"%Y-%m-%d %H:%M:%S")"
 
 PROFILE="${JCODE_PROVIDER_PROFILE:-}"
 EXPECTED_ENDPOINT="${JCODE_EXPECTED_ENDPOINT:-}"

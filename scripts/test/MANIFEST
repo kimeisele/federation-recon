@@ -39,6 +39,7 @@ order-vectors.bats
 opencode-consult.bats
 pin-gate.bats
 pr-opener-canary.bats
+provider-probe-clock.bats
 review-runner.bats
 review-verdict.bats
 schedule-watchdog.bats
