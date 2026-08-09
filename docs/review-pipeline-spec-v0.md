@@ -176,10 +176,14 @@ Each review configures `REVIEW_TIER_COMPLETION_TOKEN_CAP` (default 8192) and
 decimal integers, and the run cap must be at least the tier cap. Model calls
 reserve `min(tier cap, remaining run cap)` before dispatch, so requested
 completion tokens never exceed the run cap even when provider usage is absent.
-DeepSeek defaults `REVIEW_REASONING_EFFORT` to `low`; supported explicit values
-are `low`, `high`, and `max`. Tier 1B is not run after any Tier 1A error.
+For DeepSeek, `REVIEW_DEEPSEEK_THINKING_MODE` defaults to `disabled` and sends
+`thinking: {"type":"disabled"}` without `reasoning_effort`. When enabled,
+the effort defaults to `high` and only `high` or `max` is accepted; an effort
+with disabled thinking is rejected. Other providers receive no DeepSeek
+thinking field and retain their explicit reasoning behavior. Tier 1B is not
+run after any Tier 1A error.
 Verdicts may include an additive `budget` object recording configured caps,
-requested and known actual token totals, and requested reasoning effort.
+requested and known actual token totals, thinking mode, and requested effort.
 
 ```
 max_primary_calls: 2  (Tier 1A + Tier 1B)

@@ -143,13 +143,13 @@ REVIEW_API_BASE="${REVIEW_API_BASE:-https://api.deepseek.com}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-300}"
 REVIEW_TIER_COMPLETION_TOKEN_CAP="${REVIEW_TIER_COMPLETION_TOKEN_CAP:-8192}"
 REVIEW_RUN_COMPLETION_TOKEN_CAP="${REVIEW_RUN_COMPLETION_TOKEN_CAP:-16384}"
+REVIEW_DEEPSEEK_THINKING_MODE="${REVIEW_DEEPSEEK_THINKING_MODE:-disabled}"
 if [ -n "${REVIEW_REASONING_EFFORT+x}" ]; then
   REVIEW_REASONING_EFFORT_EXPLICIT=true
   REVIEW_REASONING_EFFORT_VALUE="$REVIEW_REASONING_EFFORT"
 else
   REVIEW_REASONING_EFFORT_EXPLICIT=false
   REVIEW_REASONING_EFFORT_VALUE=""
-  [ "$REVIEW_PROVIDER" = "deepseek" ] && REVIEW_REASONING_EFFORT_VALUE="low"
 fi
 config_error=""
 if ! [[ "$REVIEW_TIER_COMPLETION_TOKEN_CAP" =~ ^[0-9]+$ ]] || [ "$REVIEW_TIER_COMPLETION_TOKEN_CAP" -le 0 ]; then
@@ -158,8 +158,16 @@ elif ! [[ "$REVIEW_RUN_COMPLETION_TOKEN_CAP" =~ ^[0-9]+$ ]] || [ "$REVIEW_RUN_CO
   config_error="invalid REVIEW_RUN_COMPLETION_TOKEN_CAP"
 elif [ "$REVIEW_RUN_COMPLETION_TOKEN_CAP" -lt "$REVIEW_TIER_COMPLETION_TOKEN_CAP" ]; then
   config_error="REVIEW_RUN_COMPLETION_TOKEN_CAP is below tier cap"
-elif [ "$REVIEW_PROVIDER" = "deepseek" ] && ! [[ "$REVIEW_REASONING_EFFORT_VALUE" =~ ^(low|high|max)$ ]]; then
-  config_error="invalid DeepSeek REVIEW_REASONING_EFFORT"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && ! [[ "$REVIEW_DEEPSEEK_THINKING_MODE" =~ ^(enabled|disabled)$ ]]; then
+  config_error="invalid REVIEW_DEEPSEEK_THINKING_MODE"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && [ "$REVIEW_DEEPSEEK_THINKING_MODE" = "disabled" ] && [ "$REVIEW_REASONING_EFFORT_EXPLICIT" = true ]; then
+  config_error="DeepSeek reasoning effort requires enabled thinking mode"
+elif [ "$REVIEW_PROVIDER" = "deepseek" ] && [ "$REVIEW_DEEPSEEK_THINKING_MODE" = "enabled" ]; then
+  if [ "$REVIEW_REASONING_EFFORT_EXPLICIT" = false ]; then
+    REVIEW_REASONING_EFFORT_VALUE="high"
+  elif ! [[ "$REVIEW_REASONING_EFFORT_VALUE" =~ ^(high|max)$ ]]; then
+    config_error="invalid DeepSeek REVIEW_REASONING_EFFORT"
+  fi
 fi
 requested_total=0
 
@@ -182,10 +190,10 @@ _progress() {
 # model call is a PARTIAL review, never a crash.
 _write_tier_error() {
   local task="$1" artifact_path="$2" message="$3"
-  python3 - "$run_id" "$task" "$artifact_path" "$message" "${_current_requested_tokens:-null}" "$REVIEW_PROVIDER" "$REVIEW_MODEL" <<'PYEOF'
+  python3 - "$run_id" "$task" "$artifact_path" "$message" "${_current_requested_tokens:-null}" "$REVIEW_PROVIDER" "$REVIEW_MODEL" "$REVIEW_DEEPSEEK_THINKING_MODE" "$REVIEW_REASONING_EFFORT_VALUE" <<'PYEOF'
 import json, sys
 
-run_id, task, path, message, requested, provider, requested_model = sys.argv[1:8]
+run_id, task, path, message, requested, provider, requested_model, thinking_mode, effort = sys.argv[1:10]
 artifact = {
     "run_id": run_id,
     "task": task,
@@ -195,7 +203,8 @@ artifact = {
     "provider": provider,
     "requested_model": requested_model,
     "response_model": None,
-    "reasoning_effort": None,
+    "thinking_mode": thinking_mode if provider == "deepseek" else None,
+    "reasoning_effort": effort or None,
     "timing": {"prompt_tokens": None, "completion_tokens": None, "reasoning_tokens": None, "finish_reason": None},
 }
 with open(path, "w") as handle:
@@ -239,10 +248,10 @@ PYEOF
   _current_requested_tokens=$((remaining < REVIEW_TIER_COMPLETION_TOKEN_CAP ? remaining : REVIEW_TIER_COMPLETION_TOKEN_CAP))
   requested_total=$((requested_total + _current_requested_tokens))
 
-  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" "$REVIEW_JSON_MODE" "$_current_requested_tokens" "$REVIEW_PROVIDER" "$REVIEW_REASONING_EFFORT_VALUE" "$REVIEW_REASONING_EFFORT_EXPLICIT" <<'PYEOF'; then
+  if ! python3 - "$request_file" "$system_file" "$user_file" "$REVIEW_MODEL" "$REVIEW_JSON_MODE" "$_current_requested_tokens" "$REVIEW_PROVIDER" "$REVIEW_REASONING_EFFORT_VALUE" "$REVIEW_REASONING_EFFORT_EXPLICIT" "$REVIEW_DEEPSEEK_THINKING_MODE" <<'PYEOF'; then
 import json, sys
 
-request_path, system_path, user_path, model, json_mode, max_tokens, provider, effort, effort_explicit = sys.argv[1:10]
+request_path, system_path, user_path, model, json_mode, max_tokens, provider, effort, effort_explicit, thinking_mode = sys.argv[1:11]
 with open(system_path) as handle:
     system = handle.read()
 with open(user_path) as handle:
@@ -257,7 +266,12 @@ payload = {
 if json_mode == "1":
     payload["response_format"] = {"type": "json_object"}
 payload["max_tokens"] = int(max_tokens)
-if provider == "deepseek" or effort_explicit == "true":
+if provider == "deepseek" and thinking_mode == "disabled":
+    payload["thinking"] = {"type": "disabled"}
+elif provider == "deepseek":
+    payload["thinking"] = {"type": "enabled"}
+    payload["reasoning_effort"] = effort
+elif effort_explicit == "true":
     payload["reasoning_effort"] = effort
 with open(request_path, "w") as handle:
     json.dump(payload, handle, indent=2)
@@ -283,12 +297,12 @@ PYEOF
   call_end="$(date +%s)"
   elapsed_seconds="$((call_end - call_start))"
 
-  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" "$elapsed_seconds" "$REVIEW_MODEL" "$_current_requested_tokens" "$REVIEW_REASONING_EFFORT_VALUE" <<'PYEOF'; then
+  if ! python3 - "$run_id" "$task" "$stem" "$REVIEW_PROVIDER" "$run_dir" "$elapsed_seconds" "$REVIEW_MODEL" "$_current_requested_tokens" "$REVIEW_REASONING_EFFORT_VALUE" "$REVIEW_DEEPSEEK_THINKING_MODE" <<'PYEOF'; then
 import json, os, sys
 
 run_id, task, stem, provider, run_dir = sys.argv[1:6]
 elapsed_seconds = int(sys.argv[6]) if len(sys.argv) > 6 else None
-requested_model, requested_max_tokens, requested_effort = sys.argv[7:10]
+requested_model, requested_max_tokens, requested_effort, thinking_mode = sys.argv[7:11]
 response_path = os.path.join(run_dir, stem + ".response.json")
 artifact_path = os.path.join(run_dir, stem + ".json")
 
@@ -305,7 +319,7 @@ try:
 except Exception as exc:
     artifact = {"run_id": run_id, "task": task, "status": "error", "error": "unparseable response: %s" % exc,
                 "provider": provider, "requested_model": requested_model, "response_model": response.get("model"),
-                "requested_max_tokens": int(requested_max_tokens), "reasoning_effort": requested_effort or None,
+                "requested_max_tokens": int(requested_max_tokens), "thinking_mode": thinking_mode if provider == "deepseek" else None, "reasoning_effort": requested_effort or None,
                 "timing": {"elapsed_seconds": elapsed_seconds, "prompt_tokens": response.get("usage", {}).get("prompt_tokens"),
                             "completion_tokens": response.get("usage", {}).get("completion_tokens"),
                             "reasoning_tokens": response.get("usage", {}).get("completion_tokens_details", {}).get("reasoning_tokens"),
@@ -333,13 +347,14 @@ try:
     if not isinstance(findings, list):
         raise ValueError("findings field is not a list")
 except Exception as exc:
-    error = "non-JSON content: %s" % exc
+    if error is None:
+        error = "non-JSON content: %s" % exc
 
 usage = response.get("usage", {})
 if error:
     artifact = {"run_id": run_id, "task": task, "status": "error", "error": error,
                 "provider": provider, "requested_model": requested_model, "response_model": model,
-                "requested_max_tokens": int(requested_max_tokens), "reasoning_effort": requested_effort or None,
+                "requested_max_tokens": int(requested_max_tokens), "thinking_mode": thinking_mode if provider == "deepseek" else None, "reasoning_effort": requested_effort or None,
                 "timing": {"elapsed_seconds": elapsed_seconds, "prompt_tokens": usage.get("prompt_tokens"),
                             "completion_tokens": usage.get("completion_tokens"), "reasoning_tokens": usage.get("completion_tokens_details", {}).get("reasoning_tokens"),
                             "finish_reason": finish_reason}}
@@ -355,6 +370,7 @@ artifact = {
     "provider": provider,
     "response_model": model,
     "requested_max_tokens": int(requested_max_tokens),
+    "thinking_mode": thinking_mode if provider == "deepseek" else None,
     "reasoning_effort": requested_effort or None,
     "findings": findings,
     "commentary": parsed.get("commentary", ""),
@@ -765,11 +781,11 @@ PYEOF
 write_verdict() {
   local subject_sha="$1" t0="$2" t1a="$3" t1b="$4" t2="$5"
   python3 - "$run_id" "$pr_number" "$subject_sha" "$risk_class" "$timestamp" \
-    "$t0" "$t1a" "$t1b" "$t2" "$run_dir" "$REVIEW_TIER_COMPLETION_TOKEN_CAP" "$REVIEW_RUN_COMPLETION_TOKEN_CAP" "$requested_total" "$REVIEW_REASONING_EFFORT_VALUE" "$config_error" <<'PYEOF'
+    "$t0" "$t1a" "$t1b" "$t2" "$run_dir" "$REVIEW_TIER_COMPLETION_TOKEN_CAP" "$REVIEW_RUN_COMPLETION_TOKEN_CAP" "$requested_total" "$REVIEW_PROVIDER" "$REVIEW_DEEPSEEK_THINKING_MODE" "$REVIEW_REASONING_EFFORT_VALUE" "$config_error" <<'PYEOF'
 import json, os, sys
 
 (run_id, pr_number, subject_sha, risk_class, timestamp,
- t0, t1a, t1b, t2, run_dir, tier_cap, run_cap, requested_total, effort, config_error) = sys.argv[1:17]
+ t0, t1a, t1b, t2, run_dir, tier_cap, run_cap, requested_total, provider, thinking_mode, effort, config_error) = sys.argv[1:18]
 out_path = os.path.join(run_dir, "verdict.json")
 
 TIER_MAP = {
@@ -836,6 +852,7 @@ if not config_error:
         "configured_run_completion_token_cap": int(run_cap),
         "requested_total": int(requested_total),
         "actual_known_totals": known,
+        "thinking_mode": thinking_mode if provider == "deepseek" else None,
         "reasoning_effort": effort or None,
     }
 

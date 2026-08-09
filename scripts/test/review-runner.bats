@@ -130,7 +130,7 @@ index 0000000..1111111 100644
 
   export REVIEWS_ROOT="$SANDBOX/home/.local/share/federation-recon/reviews"
   mkdir -p "$REVIEWS_ROOT"
-  unset REVIEW_TIER_COMPLETION_TOKEN_CAP REVIEW_RUN_COMPLETION_TOKEN_CAP REVIEW_REASONING_EFFORT
+  unset REVIEW_TIER_COMPLETION_TOKEN_CAP REVIEW_RUN_COMPLETION_TOKEN_CAP REVIEW_REASONING_EFFORT REVIEW_DEEPSEEK_THINKING_MODE
 }
 
 teardown() {
@@ -422,7 +422,9 @@ PYEOF
   grep -q -- "--max-time 300" "$MOCK_CURL_ARGS_FILE"
   grep -q '"model": "deepseek-v4-flash"' "$run_dir/tier1a.request.json"
   grep -q '"max_tokens": 8192' "$run_dir/tier1a.request.json"
-  grep -q '"reasoning_effort": "low"' "$run_dir/tier1a.request.json"
+  grep -q '"thinking": {' "$run_dir/tier1a.request.json"
+  grep -q '"type": "disabled"' "$run_dir/tier1a.request.json"
+  ! grep -q '"reasoning_effort"' "$run_dir/tier1a.request.json"
   grep -q '"response_format"' "$run_dir/tier1a.request.json"
   grep -q '"json_object"' "$run_dir/tier1a.request.json"
 }
@@ -524,12 +526,56 @@ PYEOF
 }
 
 @test "review-runner: invalid DeepSeek effort makes zero provider calls" {
-  export REVIEW_REASONING_EFFORT=medium
+  export REVIEW_DEEPSEEK_THINKING_MODE=enabled REVIEW_REASONING_EFFORT=low
   run run_review --pr 178
   [ "$status" -eq 0 ]
   [ ! -s "$MOCK_CURL_ARGS_FILE" ]
   run_dir="$(latest_run_dir)"
   [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+}
+
+@test "review-runner: invalid DeepSeek thinking mode makes zero provider calls" {
+  export REVIEW_DEEPSEEK_THINKING_MODE=invalid
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+}
+
+@test "review-runner: other provider preserves arbitrary reasoning effort" {
+  export REVIEW_PROVIDER=other REVIEW_REASONING_EFFORT=medium
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  ! grep -q '"thinking"' "$run_dir/tier1a.request.json"
+  grep -q '"reasoning_effort": "medium"' "$run_dir/tier1a.request.json"
+  python3 - "$run_dir/verdict.json" <<'PYEOF'
+import json, sys
+b = json.load(open(sys.argv[1]))["budget"]
+assert b["thinking_mode"] is None
+assert b["reasoning_effort"] == "medium"
+PYEOF
+  source "$REPO_ROOT/scripts/lib/helpers.sh"
+  run validate_json_schema "$run_dir/verdict.json" "$REPO_ROOT/schemas/review-verdict.schema.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "review-runner: enabled DeepSeek high effort sends thinking fields" {
+  export REVIEW_DEEPSEEK_THINKING_MODE=enabled REVIEW_REASONING_EFFORT=high
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"thinking": {' "$run_dir/tier1a.request.json"
+  grep -q '"type": "enabled"' "$run_dir/tier1a.request.json"
+  grep -q '"reasoning_effort": "high"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: disabled DeepSeek effort makes zero provider calls" {
+  export REVIEW_REASONING_EFFORT=high
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
 }
 
 @test "review-runner: parse errors retain response usage and provenance" {
@@ -544,6 +590,7 @@ assert a["status"] == "error"
 assert a["provider"] == "deepseek" and a["requested_model"] == "deepseek-v4-flash"
 assert a["response_model"] == "served-model" and a["requested_max_tokens"] == 8192
 assert a["timing"]["finish_reason"] == "length"
+assert a["error"] == "truncated response (finish_reason: length)"
 assert a["timing"]["prompt_tokens"] == 11 and a["timing"]["completion_tokens"] == 7 and a["timing"]["reasoning_tokens"] == 3
 b = json.load(open(sys.argv[1].replace("tier1a.json", "verdict.json")))["budget"]
 assert b["actual_known_totals"] == {"prompt_tokens": 11, "completion_tokens": 7, "reasoning_tokens": 3}
