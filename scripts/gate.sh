@@ -62,6 +62,26 @@ set -m
   step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
   bad()  { printf '  \033[31mFAIL\033[0m — %s\n' "$1"; fail=1; }
   good() { printf '  \033[32mOK\033[0m — %s\n' "$1"; }
+  _gate_monotonic_ns() { python3 -c 'import time; print(time.monotonic_ns())' 2>/dev/null; }
+  stage_start() {
+    local stage_name="$1" stage_clock
+    stage_clock="$(_gate_monotonic_ns)" || return 1
+    case "$stage_clock" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#stage_clock}" -le 18 ] || return 1
+    _gate_stage_start_ns="$stage_clock"
+    printf 'GATE START stage=%s\n' "$stage_name" >&2
+  }
+  stage_done() {
+    local stage_name="$1" stage_status="$2" stage_clock stage_duration
+    [ -n "${_gate_stage_start_ns:-}" ] || return 1
+    stage_clock="$(_gate_monotonic_ns)" || return 1
+    case "$stage_clock" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#stage_clock}" -le 18 ] || return 1
+    [ "$stage_clock" -ge "$_gate_stage_start_ns" ] 2>/dev/null || return 1
+    stage_duration=$(( (stage_clock - _gate_stage_start_ns) / 1000000 ))
+    printf 'GATE DONE stage=%s duration_ms=%s status=%s\n' \
+      "$stage_name" "$stage_duration" "$stage_status" >&2
+  }
 
   # The suite runner lives in scripts/lib/ so that scripts/test/test-runner.bats
   # exercises the same definition this gate uses. A test that carries its own copy
@@ -133,40 +153,55 @@ set -m
   # ---- dependencies -------------------------------------------------------
   # Asserted, not assumed. A missing binary must announce itself rather than
   # turn into an empty result somewhere downstream.
+  stage_start "0/4-dependencies" || exit 2
   step "0/4 dependencies"
   for t in git python3 bats shasum; do
     if command -v "$t" >/dev/null 2>&1; then good "$t"; else bad "$t is required and not installed"; fi
   done
-  [ "$fail" = 1 ] && { printf '\n\033[31mGATE: FAIL\033[0m — dependencies missing, nothing else was run\n'; exit 1; }
+  [ "$fail" = 1 ] && { stage_done "0/4-dependencies" fail || exit 2; printf '\n\033[31mGATE: FAIL\033[0m — dependencies missing, nothing else was run\n'; exit 1; }
+  stage_done "0/4-dependencies" pass || exit 2
 
   # ---- 1. strict artifact validation --------------------------------------
+  stage_start "1/4-strict-artifact-validation" || exit 2
   step "1/4 strict artifact validation"
+  stage_status=pass
   if bash scripts/validate-artifacts.sh --strict >"$LOGDIR/validate.log" 2>&1; then
     good "$(grep -o 'Total validated: [0-9]*' "$LOGDIR/validate.log" | head -1)"
   else
     bad "artifacts do not validate — see $LOGDIR/validate.log"
+    stage_status=fail
   fi
+  stage_done "1/4-strict-artifact-validation" "$stage_status" || exit 2
 
   # ---- 2. offline CI gate --------------------------------------------------
+  stage_start "2/4-offline-ci-gate" || exit 2
   step "2/4 offline CI gate"
+  stage_status=pass
   if bash scripts/ci-checks.sh >"$LOGDIR/ci.log" 2>&1; then
     good "ci-checks passed"
   else
     bad "ci-checks failed"; tail -20 "$LOGDIR/ci.log" | sed 's/^/    /'
+    stage_status=fail
   fi
+  stage_done "2/4-offline-ci-gate" "$stage_status" || exit 2
 
   # ---- 3. test suite -------------------------------------------------------
+  stage_start "3/4-test-suite" || exit 2
   step "3/4 test suite"
+  stage_status=pass
   snap_pre_suite="$(tree_snapshot)"
   if run_suite "$LOGDIR/bats.log"; then
     good "$(grep -c '^ok' "$LOGDIR/bats.log") tests"
   else
     suite_failed "$LOGDIR/bats.log" "test suite"
+    stage_status=fail
   fi
   if ! new_records="$(tree_diff "$snap_pre_suite" "$(tree_snapshot)")"; then
     bad "the test suite $(tree_change_kind "$new_records")"
     printf '%s\n' "$new_records" | sed 's/^/    /'
+    stage_status=fail
   fi
+  stage_done "3/4-test-suite" "$stage_status" || exit 2
 
   # ---- removed: a second suite run under a CI-like environment -------------
   # This gate used to run the whole suite a second time with GITHUB_EVENT_NAME,
@@ -185,13 +220,17 @@ set -m
   # Deleting a check needs a reason, not a schedule. This is the reason.
 
   # ---- 5. reproduce fixpoint ----------------------------------------------
+  stage_start "4/4-reproduce-fixpoint" || exit 2
   step "4/4 reproduce fixpoint (FR-CON-012)"
   if ! $FULL; then
     printf '  \033[33mSKIPPED\033[0m — needs network; re-run with --full\n'
     skipped="the reproduce fixpoint"
+    stage_done "4/4-reproduce-fixpoint" skipped || exit 2
   elif ! command -v gh >/dev/null 2>&1; then
     bad "gh is required for --full and is not installed"
+    stage_done "4/4-reproduce-fixpoint" fail || exit 2
   else
+    reproduce_status=pass
     # Baseline of the source tree before this phase creates anything. Taken
     # before the disposable worktree exists so the worktree record it would
     # add is not part of either side of the tree-diff below.
@@ -205,6 +244,7 @@ set -m
     wt_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-reproduce.XXXXXX")"
     if ! git worktree add "$wt_dir" HEAD --detach --quiet 2>/dev/null; then
       bad "could not create reproduce worktree (fixpoint not checked)"
+      reproduce_status=fail
       rm -rf "$wt_dir" 2>/dev/null || true
     else
       # Remove the worktree on every exit path — pass, fail, signal. Idempotent,
@@ -243,17 +283,21 @@ set -m
       reproduce_cleanup
       if [ "$a" != "$b" ]; then
         bad "not deterministic: two consecutive runs differ"
+        reproduce_status=fail
         printf '  reproduce evidence: %s\n' "$LOGDIR"/reproduce-*.log
       elif [ "$before" != "$a" ]; then
         bad "committed artifacts are not the fixpoint — regenerate and commit"
+        reproduce_status=fail
         printf '  reproduce evidence: %s\n' "$LOGDIR"/reproduce-*.log
       elif ! new_records="$(tree_diff "$snap_pre_reproduce" "$(tree_snapshot)")"; then
         bad "the reproduce run $(tree_change_kind "$new_records")"
+        reproduce_status=fail
         printf '%s\n' "$new_records" | sed 's/^/    /'
       else
         good "committed == run1 == run2, tree clean"
       fi
     fi
+    stage_done "4/4-reproduce-fixpoint" "$reproduce_status" || exit 2
   fi
 
   # ---- verdict -------------------------------------------------------------

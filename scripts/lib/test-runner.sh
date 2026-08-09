@@ -31,9 +31,15 @@
 # bomb on a small machine.
 : "${TEST_RUNNER_MAX_JOBS:=8}"
 
+_test_runner_monotonic_ns() {
+  python3 -c 'import time; print(time.monotonic_ns())' 2>/dev/null
+}
+
 run_suite() {
   local log="$1" testdir="${2:-scripts/test}"
-  local jobdir rc=0 p f n=0 i
+  local jobdir rc=0 p f n=0 i started finished duration worker_status
+  local total=0 passed=0 failed=0 file_total file_passed file_failed
+  local -a pids files
 
   # The cap is arithmetic in a loop condition, so a non-numeric value makes the
   # test error out and the loop never block — the cap silently disappears — and
@@ -57,7 +63,6 @@ run_suite() {
   jobdir="$(mktemp -d "${TMPDIR:-/tmp}/gate-suite.XXXXXX")" || return 1
   : >"$log" || { rm -rf "$jobdir"; return 1; }
 
-  local pids=""
   for f in "$testdir"/*.bats; do
     # An unmatched glob leaves the literal pattern, which is neither. A broken
     # symlink is not `-e` but is `-L`, and must be rejected below rather than
@@ -72,15 +77,48 @@ run_suite() {
       rc=1
       continue
     fi
-    n=$(( n + 1 ))
+    i=$(( n + 1 ))
 
     # Hold at the concurrency cap. `wait -n` would be the natural tool and does
     # not exist in bash 3.2, which is what macOS ships and what this gate runs
     # on most often.
     while [ "$(jobs -pr | wc -l)" -ge "$TEST_RUNNER_MAX_JOBS" ]; do sleep 0.2; done
 
-    bats "$f" >"$jobdir/$n.log" 2>&1 &
-    pids="$pids $!"
+    started="$(_test_runner_monotonic_ns)"
+    case "$started" in
+      ''|*[!0-9]*)
+      echo "not ok - could not read monotonic clock for worker $f" >>"$log"
+      rc=1
+      continue
+      ;;
+    esac
+    [ "${#started}" -le 18 ] || {
+      echo "not ok - monotonic clock value is out of range for worker $f" >>"$log"
+      rc=1
+      continue
+    }
+    printf 'TEST START file=%s\n' "$f" >&2
+    (
+      bats "$f" >"$jobdir/$i.log" 2>&1
+      worker_status=$?
+      finished="$(_test_runner_monotonic_ns)"
+      case "$finished" in
+        ''|*[!0-9]*) duration=0; worker_status=1 ;;
+        *)
+          if [ "${#finished}" -gt 18 ] || ! [ "$finished" -ge "$started" ] 2>/dev/null; then
+            duration=0
+            worker_status=1
+          else
+            duration=$(( (finished - started) / 1000000 ))
+          fi
+          ;;
+      esac
+      printf 'TEST DONE file=%s duration_ms=%s status=%s\n' "$f" "$duration" "$worker_status" >&2
+      exit "$worker_status"
+    ) &
+    pids[$i]=$!
+    files[$i]="$f"
+    n=$i
   done
 
   # Zero test files is a failure. "Found nothing" and "ran nothing" must never
@@ -91,7 +129,7 @@ run_suite() {
     return 1
   fi
 
-  for p in $pids; do
+  for p in "${pids[@]}"; do
     wait "$p" || rc=1
   done
 
@@ -129,6 +167,26 @@ run_suite() {
     fi
     i=$(( i + 1 ))
   done
+  # Emit one deterministic accounting line per worker, followed by the total.
+  # This is intentionally after aggregation so the summary reflects exactly
+  # the evidence that the caller will inspect.
+  i=1
+  while [ "$i" -le "$n" ]; do
+    file_passed=0
+    file_failed=0
+    if [ -r "$jobdir/$i.log" ]; then
+      file_passed="$(grep -c '^ok ' "$jobdir/$i.log" 2>/dev/null)" || file_passed=0
+      file_failed="$(grep -c '^not ok ' "$jobdir/$i.log" 2>/dev/null)" || file_failed=0
+    fi
+    file_total=$(( file_passed + file_failed ))
+    total=$(( total + file_total ))
+    passed=$(( passed + file_passed ))
+    failed=$(( failed + file_failed ))
+    printf 'TEST SUMMARY file=%s total=%s pass=%s fail=%s\n' \
+      "${files[$i]}" "$file_total" "$file_passed" "$file_failed" >&2
+    i=$(( i + 1 ))
+  done
+  printf 'TEST SUMMARY total=%s pass=%s fail=%s\n' "$total" "$passed" "$failed" >&2
 
   # The worker's exit status and the worker's output must agree. A `bats` that
   # prints `not ok` and exits 0 — a stale build, a shadowing wrapper, a

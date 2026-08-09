@@ -235,6 +235,24 @@ assert_diagnostic_logs() {
   assert_no_leaked_worktree "$dir" "$tmp"
 }
 
+@test "gate-fixpoint: fixture emits one timed START and DONE per stage" {
+  local dir="$SANDBOX/repo" tmp="$SANDBOX/tmp" stage
+  mkdir -p "$tmp"
+  build_fixture "$dir" pass
+
+  run run_gate "$dir"
+  [ "$status" -eq 0 ]
+  for stage in \
+    0/4-dependencies \
+    1/4-strict-artifact-validation \
+    2/4-offline-ci-gate \
+    3/4-test-suite \
+    4/4-reproduce-fixpoint; do
+    [ "$(printf '%s\n' "$output" | grep -c "^GATE START stage=$stage$")" -eq 1 ]
+    [ "$(printf '%s\n' "$output" | grep -Ec "^GATE DONE stage=$stage duration_ms=[0-9]+ status=(pass|fail|skipped)$")" -eq 1 ]
+  done
+}
+
 @test "gate-fixpoint: nondeterministic reproduce fails without touching the source" {
   local dir="$SANDBOX/repo" tmp="$SANDBOX/tmp"
   mkdir -p "$tmp"

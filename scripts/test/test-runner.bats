@@ -92,6 +92,52 @@ mk() { printf '%s\n' "$2" >"$WORKDIR/tests/$1.bats"; }
   grep -q 'c.bats' "$WORKDIR/out.log"
 }
 
+@test "test-runner: emits worker timings and deterministic summary" {
+  mk a PASS; mk b PASS; mk c FAIL
+  run run_suite "$WORKDIR/out.log" "$WORKDIR/tests"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "$output" | grep -c '^TEST START file=')" -eq 3 ]
+  [ "$(printf '%s\n' "$output" | grep -c '^TEST DONE file=')" -eq 3 ]
+  [ "$(printf '%s\n' "$output" | grep -c '^TEST SUMMARY file=')" -eq 3 ]
+  printf '%s\n' "$output" | grep -q 'TEST SUMMARY total=3 pass=2 fail=1'
+  printf '%s\n' "$output" | grep -q 'TEST SUMMARY file=.*/a.bats total=1 pass=1 fail=0'
+  printf '%s\n' "$output" | grep -q 'TEST SUMMARY file=.*/b.bats total=1 pass=1 fail=0'
+  printf '%s\n' "$output" | grep -q 'TEST SUMMARY file=.*/c.bats total=1 pass=0 fail=1'
+  [ "$(printf '%s\n' "$output" | grep -c '^TEST SUMMARY ')" -eq 4 ]
+}
+
+@test "test-runner: DONE is emitted in worker completion order" {
+  export WORKDIR
+  cat >"$WORKDIR/mockbin/bats" <<'STUB'
+#!/usr/bin/env bash
+case "$(head -1 "$1")" in
+  SLOW) touch "$WORKDIR/slow-running"; i=0; while [ ! -f "$WORKDIR/release-slow" ] && [ "$i" -lt 800 ]; do sleep 0.05; i=$((i + 1)); done; rm -f "$WORKDIR/slow-running"; [ "$i" -lt 800 ] || exit 71 ;;
+  FAST) i=0; while [ ! -f "$WORKDIR/slow-running" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i + 1)); done; [ "$i" -lt 400 ] || exit 71 ;;
+esac
+echo "ok 1 - $1"
+STUB
+  chmod +x "$WORKDIR/mockbin/bats"
+  mk a-slow SLOW; mk b-fast FAST
+
+  run_suite "$WORKDIR/out.log" "$WORKDIR/tests" >"$WORKDIR/runner-output" 2>&1 &
+  runner_pid=$!
+  fast_done_observed=0
+  slow_done_absent=0
+  i=0
+  while ! grep -q 'TEST DONE file=.*/b-fast.bats .*status=0' "$WORKDIR/runner-output" && [ "$i" -lt 400 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  if [ "$i" -lt 400 ] && grep -q 'TEST DONE file=.*/b-fast.bats .*status=0' "$WORKDIR/runner-output"; then
+    fast_done_observed=1
+    [ -f "$WORKDIR/slow-running" ] && ! grep -q 'TEST DONE file=.*/a-slow.bats ' "$WORKDIR/runner-output" && slow_done_absent=1
+  fi
+  touch "$WORKDIR/release-slow"
+  wait "$runner_pid" || true
+  [ "$fast_done_observed" -eq 1 ]
+  [ "$slow_done_absent" -eq 1 ]
+}
+
 # Rejecting `not ok` only rejects declared failure. A worker that exits clean
 # while running nothing at all is the same threat with the evidence removed
 # instead of contradicted, and it produced "OK — 0 tests" and a passing gate.
