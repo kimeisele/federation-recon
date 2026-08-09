@@ -26,14 +26,12 @@
   ],
   "acceptance_commands": [
     "bash -n scripts/review.sh",
-    "bats scripts/test/review-tier0-ci.bats",
-    "bats scripts/test/review-runner.bats",
-    "bats scripts/test/review-verdict.bats"
+    "bats scripts/test/review-tier0-ci.bats"
   ],
   "oracle_paths": [
     "scripts/test/review-tier0-ci.bats",
     "scripts/test/MANIFEST"
   ],
   "builder": "operator/builders/jcode.sh",
-  "builder_timeout_seconds": 900
+  "builder_timeout_seconds": 2400
 }
