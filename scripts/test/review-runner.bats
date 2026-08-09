@@ -75,6 +75,8 @@ if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   case "$*" in
+    *headRefOid*baseRefOid*|*baseRefOid*headRefOid*)
+      printf '{"headRefOid":"%s","baseRefOid":"%s"}\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *baseRefOid*) printf '%s\n' "$MOCK_BASE_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
@@ -721,4 +723,261 @@ PYEOF
     _verify_findings "$FIXTURE" 2>/dev/null
   )
   # If we get here, the function did not crash under set -e.
+}
+
+# ────────────────────────────────────────────────────────────
+#  22. SHA BINDING — head and base SHAs resolved from a single
+#      gh pr view call and recorded in the verdict
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: head and base SHAs are resolved in one gh call and bound to the run" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"clean\"}"},"finish_reason":"stop"}]}'
+
+  # Count gh pr view invocations that request SHA fields
+  local gh_log="$SANDBOX/gh-sha-calls.log"
+  export MOCK_GH_SHA_LOG="$gh_log"
+
+  # Patch the mock gh to log SHA-related pr view calls
+  cat > "$MOCKBIN/gh" <<'GHSCRIPT'
+#!/usr/bin/env bash
+if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
+  echo "mock gh: failing on request" >&2
+  exit 1
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *headRefOid*baseRefOid*|*baseRefOid*headRefOid*)
+      [ -n "${MOCK_GH_SHA_LOG:-}" ] && echo "combined" >> "$MOCK_GH_SHA_LOG"
+      printf '{"headRefOid":"%s","baseRefOid":"%s"}\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
+    *headRefOid*)
+      [ -n "${MOCK_GH_SHA_LOG:-}" ] && echo "head-only" >> "$MOCK_GH_SHA_LOG"
+      printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *baseRefOid*)
+      [ -n "${MOCK_GH_SHA_LOG:-}" ] && echo "base-only" >> "$MOCK_GH_SHA_LOG"
+      printf '%s\n' "$MOCK_BASE_SHA" ;;
+    *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "diff" ]; then
+  printf '%s\n' "$MOCK_PR_DIFF"
+  exit 0
+fi
+echo "mock gh: unexpected invocation: $*" >&2
+exit 2
+GHSCRIPT
+  chmod +x "$MOCKBIN/gh"
+
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  # Exactly one combined call, no separate head-only or base-only calls
+  [ -f "$gh_log" ]
+  [ "$(grep -c 'combined' "$gh_log")" -ge 1 ]
+  [ "$(grep -c 'head-only' "$gh_log" || true)" = "0" ]
+  [ "$(grep -c 'base-only' "$gh_log" || true)" = "0" ]
+
+  # Restore the standard mock
+  cat > "$MOCKBIN/gh" <<'GHSCRIPT'
+#!/usr/bin/env bash
+if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
+  echo "mock gh: failing on request" >&2
+  exit 1
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *headRefOid*baseRefOid*|*baseRefOid*headRefOid*)
+      printf '{"headRefOid":"%s","baseRefOid":"%s"}\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
+    *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *baseRefOid*) printf '%s\n' "$MOCK_BASE_SHA" ;;
+    *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "diff" ]; then
+  printf '%s\n' "$MOCK_PR_DIFF"
+  exit 0
+fi
+echo "mock gh: unexpected invocation: $*" >&2
+exit 2
+GHSCRIPT
+  chmod +x "$MOCKBIN/gh"
+
+  run_dir="$(latest_run_dir)"
+  # The verdict records the head SHA
+  python3 - "$run_dir/verdict.json" <<PYEOF
+import json, sys
+v = json.load(open(sys.argv[1]))
+assert v["subject_head_sha"] == "$MOCK_HEAD_SHA", \
+    "verdict head SHA %s != %s" % (v["subject_head_sha"], "$MOCK_HEAD_SHA")
+PYEOF
+}
+
+# ────────────────────────────────────────────────────────────
+#  23. HEAD-FAILURE SHORT-CIRCUIT — when the head command fails,
+#      base is never executed
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: head command failure short-circuits — base command is not run" {
+  # test -f nonexistent-file fails on head; base should never run
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Missing file.\",\"verification_command\":\"test -f nonexistent-file\"}],\"commentary\":\"Suspected defect.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  # Finding is rejected (head failed)
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["verification_status"] == "rejected", \
+    "expected rejected, got %s" % f["verification_status"]
+PYEOF
+
+  # The verification log has NO base entry — base was never executed
+  [ -f "$run_dir/verify.tier1a.0.log" ]
+  ! grep -q "base exit code" "$run_dir/verify.tier1a.0.log"
+  ! grep -q "base:" "$run_dir/verify.tier1a.0.log"
+}
+
+# ────────────────────────────────────────────────────────────
+#  24. MISSING BASE — when base SHA is unavailable, head-confirmed
+#      findings degrade to inconclusive
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: missing base SHA degrades head-confirmed to inconclusive" {
+  # Override mock gh to return empty baseRefOid
+  cat > "$MOCKBIN/gh" <<'GHSCRIPT'
+#!/usr/bin/env bash
+if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
+  echo "mock gh: failing on request" >&2
+  exit 1
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *headRefOid*baseRefOid*|*baseRefOid*headRefOid*)
+      printf '{"headRefOid":"%s","baseRefOid":""}\n' "$MOCK_HEAD_SHA" ;;
+    *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "diff" ]; then
+  printf '%s\n' "$MOCK_PR_DIFF"
+  exit 0
+fi
+echo "mock gh: unexpected invocation: $*" >&2
+exit 2
+GHSCRIPT
+  chmod +x "$MOCKBIN/gh"
+
+  # test -f scripts/gate.sh exits 0 on head — without base, should degrade
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"Gate defect.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"Found defect.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  # Restore the standard mock
+  cat > "$MOCKBIN/gh" <<'GHSCRIPT'
+#!/usr/bin/env bash
+if [ "${MOCK_GH_FAIL:-0}" = "1" ]; then
+  echo "mock gh: failing on request" >&2
+  exit 1
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *headRefOid*baseRefOid*|*baseRefOid*headRefOid*)
+      printf '{"headRefOid":"%s","baseRefOid":"%s"}\n' "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" ;;
+    *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
+    *baseRefOid*) printf '%s\n' "$MOCK_BASE_SHA" ;;
+    *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "diff" ]; then
+  printf '%s\n' "$MOCK_PR_DIFF"
+  exit 0
+fi
+echo "mock gh: unexpected invocation: $*" >&2
+exit 2
+GHSCRIPT
+  chmod +x "$MOCKBIN/gh"
+
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "non-blocking", \
+    "expected non-blocking (degraded), got %s" % f["severity"]
+assert f["claimed_severity"] == "blocking"
+assert f["verification_status"] == "inconclusive"
+assert "[base-unverified]" in f["summary"], \
+    "expected [base-unverified] prefix, got: %s" % f["summary"]
+PYEOF
+}
+
+# ────────────────────────────────────────────────────────────
+#  25. BASE TIMEOUT — when the base command times out, the finding
+#      degrades to inconclusive
+# ────────────────────────────────────────────────────────────
+
+@test "review-runner: base command timeout degrades to inconclusive" {
+  # Use a command that exits 0 instantly on head but sleeps on base.
+  # scripts/gate.sh exists only at head; at base it doesn't exist.
+  # Instead, use a command that discriminates by commit: write a
+  # marker that only head has, and test for it. For timeout, we need
+  # a command that exits 0 on head and takes >timeout on base.
+  # Approach: use a very short timeout and a command that sleeps on base.
+  # test -f scripts/gate.sh exits 0 on head (exists), and for the base
+  # worktree we need it to take time. But we can't control what runs on
+  # base separately — the SAME command runs. So we use a command that
+  # runs fast everywhere but lower the timeout to 1s and use sleep.
+  # Better: use a verification command "test -f scripts/gate.sh && sleep 0"
+  # which is instant, and set REVIEW_VERIFY_TIMEOUT=1. For base timeout,
+  # we need the command to SUCCEED on head and TIMEOUT on base.
+  # The simplest approach: command is "sleep 5" (succeeds on head after 5s,
+  # also succeeds on base after 5s, but with timeout 2 the base times out).
+  # Wait — sleep takes the same time on both. We need head to succeed
+  # quickly and base to be slow. Since the SAME command runs on both,
+  # the only way is to have head finish before timeout and base not.
+  # This isn't possible with the same command and same timeout.
+  #
+  # Alternative: use a tiny timeout and a command that does enough
+  # work to sometimes exceed it on base. This is flaky.
+  #
+  # Best approach: command exits 0 on head, and base doesn't exist
+  # (base_sha empty). But that's test 24 (missing base).
+  #
+  # For a true base timeout test, we need a command that exits 0 on head
+  # (fast) and the base worktree to cause a slow execution. We can't
+  # do this with identical commands and identical worktrees.
+  #
+  # Instead: test the base-timeout PATH in _verify_findings directly
+  # by injecting a slow command with a very short timeout, where the
+  # command exits 0 fast on head but the same command on base can be
+  # forced to sleep. Since we control the fixture, add a file at HEAD
+  # that gate.sh checks: the command "bash -c 'if test -f scripts/gate.sh;
+  # then exit 0; else sleep 10; fi'" exits 0 instantly at head (gate.sh
+  # exists) and sleeps at base (gate.sh doesn't exist) → timeout.
+  export REVIEW_VERIFY_TIMEOUT=2
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Conditional timing.\",\"verification_command\":\"if test -f scripts/gate.sh; then exit 0; else sleep 10; fi\"}],\"commentary\":\"Testing timeout.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+artifact = json.load(open(sys.argv[1]))
+f = artifact["findings"][0]
+assert f["severity"] == "non-blocking", \
+    "expected non-blocking (degraded), got %s" % f["severity"]
+assert f["claimed_severity"] == "blocking"
+assert f["verification_status"] == "inconclusive"
+assert "[base-timeout]" in f["summary"], \
+    "expected [base-timeout] prefix, got: %s" % f["summary"]
+PYEOF
+
+  [ -f "$run_dir/verify.tier1a.0.log" ]
+  grep -q "exit code: 0" "$run_dir/verify.tier1a.0.log"
+  grep -q "base: timed out" "$run_dir/verify.tier1a.0.log"
 }

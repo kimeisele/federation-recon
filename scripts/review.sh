@@ -324,29 +324,13 @@ PYEOF
 REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
 REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 
-# _verify_findings <worktree> — execute every blocking finding's
-# verification_command in the worktree and stamp the finding with its result:
-# confirmed (exit 0 on head and non-zero on base), rejected (non-zero on head),
-# or inconclusive (downgraded). Non-discriminating conditions (exit 0 on both
-# head and base) are downgraded; base-unverifiable ones are inconclusive.
+# _verify_findings <head_worktree> <base_worktree> — execute every blocking
+# finding's verification_command in the head worktree, and when a command
+# succeeds, re-run it in the base worktree for discrimination. base_worktree
+# may be empty (graceful degradation: head-confirmed → inconclusive).
 _verify_findings() {
   local wt_dir="$1"
-  # The base commit for discrimination, resolved once per call: the PR's
-  # baseRefOid checked out in a second disposable worktree. The worktree is
-  # removed at the end of this function; the EXIT trap also covers signal
-  # paths. The variable is a global on purpose (matching wt_dir) so the trap
-  # sees it; it is initialized empty before the trap is registered.
-  base_wt_dir=""
-  if [ -n "${pr_number:-}" ]; then
-    if base_sha="$(gh pr view "$pr_number" --json baseRefOid --jq '.baseRefOid' 2>"$run_dir/verify.base.gh.log")" && [ -n "$base_sha" ]; then
-      base_wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.base.XXXXXX")" && pwd -P)"
-      if ! git worktree add "$base_wt_dir" "$base_sha" --detach --quiet 2>"$run_dir/verify.base.worktree.log"; then
-        git worktree prune 2>/dev/null || true
-        rm -rf "$base_wt_dir" 2>/dev/null || true
-        base_wt_dir=""
-      fi
-    fi
-  fi
+  local base_wt_dir="${2:-}"
   for _stem in tier1a tier1b; do
     local artifact="$run_dir/${_stem}.json"
     [ -f "$artifact" ] || continue
@@ -488,11 +472,6 @@ PYEOF
       echo "WARNING: verification failed for $_stem; findings not verified" >&2
     fi
   done
-  if [ -n "$base_wt_dir" ]; then
-    git worktree remove --force "$base_wt_dir" 2>/dev/null || git worktree prune 2>/dev/null || true
-    rm -rf "$base_wt_dir" 2>/dev/null || true
-    base_wt_dir=""
-  fi
 }
 
 # The system prompts embed the questions they cover, quoted from
@@ -864,7 +843,10 @@ finalize() {
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
 _progress "starting review of PR #$pr_number"
-if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>"$run_dir/gh.log")" || [ -z "$head_sha" ]; then
+pr_meta="$(gh pr view "$pr_number" --json headRefOid,baseRefOid 2>"$run_dir/gh.log")" || pr_meta=""
+head_sha="$(printf '%s' "$pr_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('headRefOid',''))" 2>/dev/null)" || head_sha=""
+base_sha="$(printf '%s' "$pr_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('baseRefOid',''))" 2>/dev/null)" || base_sha=""
+if [ -z "$head_sha" ]; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
   # crash. A later process comparing this verdict against the PR's real head
@@ -919,6 +901,17 @@ tier2_status="not_run"
 
 _progress "worktree at ${head_sha:0:12}"
 if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.log"; then
+
+  if [ -n "$base_sha" ]; then
+    base_wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.base.XXXXXX")" && pwd -P)"
+    if ! git worktree add "$base_wt_dir" "$base_sha" --detach --quiet 2>>"$run_dir/worktree.log"; then
+      echo "WARNING: base worktree creation failed for $base_sha" >>"$run_dir/worktree.log"
+      git worktree prune 2>/dev/null || true
+      rm -rf "$base_wt_dir" 2>/dev/null || true
+      base_wt_dir=""
+    fi
+  fi
+
   # ---- 5. Tier 0 — run the gate ------------------------------------------
   _progress "tier0: gate starting"
   # The gate runs in the worktree with the worktree as CWD, in a subshell so
@@ -948,7 +941,7 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   # only verified findings can drive the verdict or escalation.
   if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
     _progress "verification: executing finding commands"
-    _verify_findings "$wt_dir"
+    _verify_findings "$wt_dir" "${base_wt_dir:-}"
     _progress "verification: complete"
   fi
 
