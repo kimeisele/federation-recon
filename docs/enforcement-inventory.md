@@ -70,7 +70,7 @@ measurement, is the failure this repository keeps recording.
 
 | Rule | Source | Why it is not enforced |
 |---|---|---|
-| "v1 does not merge" (Phase 4 reserved) | `CLAUDE.md:42,56` | Nothing prevents a merge. The operator merged five pull requests on 2026-08-10 under an explicit owner instruction. The rule and the practice disagree and the text has not been changed to match. |
+| **The operator may not integrate its own output** | `docs/founding-package-v0.2.md:206` (§5.1, amendment 3) and `FR-CON-002:254`; restated `CLAUDE.md:42,56` | Nothing prevents a merge. **This is a constitutional invariant, not an open question in `CLAUDE.md`, and it was violated on 2026-08-10: the operator merged five pull requests (#223, #224, #229, #231, #232) under an explicit owner instruction.** §5.1 permits building, testing, sandboxed execution and producing a patch, and prohibits merging that patch. FR-CON-002 lists "merge changes" among the prohibited acts. See the note below. |
 | Risk class HIGH requires a different-provider red-team before integration | `CLAUDE.md:106`, `AGENTS.md` | No check reads the diff size or blocks integration on a missing cross-provider artifact. `governance/reviewers.md:24` says the pipeline replaces cross-provider review "for routine work" without defining routine. |
 | "Keine `allow`-Zeile ohne gepaarten Negativtest" | `docs/execution-core-adr.md:283` | Nothing checks it. The seatbelt profile added in #232 has read allows on `/usr`, `/bin`, `/etc`, `/private/var/select` with no paired negative test. Named as debt in #233. |
 | Expert-call budget is consumed by review | `CLAUDE.md:54` | `scripts/review.sh` contains no reference to `expert_calls_this_cycle`. Only `heartbeat.sh` counts, and only on BUILD dispatch. Issue #219. |
@@ -80,6 +80,30 @@ A first draft of this table listed the paid-consultation guard as
 enforced-but-unproven, on the strength of not having looked. Two tests assert
 the refusal, one of them by name. The correction cost one `grep`; publishing
 the claim would have cost the next reader their trust in the whole table.
+
+### The violation this inventory found in its own author
+
+Reading `docs/founding-package-v0.2.md` — the largest normative document, and
+the one the first draft of this file listed as unread — established that
+merging is prohibited by constitutional invariant, not merely reserved by
+`CLAUDE.md`. Five merges on 2026-08-10 violated it.
+
+They were made on explicit owner instruction, after the operator had raised the
+concern and the owner overruled it. That makes them authorised in fact and
+irregular in form: the owner may decide, but the decision belongs on its own
+pull request as a prospective amendment, not inside five pull requests about
+something else.
+
+`CLAUDE.md:115-130` records the precedent and the remedy in the repository's own
+words. PR #53 carried a governance tier inside a pull request whose stated
+subject was a CI gate; an independent reviewer ruled revert rather than
+retroactive ratification, on the grounds that *a rule is defined by what happens
+when following it is costly, and the first hard case cannot be the exception
+that consumes the rule.*
+
+The same standard applies here and is not softened by the merges being useful.
+Recorded rather than quietly carried forward. **No further merges by the
+operator until this is decided.**
 
 ### Contradicted
 
