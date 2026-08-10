@@ -649,7 +649,13 @@ PYEOF
 }
 
 @test "review-runner: other provider preserves arbitrary reasoning effort" {
-  export REVIEW_PROVIDER=other REVIEW_REASONING_EFFORT=medium
+  # The model, not the route, decides the thinking contract (#227), so this
+  # passthrough has to be pinned with a model that is genuinely not DeepSeek.
+  # It used to set only REVIEW_PROVIDER=other and inherit the default DeepSeek
+  # model, which made "no thinking field" and "deepseek model" true at once —
+  # a contradiction the builder could only resolve by weakening the guard,
+  # because scripts/test/ is forbidden to it.
+  export REVIEW_PROVIDER=other REVIEW_MODEL=qwen3.7-plus REVIEW_REASONING_EFFORT=medium
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
