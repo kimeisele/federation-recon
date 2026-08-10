@@ -1,7 +1,7 @@
 {
   "work_order_id": "wo-228-0",
   "issue": 228,
-  "base_sha": "718955041b59c0767ff0abae99ed41c17e6a48cd",
+  "base_sha": "2724223381be9bd046c73194200d49dec11e6a32",
   "allowed_paths": [
     "scripts/review.sh"
   ],
