@@ -424,23 +424,35 @@ PYEOF
 # or errors, is downgraded to non-blocking and marked inconclusive. Verified
 # findings get a per-finding log (verify.<stem>.<i>.log) recording the command,
 # its exit code, and stdout/stderr.
+#
+# Verification discriminates the head from the base (#196): the command runs
+# at the head and, when it confirms the defect there, again at the base of the
+# PR. A command that also passes at the base confirms nothing about this PR —
+# it is tautological or predates the diff — so the finding is downgraded to
+# non-blocking and marked inconclusive. Only a command that fails at the base
+# proves the diff introduced the defect (confirmed). A head failure rejects
+# the finding without ever running the base command.
 REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
 REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 
-# _verify_findings <worktree> — execute every blocking finding's
-# verification_command in the worktree and stamp the finding with its result:
-# confirmed (exit 0), rejected (non-zero), or inconclusive (downgraded).
+# _verify_findings <worktree> <base-worktree> — execute every blocking
+# finding's verification_command in the head worktree and stamp the finding
+# with its result: confirmed (exit 0 at head, non-zero at base), rejected
+# (non-zero at head, base never runs), or inconclusive (downgraded). When the
+# base worktree is empty the finding cannot be discriminated, so it is marked
+# [base-unverified] without running anything: running only the head half
+# would re-confirm the exact tautologies #196 exists to catch.
 _verify_findings() {
-  local wt_dir="$1"
+  local wt_dir="$1" base_wt_dir="${2:-}"
   for _stem in tier1a tier1b; do
     local artifact="$run_dir/${_stem}.json"
     [ -f "$artifact" ] || continue
-    if ! python3 - "$artifact" "$wt_dir" "$run_dir" "$_stem" \
+    if ! python3 - "$artifact" "$wt_dir" "$base_wt_dir" "$run_dir" "$_stem" \
       "$REVIEW_VERIFY_TIMEOUT" "$REVIEW_VERIFY_MAX" <<'PYEOF'
 import json, os, subprocess, sys
 
-artifact_path, wt_dir, run_dir, stem = sys.argv[1:5]
-timeout_s, max_cmds = int(sys.argv[5]), int(sys.argv[6])
+artifact_path, wt_dir, base_wt_dir, run_dir, stem = sys.argv[1:6]
+timeout_s, max_cmds = int(sys.argv[6]), int(sys.argv[7])
 
 with open(artifact_path) as fh:
     artifact = json.load(fh)
@@ -475,6 +487,22 @@ for i, finding in enumerate(findings):
         continue
 
     log_path = os.path.join(run_dir, "verify.%s.%d.log" % (stem, i))
+    log = open(log_path, "wb")
+    log.write(b"=== command ===\n")
+    log.write(cmd.encode() + b"\n")
+
+    # Without the base revision the claim cannot be discriminated, so no
+    # half-measure: do not run the head half alone and call that verification.
+    if not base_wt_dir:
+        log.write(b"=== base ===\n")
+        log.write(b"base revision unavailable; cannot discriminate\n")
+        log.close()
+        finding["claimed_severity"] = "blocking"
+        finding["severity"] = "non-blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["summary"] = "[base-unverified] " + finding.get("summary", "")
+        continue
+
     try:
         result = subprocess.run(
             ["bash", "-c", cmd],
@@ -482,25 +510,68 @@ for i, finding in enumerate(findings):
             timeout=timeout_s,
             capture_output=True,
         )
-        with open(log_path, "wb") as log:
-            log.write(b"=== command ===\n")
-            log.write(cmd.encode() + b"\n")
-            log.write(b"=== exit code: %d ===\n" % result.returncode)
-            log.write(b"=== stdout ===\n")
-            log.write(result.stdout)
-            log.write(b"=== stderr ===\n")
-            log.write(result.stderr)
+        log.write(b"=== exit code (head): %d ===\n" % result.returncode)
+        log.write(b"=== stdout (head) ===\n")
+        log.write(result.stdout)
+        log.write(b"=== stderr (head) ===\n")
+        log.write(result.stderr)
 
-        if result.returncode == 0:
-            finding["verification_status"] = "confirmed"
-        else:
+        if result.returncode != 0:
+            # The defect is not reproduced at the head: the finding is
+            # refuted and the base command never runs.
             finding["verification_status"] = "rejected"
+            log.close()
+            continue
+
+        log.write(b"=== command (base) ===\n")
+        log.write(cmd.encode() + b"\n")
+        try:
+            base_result = subprocess.run(
+                ["bash", "-c", cmd],
+                cwd=base_wt_dir,
+                timeout=timeout_s,
+                capture_output=True,
+            )
+            log.write(b"=== exit code (base): %d ===\n" % base_result.returncode)
+            log.write(b"=== stdout (base) ===\n")
+            log.write(base_result.stdout)
+            log.write(b"=== stderr (base) ===\n")
+            log.write(base_result.stderr)
+            if base_result.returncode != 0:
+                # Present at the head, absent at the base: the diff
+                # introduced it.
+                finding["verification_status"] = "confirmed"
+            else:
+                # Present at both revisions: the command discriminates
+                # nothing about this PR.
+                finding["claimed_severity"] = "blocking"
+                finding["verification_status"] = "inconclusive"
+                finding["severity"] = "non-blocking"
+                finding["summary"] = "[non-discriminating] " + finding.get("summary", "")
+        except subprocess.TimeoutExpired:
+            log.write(b"=== base timeout ===\n")
+            finding["claimed_severity"] = "blocking"
+            finding["verification_status"] = "inconclusive"
+            finding["severity"] = "non-blocking"
+            finding["summary"] = "[base-timeout] " + finding.get("summary", "")
+        except Exception as exc:
+            log.write(("=== base error: %s ===\n" % exc).encode())
+            finding["claimed_severity"] = "blocking"
+            finding["verification_status"] = "inconclusive"
+            finding["severity"] = "non-blocking"
+            finding["summary"] = "[base-unverified] " + finding.get("summary", "")
+        finally:
+            log.close()
     except subprocess.TimeoutExpired:
+        log.write(b"=== head timeout ===\n")
+        log.close()
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
         finding["summary"] = "[timeout] " + finding.get("summary", "")
     except Exception as exc:
+        log.write(("=== head error: %s ===\n" % exc).encode())
+        log.close()
         finding["claimed_severity"] = "blocking"
         finding["verification_status"] = "inconclusive"
         finding["severity"] = "non-blocking"
@@ -973,12 +1044,14 @@ finalize() {
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
 #
-# The head SHA and the CI status rollup come from the SAME `gh pr view`
-# response. Fetched in separate calls they can straddle a push, and Tier 0
-# would then report a conclusion belonging to a commit that is not the one
-# under review (#195).
+# The head SHA, the base SHA, and the CI status rollup come from the SAME
+# `gh pr view` response. Fetched in separate calls they can straddle a push,
+# and Tier 0 would then report a conclusion belonging to a commit that is not
+# the one under review (#195). Verification also needs the base SHA, and it
+# must travel with the head SHA: a base fetched later could belong to a
+# different revision of the PR (#196).
 _progress "starting review of PR #$pr_number"
-if ! pr_json="$(gh pr view "$pr_number" --json headRefOid,statusCheckRollup 2>"$run_dir/gh.log")"; then
+if ! pr_json="$(gh pr view "$pr_number" --json headRefOid,baseRefOid,statusCheckRollup 2>"$run_dir/gh.log")"; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
   # crash. A later process comparing this verdict against the PR's real head
@@ -1007,6 +1080,26 @@ print(sha)
   exit 0
 fi
 
+# The base SHA must be present for verification to discriminate the head from
+# the base (#196). A missing baseRefOid is a metadata resolution failure, not
+# a review of the commit: the head SHA resolved, so it is recorded, but no
+# finding can be verified against a base that is not there, no model call is
+# made, and no worktree is created.
+base_sha="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+try:
+    sha = json.load(sys.stdin).get("baseRefOid", "")
+except Exception:
+    sha = ""
+print(sha)
+')"
+if [ -z "$base_sha" ]; then
+  verdict_word="$(finalize "$head_sha" "error" "not_run" "not_run" "not_run")"
+  echo "Review $run_id for PR #$pr_number (base SHA unresolved): $verdict_word"
+  echo "Artifacts: $run_dir/"
+  exit 0
+fi
+
 # ---- 4. Disposable worktree -----------------------------------------------
 
 # Mutating checks (evasion, mutation testing, self-application) run in a
@@ -1016,12 +1109,17 @@ fi
 # pwd -P because macOS mktemp may return a symlinked /var/folders path while
 # git resolves /private/var/folders.
 wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-worktree.XXXXXX")" && pwd -P)"
+base_wt_dir=""
 
-# Remove the worktree on every exit path — pass, fail, signal — via the EXIT
+# Remove the worktrees on every exit path — pass, fail, signal — via the EXIT
 # trap alone; no explicit call is needed. On INT/TERM the cleanup is followed
 # by exit with 128+SIGNO: a signal-killed review must not keep running against
 # a worktree it has already removed.
 review_cleanup() {
+  if [ -n "${base_wt_dir:-}" ]; then
+    git worktree remove --force "$base_wt_dir" 2>/dev/null || git worktree prune 2>/dev/null || true
+    rm -rf "$base_wt_dir" 2>/dev/null || true
+  fi
   git worktree remove --force "$wt_dir" 2>/dev/null || {
     # The removal failed (e.g. the directory is already gone); unregister
     # whatever stale admin state the failed remove left behind.
@@ -1040,6 +1138,20 @@ tier2_status="not_run"
 
 _progress "worktree at ${head_sha:0:12}"
 if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.log"; then
+  # ---- 4b. Base worktree -------------------------------------------------
+  # Verification discriminates the head from the base (#196): a blocking
+  # finding's command runs at both revisions, and a command that also passes
+  # at the base confirms nothing about this PR. The base worktree is a
+  # disposable sibling of the head one, removed by the same EXIT trap. When
+  # the base SHA cannot be checked out the review still completes, but every
+  # blocking finding is downgraded to [base-unverified].
+  base_wt_dir="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-base-worktree.XXXXXX")" && pwd -P)"
+  if ! git worktree add "$base_wt_dir" "$base_sha" --detach --quiet 2>"$run_dir/base-worktree.log"; then
+    rm -rf "$base_wt_dir" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+    base_wt_dir=""
+  fi
+
   # ---- 5. Tier 0 — CI status for the subject commit ----------------------
   # Tier 0 reads the CI conclusion for the exact commit under review from the
   # status rollup that came with the head SHA. It does NOT re-run
@@ -1079,11 +1191,12 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   fi
 
   # ---- 7.5 Verify findings -------------------------------------------------
-  # Execute every blocking finding's verification_command in the worktree so
-  # only verified findings can drive the verdict or escalation.
+  # Execute every blocking finding's verification_command in the head worktree
+  # and, for a command that confirms the defect there, again at the base, so
+  # only discriminating findings can drive the verdict or escalation (#196).
   if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
     _progress "verification: executing finding commands"
-    _verify_findings "$wt_dir"
+    _verify_findings "$wt_dir" "$base_wt_dir"
     _progress "verification: complete"
   fi
 
