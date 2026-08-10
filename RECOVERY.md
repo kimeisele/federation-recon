@@ -1,10 +1,11 @@
 # Recovery control record
 
-**Opened:** 2026-08-10  
-**Status:** containment and planning; no recovery implementation authorized  
-**Forensic head:** `2cc5bfb` (`origin/main` when this record was opened)  
-**Quarantine range:** `5b964a4..2cc5bfb`  
+**Opened:** 2026-08-10
+**Status:** containment and planning; no recovery implementation authorized
+**Forensic head:** `2cc5bfb` (`origin/main` when this record was opened)
+**Quarantine range:** `5b964a4..2cc5bfb`
 **Baseline candidate:** `5b964a4` (a quarantine boundary, not yet a trusted baseline)
+**Umbrella issue:** `#236`
 
 This is the temporary source of truth for recovery from the 2026-08-09/10
 review-control incident. It exists so a later operator can continue without
@@ -188,4 +189,5 @@ At the end of every recovery session append one short entry below with:
   diff/SHA TOCTOU.
 - No recovery code, merge, credential, permission, or constitutional change was
   made.
+- Opened umbrella issue #236; no PR was opened.
 - Next action: execute RECOVERY-0 only.
