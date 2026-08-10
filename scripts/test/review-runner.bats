@@ -226,31 +226,16 @@ print(value)
   # Tier 0 no longer runs the gate (#195), so the worktree is proven by the
   # thing that still needs it: a Tier 1B verification command, which executes
   # with the worktree as its CWD.
-  MOCK_CURL_RESPONSE="$(python3 - "$SANDBOX/verify-cwd.txt" <<'PY'
-import json, sys
-inner = json.dumps({
-    "findings": [{
-        "severity": "blocking",
-        "summary": "worktree probe",
-        "verification_command": "pwd >> %s" % sys.argv[1],
-    }],
-    "commentary": "",
-})
-print(json.dumps({
-    "model": "deepseek-chat",
-    "choices": [{"message": {"content": inner}, "finish_reason": "stop"}],
-}))
-PY
-)"
+  # Confinement forbids writing outside the worktree (#228), so the probe
+  # reports its CWD on stdout and the assertion reads the runner's log.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"worktree probe","verification_command":"pwd"}]')"
   export MOCK_CURL_RESPONSE
 
   run run_review --pr 178
   [ "$status" -eq 0 ]
 
   [ -f "$SANDBOX/verify-cwd.txt" ]
-  # Verification runs the command at the head and then at the base (#196), so
-  # the file holds two paths; the first is the head worktree.
-  verify_cwd="$(head -1 "$SANDBOX/verify-cwd.txt")"
+  verify_cwd="$(sed -n '/=== stdout (head) ===/{n;p;}' "$run_dir/verify.tier1a.0.log")"
   [[ "$verify_cwd" == "$SANDBOX/tmp/review-worktree."* ]]
 
   # No worktree registration remains — the fixture's own worktree is all.
@@ -986,8 +971,10 @@ PYEOF
 }
 
 @test "review-runner: head failure rejects and does not run the base command" {
-  export VERIFY_SHA_FILE="$SANDBOX/verify-shas"
-  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Head command rejects.\",\"verification_command\":\"printf \\\"%s\\\\n\\\" \\\"$(git rev-parse HEAD)\\\" >> \\\"$VERIFY_SHA_FILE\\\"; false\"}],\"commentary\":\"Head must reject.\"}"},"finish_reason":"stop"}]}'
+  # The command may not write anywhere the test can read (#228), so it reports
+  # on stdout and the assertion reads the per-finding log the runner writes.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"Head command rejects.","verification_command":"git rev-parse HEAD; false"}]')"
+  export MOCK_CURL_RESPONSE
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
@@ -996,7 +983,10 @@ import json, sys
 f = json.load(open(sys.argv[1]))["findings"][0]
 assert f["verification_status"] == "rejected"
 PYEOF
-  [ "$(sort -u "$VERIFY_SHA_FILE" | tr -d '\n')" = "$MOCK_HEAD_SHA" ]
+  # The head SHA appears in the log, and there is no base section at all: a
+  # command that fails at the head is never run at the base.
+  grep -q "$MOCK_HEAD_SHA" "$run_dir/verify.tier1a.0.log"
+  ! grep -q "(base)" "$run_dir/verify.tier1a.0.log"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -1120,6 +1110,28 @@ import json, sys
 f = json.load(open(sys.argv[1]))["findings"][0]
 assert f["verification_status"] != "confirmed", f["verification_status"]
 SECEOF
+}
+
+@test "review-runner: isolation — a git-based command still works confined" {
+  # The confinement must not become an off switch. Measured while specifying
+  # it: a git worktree keeps its object database outside the worktree, and git
+  # also reads ~/.gitconfig, so a naive profile breaks every git-based
+  # verification command with exit 128.
+  #
+  # What makes it work, verified before asking for it: file-read-metadata for
+  # path traversal, read access to the main repository's git directory, and
+  # HOME pointed at the scratch directory so git never reaches for the owner's
+  # config. All confinement checks still hold with those in place.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"uses git","verification_command":"git rev-parse HEAD >/dev/null && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'GITEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "confirmed", f["verification_status"]
+GITEOF
 }
 
 @test "review-runner: isolation — a read-only command still confirms" {
