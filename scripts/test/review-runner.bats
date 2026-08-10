@@ -59,7 +59,15 @@ GATESCRIPT
   git -C "$FIXTURE" config user.email "review-fixture@test"
   git -C "$FIXTURE" config user.name "Review Fixture"
   git -C "$FIXTURE" add -A
-  git -C "$FIXTURE" commit -qm "fixture"
+  git -C "$FIXTURE" commit -qm "fixture base"
+  # Two commits, because verification must be able to run the same command at
+  # the base and at the head and compare (#216). A single-commit fixture makes
+  # every command trivially non-discriminating and the oracle vacuous.
+  export MOCK_BASE_COMMIT="$(git -C "$FIXTURE" rev-parse HEAD)"
+
+  printf 'head\n' > "$FIXTURE/head-marker.txt"
+  git -C "$FIXTURE" add -A
+  git -C "$FIXTURE" commit -qm "fixture head"
   export MOCK_HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
   cat > "$FILE_SANDBOX/mockbin/gh" <<'GHSCRIPT'
@@ -74,8 +82,8 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
       # Tier 0 reads the CI rollup out of the same response as the head SHA
       # (#195). MOCK_PR_CHECKS drives it; the default is one green check, so
       # tests that do not care about CI keep their previous tier0: pass.
-      printf '{"headRefOid":"%s","statusCheckRollup":%s}\n' \
-        "$MOCK_HEAD_SHA" "$MOCK_PR_CHECKS"
+      printf '{"headRefOid":"%s","baseRefOid":"%s","statusCheckRollup":%s}\n' \
+        "$MOCK_HEAD_SHA" "$MOCK_BASE_SHA" "$MOCK_PR_CHECKS"
       ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
@@ -129,6 +137,10 @@ setup() {
   # Tier 0 reads CI, not a local gate (#195). One green check by default, so a
   # test that says nothing about CI gets tier0: pass, as it did before.
   export MOCK_PR_CHECKS='[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]'
+  # Verification discriminates head against base (#216): the base SHA travels
+  # in the same response as the head SHA and the rollup, so one gh pr view
+  # binds all three and no later push can separate them.
+  export MOCK_BASE_SHA="$MOCK_BASE_COMMIT"
   export MOCK_PR_BODY="Fixture PR body: a stand-in description."
   export MOCK_PR_DIFF="diff --git a/fixture.txt b/fixture.txt
 index 0000000..1111111 100644
@@ -951,4 +963,86 @@ PYEOF
     _verify_findings "$FIXTURE" 2>/dev/null
   )
   # If we get here, the function did not crash under set -e.
+}
+
+@test "review-runner: head success and base success is inconclusive and non-blocking" {
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Same result in both revisions.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"Check both revisions.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["severity"] == "non-blocking"
+assert f["verification_status"] == "inconclusive"
+assert f["summary"].startswith("[non-discriminating] ")
+PYEOF
+}
+
+@test "review-runner: head failure rejects and does not run the base command" {
+  export VERIFY_SHA_FILE="$SANDBOX/verify-shas"
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Head command rejects.\",\"verification_command\":\"printf \\\"%s\\\\n\\\" \\\"$(git rev-parse HEAD)\\\" >> \\\"$VERIFY_SHA_FILE\\\"; false\"}],\"commentary\":\"Head must reject.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "rejected"
+PYEOF
+  [ "$(sort -u "$VERIFY_SHA_FILE" | tr -d '\n')" = "$MOCK_HEAD_SHA" ]
+}
+
+@test "review-runner: unavailable base SHA is inconclusive and marked base-unverified" {
+  export MOCK_BASE_SHA=missing-base-sha
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base cannot be checked.\",\"verification_command\":\"test -f head-only.txt\"}],\"commentary\":\"Base is unavailable.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive"
+assert f["severity"] == "non-blocking"
+assert f["summary"].startswith("[base-unverified] ")
+PYEOF
+}
+
+@test "review-runner: base verification timeout is inconclusive and marked base-timeout" {
+  export REVIEW_VERIFY_TIMEOUT=1
+  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base command hangs.\",\"verification_command\":\"test -f head-only.txt || sleep 5\"}],\"commentary\":\"Bounded timeout case.\"}"},"finish_reason":"stop"}]}'
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive"
+assert f["summary"].startswith("[base-timeout] ")
+PYEOF
+}
+
+@test "review-runner: one metadata call carries and binds head and base SHAs" {
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  metadata_call="$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE")"
+  [[ "$metadata_call" == *"$MOCK_HEAD_SHA"*"$MOCK_BASE_SHA"* ]]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" subject_head_sha)" = "$MOCK_HEAD_SHA" ]
+}
+
+@test "review-runner: missing base SHA fails metadata resolution closed" {
+  export MOCK_GH_EMPTY_BASE=1
+  before_worktrees="$(git -C "$FIXTURE" worktree list --porcelain)"
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" = "PARTIAL" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" tasks.tier0)" = "error" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" subject_head_sha)" = "$MOCK_HEAD_SHA" ]
+  [ "$(grep -F 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+  [ "$(git -C "$FIXTURE" worktree list --porcelain)" = "$before_worktrees" ]
+  [ "$(find "$SANDBOX/tmp" -maxdepth 1 -type d -name 'review-worktree.*' | wc -l | tr -d ' ')" -eq 0 ]
 }
