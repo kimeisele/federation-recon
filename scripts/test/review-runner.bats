@@ -1000,17 +1000,25 @@ PYEOF
 }
 
 # ────────────────────────────────────────────────────────────
-#  Verification must not be able to change what it verifies (#228)
+#  Verification cannot write to what it verifies (#228)
 # ────────────────────────────────────────────────────────────
 #
 # Run rv-20260810-004 confirmed five blocking findings. Two of their commands
-# ran `git checkout -- <file under review>` and `sed -i` on it inside the
-# shared worktree, then ran the suite and reported on the result. Commands
-# execute in order in one tree, so a finding silently changed the subject that
-# every later command was measured against.
+# ran `git checkout -- <file under review>` and `sed -i` on it, as the invoking
+# user, with no restriction of any kind.
 #
-# Base discrimination (#196) does not help: a mutating command corrupts the
-# base run too.
+# The remedy is prevention, not detection: each command runs under seatbelt
+# with the worktree readable and not writable, and a scratch directory it may
+# write to. Same mechanism as core/profiles/worker.sb, which this repository
+# has carried and canary-tested since Slice 1.
+#
+# Measured before this was written:
+#   write into the tree  -> "Operation not permitted", file unchanged
+#   read from the tree   -> ok
+#   write into scratch   -> ok
+#
+# Prevention is also the smaller design. With an unwritable tree there is
+# nothing to detect afterwards and no need for a fresh checkout per command.
 
 _finding_response() {
   python3 -c "
@@ -1021,42 +1029,27 @@ print(json.dumps({'model': 'm', 'choices': [{'message': {'content': inner}, 'fin
 " "$1"
 }
 
-@test "review-runner: isolation — a command that writes to the tree is inconclusive" {
-  # Passes at head and fails at base, so discrimination alone would confirm it.
-  # It also rewrites a tracked file, which has to override that.
-  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"writes to the subject","verification_command":"printf x >> head-marker.txt; test -f head-marker.txt"}]')"
+@test "review-runner: isolation — a command cannot write into the worktree" {
+  # Writes to a file that exists at BOTH revisions, then discriminates on the
+  # head-only marker. Without the sandbox the write succeeds and the finding is
+  # confirmed — having rewritten a tracked file on the way. With it the write
+  # fails, the command fails with it, and nothing is confirmed.
+  #
+  # Appending to head-marker.txt instead would be vacuous: at the base the
+  # redirect creates the file, so the command passes at both revisions and
+  # #196 downgrades it for the wrong reason.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"tries to write","verification_command":"printf x >> scripts/review.sh && test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
-  python3 - "$run_dir/tier1a.json" <<'MUTEOF'
+  python3 - "$run_dir/tier1a.json" <<'WREOF'
 import json, sys
 f = json.load(open(sys.argv[1]))["findings"][0]
-assert f["verification_status"] == "inconclusive", f["verification_status"]
-assert f["severity"] == "non-blocking"
-assert f["summary"].startswith("[mutating-verification] "), f["summary"]
-MUTEOF
+assert f["verification_status"] != "confirmed", f["verification_status"]
+assert f["severity"] == "non-blocking", f["severity"]
+WREOF
 }
-
-@test "review-runner: isolation — an untracked file left behind is also a mutation" {
-  # `git checkout -- .` is a no-op in a freshly checked-out worktree, so a
-  # revert alone is not a distinct case. What is distinct: contamination does
-  # not need to touch a tracked file. A command that drops a scratch file into
-  # the tree changes the ground every later command stands on, so any change
-  # to the worktree counts — tracked or not.
-  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"leaves a scratch file","verification_command":"touch scratch-evidence.txt; test -f head-marker.txt"}]')"
-  export MOCK_CURL_RESPONSE
-  run run_review --pr 178
-  [ "$status" -eq 0 ]
-  run_dir="$(latest_run_dir)"
-  python3 - "$run_dir/tier1a.json" <<'UNTEOF'
-import json, sys
-f = json.load(open(sys.argv[1]))["findings"][0]
-assert f["verification_status"] == "inconclusive", f["verification_status"]
-assert f["summary"].startswith("[mutating-verification] "), f["summary"]
-UNTEOF
-}
-
 
 @test "review-runner: isolation — one finding's command cannot change another's result" {
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"deletes the marker","verification_command":"rm -f head-marker.txt; true"},{"severity":"blocking","summary":"needs the marker","verification_command":"test -f head-marker.txt"}]')"
@@ -1064,9 +1057,8 @@ UNTEOF
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
-  # The second finding discriminates on its own: the marker exists at the head
-  # and not at the base. It must reach that result whatever the first command
-  # did to the tree.
+  # The second finding discriminates on its own: the marker is at the head and
+  # not at the base. It must reach that result whatever the first tried.
   python3 - "$run_dir/tier1a.json" <<'ISOEOF'
 import json, sys
 findings = json.load(open(sys.argv[1]))["findings"]
@@ -1074,7 +1066,24 @@ assert findings[1]["verification_status"] == "confirmed", findings[1]["verificat
 ISOEOF
 }
 
-@test "review-runner: a read-only command is unaffected by the isolation" {
+@test "review-runner: isolation — an unavailable sandbox fails closed" {
+  # A missing sandbox must never mean "run it unconfined". If the confinement
+  # cannot be established, nothing was verified.
+  export REVIEW_SANDBOX_BIN="$SANDBOX/no-such-sandbox-exec"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'FCEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive", f["verification_status"]
+assert f["severity"] == "non-blocking"
+FCEOF
+}
+
+@test "review-runner: isolation — a read-only command still confirms" {
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
   run run_review --pr 178
