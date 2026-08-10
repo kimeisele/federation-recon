@@ -15,6 +15,11 @@
 # The stored `verdict` field is informational (it records what the run wrote);
 # the final word is recomputed here so aggregation cannot be swayed by a
 # hand-edited verdict line.
+#
+# The boundary fails closed: a finding the model claimed blocking (claimed_severity)
+# blocks the merge unless its verification command was executed and refuted
+# (verification_status "rejected"). A severity later downgraded by review.sh is
+# not a refutation, and an incomplete review is never reinterpreted as approval.
 
 set -euo pipefail
 
@@ -62,11 +67,16 @@ if tasks.get("tier0") == "error":
 
 # Rule 4: an unresolved blocking finding is a rejection. A finding whose
 # verification_status is "rejected" was examined and refuted, so it does not
-# block.
+# block. The claim that binds is the original one from the model: when
+# verification cannot confirm a blocking finding, review.sh preserves the
+# claim in claimed_severity while lowering severity to "non-blocking" (sandbox
+# unavailable, command never run, non-discriminating, base-unverified). Keying
+# on severity alone would let every such downgraded finding fall through to
+# APPROVE, so the effective claim is claimed_severity when present and the
+# recorded severity otherwise, and anything short of a refutation rejects.
 for finding in findings:
-    if (finding.get("severity") == "blocking"
-            and finding.get("verification_status")
-            in ("confirmed", "inconclusive", "not_run")):
+    claimed = finding.get("claimed_severity") or finding.get("severity")
+    if claimed == "blocking" and finding.get("verification_status") != "rejected":
         print("REJECT")
         sys.exit(0)
 
