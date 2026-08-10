@@ -190,6 +190,16 @@ print(value)
 " "$1"
 }
 
+# A verification command can only be CONFIRMED where the confinement can be
+# established (#228). The runner fails closed without it, which is the correct
+# product behaviour and is asserted by its own test — so on a platform with no
+# supported sandbox these tests cannot exercise what they are about, and skip
+# with a reason rather than pretending to pass. Linux support is #233.
+_needs_sandbox() {
+  [ -x "${REVIEW_SANDBOX_BIN:-/usr/bin/sandbox-exec}" ] \
+    || skip "no supported sandbox on this platform (see #233)"
+}
+
 # ────────────────────────────────────────────────────────────
 #  1. USAGE — a missing or malformed --pr is a usage error
 # ────────────────────────────────────────────────────────────
@@ -223,6 +233,7 @@ print(value)
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: disposable worktree is created at the head SHA and destroyed" {
+  _needs_sandbox
   # Tier 0 no longer runs the gate (#195), so the worktree is proven by the
   # thing that still needs it: a Tier 1B verification command, which executes
   # with the worktree as its CWD.
@@ -413,6 +424,7 @@ print(value)
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1a mock success returns complete and writes a valid artifact" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate misses a check.\",\"verification_command\":\"test -f head-marker.txt\"},{\"question\":\"1c\",\"severity\":\"non-blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -563,6 +575,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1b mock success returns complete and writes a valid artifact" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"3\",\"severity\":\"blocking\",\"summary\":\"The gate check is untested.\",\"verification_command\":\"test -f head-marker.txt\"},{\"question\":\"1b\",\"severity\":\"non-blocking\",\"summary\":\"The diff itself is the attack.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -798,6 +811,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding verified by its command aggregates to REJECT" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate would miss a real defect.\",\"verification_command\":\"test -f head-marker.txt\"}],\"commentary\":\"The blocking defect is real.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -834,6 +848,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding refuted by its command aggregates to APPROVE" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"A file that must exist does not.\",\"verification_command\":\"test -f nonexistent-file\"}],\"commentary\":\"Suspected defect.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -862,6 +877,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding without a verification command is downgraded" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"1c\",\"severity\":\"blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Suspected but unverifiable.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -957,6 +973,7 @@ PYEOF
 }
 
 @test "review-runner: head success and base success is inconclusive and non-blocking" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Same result in both revisions.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"Check both revisions.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -971,6 +988,7 @@ PYEOF
 }
 
 @test "review-runner: head failure rejects and does not run the base command" {
+  _needs_sandbox
   # The command may not write anywhere the test can read (#228), so it reports
   # on stdout and the assertion reads the per-finding log the runner writes.
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"Head command rejects.","verification_command":"git rev-parse HEAD; false"}]')"
@@ -1042,6 +1060,7 @@ WREOF
 }
 
 @test "review-runner: isolation — one finding's command cannot change another's result" {
+  _needs_sandbox
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"deletes the marker","verification_command":"rm -f head-marker.txt; true"},{"severity":"blocking","summary":"needs the marker","verification_command":"test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
   run run_review --pr 178
@@ -1113,6 +1132,7 @@ SECEOF
 }
 
 @test "review-runner: isolation — a git-based command still works confined" {
+  _needs_sandbox
   # The confinement must not become an off switch. Measured while specifying
   # it: a git worktree keeps its object database outside the worktree, and git
   # also reads ~/.gitconfig, so a naive profile breaks every git-based
@@ -1135,6 +1155,7 @@ GITEOF
 }
 
 @test "review-runner: isolation — a read-only command still confirms" {
+  _needs_sandbox
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
   run run_review --pr 178
@@ -1149,6 +1170,7 @@ ROEOF
 }
 
 @test "review-runner: unavailable base SHA is inconclusive and marked base-unverified" {
+  _needs_sandbox
   # Present but unusable: a well-formed SHA that is not in the repository, so
   # the base worktree cannot be created. Distinct from a missing baseRefOid,
   # which fails metadata resolution before any model call — see the test
@@ -1168,6 +1190,7 @@ PYEOF
 }
 
 @test "review-runner: base verification timeout is inconclusive and marked base-timeout" {
+  _needs_sandbox
   export REVIEW_VERIFY_TIMEOUT=1
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base command hangs.\",\"verification_command\":\"test -f head-marker.txt || sleep 5\"}],\"commentary\":\"Bounded timeout case.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
