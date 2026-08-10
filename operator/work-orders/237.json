@@ -1,0 +1,11 @@
+{
+  "work_order_id": "wo-237-0",
+  "issue": 237,
+  "base_sha": "957641fc325c1131b17a06b1a411f3befbfd6c73",
+  "allowed_paths": ["scripts/review-verdict.sh"],
+  "forbidden_paths": ["CLAUDE.md","AGENTS.md",".github/","operator/","schemas/","scripts/test/","scripts/review.sh","docs/","claims/","coverage/","digest/","drift/","evidence/","findings/","pins/","consumption/","governance/","core/","STATE.md"],
+  "acceptance_commands": ["bash -n scripts/review-verdict.sh","bats scripts/test/verdict-fail-closed.bats","bats scripts/test/review-verdict.bats"],
+  "oracle_paths": ["scripts/test/verdict-fail-closed.bats","scripts/test/review-verdict.bats","scripts/test/MANIFEST"],
+  "builder": "operator/builders/jcode.sh",
+  "builder_timeout_seconds": 1800
+}
