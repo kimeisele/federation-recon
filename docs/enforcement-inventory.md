@@ -70,7 +70,7 @@ measurement, is the failure this repository keeps recording.
 
 | Rule | Source | Why it is not enforced |
 |---|---|---|
-| **The operator may not integrate its own output** | `docs/founding-package-v0.2.md:206` (§5.1, amendment 3) and `FR-CON-002:254`; restated `CLAUDE.md:42,56` | Nothing prevents a merge. **This is a constitutional invariant, not an open question in `CLAUDE.md`, and it was violated on 2026-08-10: the operator merged five pull requests (#223, #224, #229, #231, #232) under an explicit owner instruction.** §5.1 permits building, testing, sandboxed execution and producing a patch, and prohibits merging that patch. FR-CON-002 lists "merge changes" among the prohibited acts. See the note below. |
+| **The operator may not integrate its own output** — but *may* build, test, run a sandboxed builder, produce a patch and **open the pull request** | `docs/founding-package-v0.2.md:206` (§5.1, amendment 3) and `FR-CON-002:254`; restated `CLAUDE.md:42,56` | Nothing prevents a merge. **This is a constitutional invariant, not an open question in `CLAUDE.md`, and it was violated on 2026-08-10: the operator merged five pull requests (#223, #224, #229, #231, #232) under an explicit owner instruction.** §5.1 permits building, testing, sandboxed execution and producing a patch, and prohibits merging that patch. FR-CON-002 lists "merge changes" among the prohibited acts. See the note below. |
 | Risk class HIGH requires a different-provider red-team before integration | `CLAUDE.md:106`, `AGENTS.md` | No check reads the diff size or blocks integration on a missing cross-provider artifact. `governance/reviewers.md:24` says the pipeline replaces cross-provider review "for routine work" without defining routine. |
 | "Keine `allow`-Zeile ohne gepaarten Negativtest" | `docs/execution-core-adr.md:283` | Nothing checks it. The seatbelt profile added in #232 has read allows on `/usr`, `/bin`, `/etc`, `/private/var/select` with no paired negative test. Named as debt in #233. |
 | Expert-call budget is consumed by review | `CLAUDE.md:54` | `scripts/review.sh` contains no reference to `expert_calls_this_cycle`. Only `heartbeat.sh` counts, and only on BUILD dispatch. Issue #219. |
@@ -128,6 +128,38 @@ discriminate.
 
 This is a defect in the control, independent of whether the operator should be
 merging at all.
+
+### Where the operator's authority actually ends
+
+Reading `docs/self-remediation-adr.md` §4.3 (Accepted 2026-08-01, amendment 4)
+sharpens the boundary considerably, and in the operator's favour:
+
+> **The actor is named on purpose.** FR-CON-002 bars Recon from opening
+> *remediation* pull requests, and a reviewer asked who opens this one. If the
+> answer were "the owner" … So: **the operator opens it, through the protected
+> PR path**, like any other change to committed content.
+
+So the line is not "the operator may not touch its own repository". It is:
+
+| act | status | source |
+|---|---|---|
+| build, test, run a sandboxed builder, produce a patch | permitted | `founding-package` §5.1 table |
+| open the pull request for a self-fix | **explicitly permitted, actor named** | `self-remediation-adr` §4.3 |
+| merge that pull request | prohibited | §5.1 table; `FR-CON-002` |
+| advance the Finding's lifecycle state as part of the fix | prohibited — "fixing and declaring-fixed are separate acts" | `self-remediation-adr` §4.3 |
+
+Everything the operator did on 2026-08-10 up to and including opening the pull
+requests was inside the constitution. The merges were not, and nothing else was.
+An earlier revision of this file implied a broader violation than occurred.
+
+Two further obligations found in the same section and **not currently met**:
+
+- *"A self-fix PR must cite the Finding it answers."* Today's pull requests cite
+  GitHub issues, which are not Findings in the artifact sense of §8.4. Whether
+  an issue satisfies this is undecided and nothing checks it.
+- `check_finding_retirement` refuses a change that both retires a Finding and
+  moves the standard it was measured against. Its stated residual: land the two
+  on different days and it says nothing.
 
 ### Constitution against reality
 
