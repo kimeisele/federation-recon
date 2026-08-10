@@ -1,0 +1,37 @@
+{
+  "work_order_id": "wo-228-0",
+  "issue": 228,
+  "base_sha": "d2a66c3b00b897fa3ff4f8a7b47d3d1bf5fff784",
+  "allowed_paths": [
+    "scripts/review.sh"
+  ],
+  "forbidden_paths": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".github/",
+    "operator/",
+    "schemas/",
+    "scripts/test/",
+    "docs/",
+    "claims/",
+    "coverage/",
+    "digest/",
+    "drift/",
+    "evidence/",
+    "findings/",
+    "pins/",
+    "consumption/",
+    "governance/",
+    "STATE.md"
+  ],
+  "acceptance_commands": [
+    "bash -n scripts/review.sh",
+    "bats -f mutating scripts/test/review-runner.bats"
+  ],
+  "oracle_paths": [
+    "scripts/test/review-runner.bats",
+    "scripts/test/MANIFEST"
+  ],
+  "builder": "operator/builders/jcode.sh",
+  "builder_timeout_seconds": 2400
+}

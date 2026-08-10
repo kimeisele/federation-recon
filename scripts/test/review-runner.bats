@@ -1021,7 +1021,7 @@ print(json.dumps({'model': 'm', 'choices': [{'message': {'content': inner}, 'fin
 " "$1"
 }
 
-@test "review-runner: a command that writes to the tree is inconclusive, not confirmed" {
+@test "review-runner: isolation — a command that writes to the tree is inconclusive" {
   # Passes at head and fails at base, so discrimination alone would confirm it.
   # It also rewrites a tracked file, which has to override that.
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"writes to the subject","verification_command":"printf x >> head-marker.txt; test -f head-marker.txt"}]')"
@@ -1038,7 +1038,7 @@ assert f["summary"].startswith("[mutating-verification] "), f["summary"]
 MUTEOF
 }
 
-@test "review-runner: an untracked file left behind is also a mutation" {
+@test "review-runner: isolation — an untracked file left behind is also a mutation" {
   # `git checkout -- .` is a no-op in a freshly checked-out worktree, so a
   # revert alone is not a distinct case. What is distinct: contamination does
   # not need to touch a tracked file. A command that drops a scratch file into
@@ -1058,7 +1058,7 @@ UNTEOF
 }
 
 
-@test "review-runner: one finding's command cannot change another finding's result" {
+@test "review-runner: isolation — one finding's command cannot change another's result" {
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"deletes the marker","verification_command":"rm -f head-marker.txt; true"},{"severity":"blocking","summary":"needs the marker","verification_command":"test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
   run run_review --pr 178
