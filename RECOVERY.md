@@ -227,13 +227,13 @@ At the end of every recovery session append one short entry below with:
 
 ---
 
-## RECOVERY-0 — forensic baseline — COMPLETE (2026-08-10)
+## RECOVERY-0 — forensic baseline — IN PROGRESS (2026-08-10, corrected)
 
 Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durable conclusions:
 
 **Quarantine range `5b964a4..2cc5bfb`:** 14 changed files; five touch `scripts/review.sh`. Full list and per-PR semantic records in #236.
 
-**Reconnaissance core — trusted.** Not in the changed-path set (scope), and the `CI — artifact & digest invariants` workflow (validate-artifacts `--strict` + reproduce-fixpoint, a macOS↔Linux equivalence check regenerating every artifact from committed pins) is SUCCESS at `2cc5bfb`. Reproduction, not merely absence-from-diff.
+**Reconnaissance core — reproduction executed (corrected).** An earlier revision claimed reproduction from a CI run at `2cc5bfb`; that was a **push** run where `reproduce-fixpoint` is skipped (`.github/workflows/ci.yml:78`, gated on `pull_request`). Corrected by actually running the committed full reproduction in a disposable worktree at `a93babb`: the three `--reproduce` runners plus `compose-digest.sh`, then `git diff --quiet -- pins claims evidence drift findings coverage consumption digest STATE.md` → exit 0. Committed recon artifacts equal a fresh `--reproduce` on macOS; the Linux side is `reproduce-fixpoint` SUCCESS on the doc PRs #244/#245/#246. **Property-specific:** the recon evidence artifacts reproduce; not a trust statement about the repository or the control plane, and there is no global trusted baseline.
 
 **Baseline `5b964a4` — REJECTED as a clean recovery base.** The approval fail-open is present there in full: `scripts/review.sh:350-360` downgrades a blocking finding to `non-blocking/inconclusive` keeping `claimed_severity`, and `scripts/review-verdict.sh:67` keys Rule 4 on `severity`. The disease predates the quarantine range. Rolling back to `5b964a4` reinstates the fail-open; the correct recovery is forward.
 
@@ -251,3 +251,12 @@ Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durab
 The dispositions are the operator's; the accepted-vs-proposed distinction and baseline audit sign-off remain a reviewer decision.
 
 **RECOVERY-0 done-criteria met**, except sign-off, which is not the operator's to give.
+
+
+### Correction 2026-08-10 (independent review)
+
+- RECOVERY-0 reopened to IN PROGRESS; the reproduction claim is corrected above with an actually-executed reproduction.
+- PR #238 is **REBUILD**: its aggregator keys on `claimed_severity`, which the verdict schema forbids (`additionalProperties: false`), so the field never reaches the aggregator in production — a vacuous-green oracle; the fail-open remains. Needs a true end-to-end test through `write_verdict()`.
+- PR #242 is **REBUILD**: missing/unparseable diff counts default to LOW (fail-open); booleans/negatives not rejected. Invalid counts must be terminal PARTIAL/UNKNOWN, never LOW.
+- Both candidates rejected, not reopened; branches kept as evidence. RECOVERY-2 re-derived fresh.
+- Owner decisions (#236): independence procedurally mandatory (other provider optional); owner is root-of-trust and merges manually until a least-privilege integrator exists; baselines are component/property-specific.
