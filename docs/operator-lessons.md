@@ -212,3 +212,36 @@ Three habits, in order of cost:
 Related: the `sh -n` on a bash script, and the grep pipeline that counted
 itself — three instances in which the *instrument*, not the code under test,
 produced the wrong answer. The instrument is not outside the system.
+
+## Read the repository's own answer before specifying one
+
+**2026-08-10.** In one session the operator built three things the repository
+had already decided, and found out afterwards each time.
+
+- It told the owner that preventing a verification command from writing "is not
+  cleanly available without a container". `/usr/bin/sandbox-exec` was present
+  and `core/profiles/worker.sb` was a working deny-default profile with a canary
+  suite, committed since Slice 1.
+- It then wrote an acceptance oracle that a block list satisfied — allow write
+  everywhere, deny the worktree — leaving `$HOME`, the real checkout and the
+  secrets file writable. The header of `worker.sb` warns against exactly that
+  and says why: a block list must enumerate what stays hidden and is incomplete
+  by construction.
+- It placed the sandbox call directly in `scripts/review.sh`, a third hardcoded
+  site, while `docs/execution-core-adr.md` §7 defines a capability contract
+  precisely so that no call site names an operating system.
+
+Each was one file away. None of the three was caught by care, review or testing;
+they were caught by reading the file afterwards.
+
+The general shape is the one this document records under other names: acting on
+what is in the agent's context rather than what is in the repository. Context is
+assembled per session, is partly external, and nobody can audit it. The
+repository is the only thing every future session shares.
+
+**Apply:** before writing an oracle or a specification for some property, search
+the repository for that property first — `grep -ri <property> core/ docs/
+governance/` costs seconds. Put the finding, or its explicit absence, in the
+commit message. `docs/enforcement-inventory.md` is the accumulating result.
+
+Read twice before building once.
