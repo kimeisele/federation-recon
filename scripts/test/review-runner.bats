@@ -233,8 +233,8 @@ print(value)
 
   run run_review --pr 178
   [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
 
-  [ -f "$SANDBOX/verify-cwd.txt" ]
   verify_cwd="$(sed -n '/=== stdout (head) ===/{n;p;}' "$run_dir/verify.tier1a.0.log")"
   [[ "$verify_cwd" == "$SANDBOX/tmp/review-worktree."* ]]
 
