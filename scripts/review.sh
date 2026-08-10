@@ -434,6 +434,12 @@ PYEOF
 # the finding without ever running the base command.
 REVIEW_VERIFY_TIMEOUT="${REVIEW_VERIFY_TIMEOUT:-30}"
 REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
+# Verification commands run confined, never as the invoking user with the
+# worktree writable (#228): run rv-20260810-004 confirmed five blocking
+# findings whose commands silently rewrote the tree they were verifying.
+# REVIEW_SANDBOX_BIN is the seatbelt launcher; if it is missing the review
+# fails closed — nothing is verified unconfined.
+REVIEW_SANDBOX_BIN="${REVIEW_SANDBOX_BIN:-/usr/bin/sandbox-exec}"
 
 # _verify_findings <worktree> <base-worktree> — execute every blocking
 # finding's verification_command in the head worktree and stamp the finding
@@ -442,6 +448,17 @@ REVIEW_VERIFY_MAX="${REVIEW_VERIFY_MAX:-20}"
 # base worktree is empty the finding cannot be discriminated, so it is marked
 # [base-unverified] without running anything: running only the head half
 # would re-confirm the exact tautologies #196 exists to catch.
+#
+# Every command runs under seatbelt with the worktree readable and NOT
+# writable, plus a scratch directory it may write to (same deny-default
+# mechanism as core/profiles/worker.sb). One finding's command therefore
+# cannot change the tree that every later finding is evaluated against, and a
+# command that tries — git checkout, sed -i, printf >> — fails with the write
+# instead of silently rewriting the subject. The sandbox also denies writes
+# and reads outside the worktree and scratch, and denies the network. If the
+# sandbox cannot be established (missing binary, broken profile, unreadable
+# worktree) the review fails closed: no command runs unconfined and every
+# blocking finding is marked [sandbox-unavailable] inconclusive.
 _verify_findings() {
   local wt_dir="$1" base_wt_dir="${2:-}"
   for _stem in tier1a tier1b; do
@@ -459,6 +476,78 @@ with open(artifact_path) as fh:
 
 findings = artifact.get("findings", [])
 cmd_count = 0
+
+# ---- Confinement (#228) ----------------------------------------------------
+# A verification command runs sandboxed: the worktree is readable and NOT
+# writable, a scratch directory is the only writable place, and everything
+# else — writes, reads of secrets, the network — is denied by default. If the
+# sandbox cannot be established, the review fails closed: nothing runs
+# unconfined, and every blocking finding is recorded inconclusive.
+sandbox_bin = os.environ.get("REVIEW_SANDBOX_BIN", "/usr/bin/sandbox-exec")
+sandbox_profile = os.environ.get("REVIEW_VERIFY_PROFILE", "")
+sandbox_scratch = os.environ.get("REVIEW_VERIFY_SCRATCH", "")
+sandbox_gitdir = os.environ.get("REVIEW_VERIFY_GITDIR", "")
+
+confined = (
+    os.path.isfile(sandbox_bin)
+    and os.access(sandbox_bin, os.X_OK)
+    and bool(sandbox_profile) and os.path.isfile(sandbox_profile)
+    and bool(sandbox_scratch) and os.path.isdir(sandbox_scratch)
+)
+# Minimal environment, mirroring core/worker_exec.sh's env -i discipline: the
+# sandboxed process gets nothing from the review's environment, HOME is moved
+# into the scratch so git never reads the invoking user's ~/.gitconfig, and
+# TMPDIR is moved in too so temp files stay writable inside the sandbox. PATH
+# puts the Command Line Tools first so `git` resolves to the real CLT binary:
+# the /usr/bin/git shim goes through xcrun, which tries to write a cache file
+# into the user temp dir, is denied by the sandbox, and pollutes stderr with
+# "Operation not permitted" even when git succeeds — the denial sniffer below
+# would misread that noise as a failed command.
+confine_env = {"PATH": "/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin", "HOME": sandbox_scratch, "TMPDIR": sandbox_scratch}
+
+def confined_argv(cwd):
+    argv = [sandbox_bin, "-f", sandbox_profile,
+            "-D", "WT=" + cwd, "-D", "SCRATCH=" + sandbox_scratch]
+    if sandbox_gitdir:
+        argv += ["-D", "GITDIR=" + sandbox_gitdir]
+    argv += ["/bin/bash", "-c"]
+    return argv
+
+if confined:
+    # Probe the profile once before anything runs: a sandbox that cannot even
+    # start `true` must not have findings attributed to it, and the probe
+    # shares the exact argv the findings will use.
+    try:
+        probe = subprocess.run(
+            confined_argv(wt_dir) + ["true"],
+            cwd=wt_dir,
+            env=confine_env,
+            timeout=timeout_s,
+            capture_output=True,
+        )
+        confined = probe.returncode == 0
+    except Exception:
+        confined = False
+
+if not confined:
+    for i, finding in enumerate(findings):
+        if not isinstance(finding, dict) or finding.get("severity") != "blocking":
+            continue
+        log_path = os.path.join(run_dir, "verify.%s.%d.log" % (stem, i))
+        with open(log_path, "wb") as log:
+            log.write(b"=== command ===\n")
+            log.write(finding.get("verification_command", "").encode() + b"\n")
+            log.write(b"=== confinement ===\n")
+            log.write(b"sandbox unavailable; command not run\n")
+        finding["claimed_severity"] = "blocking"
+        finding["verification_status"] = "inconclusive"
+        finding["severity"] = "non-blocking"
+        finding["summary"] = "[sandbox-unavailable] " + finding.get("summary", "")
+    artifact["findings"] = findings
+    with open(artifact_path, "w") as fh:
+        json.dump(artifact, fh, indent=2)
+        fh.write("\n")
+    sys.exit(0)
 
 for i, finding in enumerate(findings):
     if not isinstance(finding, dict):
@@ -505,8 +594,9 @@ for i, finding in enumerate(findings):
 
     try:
         result = subprocess.run(
-            ["bash", "-c", cmd],
+            confined_argv(wt_dir) + [cmd],
             cwd=wt_dir,
+            env=confine_env,
             timeout=timeout_s,
             capture_output=True,
         )
@@ -517,9 +607,23 @@ for i, finding in enumerate(findings):
         log.write(result.stderr)
 
         if result.returncode != 0:
-            # The defect is not reproduced at the head: the finding is
-            # refuted and the base command never runs.
-            finding["verification_status"] = "rejected"
+            if b"Operation not permitted" in result.stderr:
+                # The sandbox refused an operation the command needed, so the
+                # command never ran to completion. This is not a refutation —
+                # "the defect is absent" would claim more than ran. It is a
+                # failed verification: the #228 property in executable form,
+                # a command that tries to mutate the subject is never
+                # confirmed, and a command the sandbox stopped is inconclusive.
+                log.write(b"=== sandbox denial (head) ===\n")
+                log.write(b"stderr reports an operation the sandbox denied; finding inconclusive\n")
+                finding["claimed_severity"] = "blocking"
+                finding["verification_status"] = "inconclusive"
+                finding["severity"] = "non-blocking"
+                finding["summary"] = "[sandbox-denied] " + finding.get("summary", "")
+            else:
+                # The defect is not reproduced at the head: the finding is
+                # refuted and the base command never runs.
+                finding["verification_status"] = "rejected"
             log.close()
             continue
 
@@ -527,8 +631,9 @@ for i, finding in enumerate(findings):
         log.write(cmd.encode() + b"\n")
         try:
             base_result = subprocess.run(
-                ["bash", "-c", cmd],
+                confined_argv(base_wt_dir) + [cmd],
                 cwd=base_wt_dir,
+                env=confine_env,
                 timeout=timeout_s,
                 capture_output=True,
             )
@@ -1116,6 +1221,9 @@ base_wt_dir=""
 # by exit with 128+SIGNO: a signal-killed review must not keep running against
 # a worktree it has already removed.
 review_cleanup() {
+  if [ -n "${verify_scratch:-}" ]; then
+    rm -rf "$verify_scratch" 2>/dev/null || true
+  fi
   if [ -n "${base_wt_dir:-}" ]; then
     git worktree remove --force "$base_wt_dir" 2>/dev/null || git worktree prune 2>/dev/null || true
     rm -rf "$base_wt_dir" 2>/dev/null || true
@@ -1194,7 +1302,45 @@ if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.
   # Execute every blocking finding's verification_command in the head worktree
   # and, for a command that confirms the defect there, again at the base, so
   # only discriminating findings can drive the verdict or escalation (#196).
+  # Each command runs confined (#228): the worktree is read-only, a scratch
+  # directory is the only writable place, and a missing sandbox fails closed —
+  # nothing is verified unconfined.
   if [ "$tier1a_status" = "complete" ] || [ "$tier1b_status" = "complete" ]; then
+    verify_profile="$run_dir/verify.sb"
+    verify_scratch="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-verify-scratch.XXXXXX")" && pwd -P)"
+    # The sandbox profile lets the confined git read the repository it needs:
+    # a worktree keeps its object database outside itself and reaches into the
+    # main repository through the gitdir file. The common git dir is the one
+    # place that covers both the head and the base worktree.
+    verify_gitdir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$verify_gitdir" ]; then
+      verify_gitdir="$(cd "$verify_gitdir" 2>/dev/null && pwd -P || true)"
+    fi
+    cat > "$verify_profile" <<'SBEOF'
+(version 1)
+(deny default)
+(import "system.sb")
+(deny network*)
+(allow process-fork)
+(allow process-exec* (subpath "/bin"))
+(allow process-exec* (subpath "/usr/bin"))
+(allow process-exec* (subpath "/usr/libexec"))
+(allow process-exec* (subpath "/Library/Developer/CommandLineTools"))
+(allow file-read* (subpath "/bin"))
+(allow file-read* (subpath "/usr/bin"))
+(allow file-read* (subpath "/usr/libexec"))
+(allow file-read* (subpath "/Library/Developer/CommandLineTools"))
+(allow file-read-metadata)
+(allow file-read* (subpath (param "WT")))
+(allow file-read* file-write* (subpath (param "SCRATCH")))
+SBEOF
+    if [ -n "$verify_gitdir" ]; then
+      printf '(allow file-read* (subpath (param "GITDIR")))\n' >> "$verify_profile"
+    fi
+    export REVIEW_SANDBOX_BIN
+    export REVIEW_VERIFY_PROFILE="$verify_profile"
+    export REVIEW_VERIFY_SCRATCH="$verify_scratch"
+    export REVIEW_VERIFY_GITDIR="$verify_gitdir"
     _progress "verification: executing finding commands"
     _verify_findings "$wt_dir" "$base_wt_dir"
     _progress "verification: complete"

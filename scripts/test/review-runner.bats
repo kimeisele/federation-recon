@@ -190,6 +190,16 @@ print(value)
 " "$1"
 }
 
+# A verification command can only be CONFIRMED where the confinement can be
+# established (#228). The runner fails closed without it, which is the correct
+# product behaviour and is asserted by its own test — so on a platform with no
+# supported sandbox these tests cannot exercise what they are about, and skip
+# with a reason rather than pretending to pass. Linux support is #233.
+_needs_sandbox() {
+  [ -x "${REVIEW_SANDBOX_BIN:-/usr/bin/sandbox-exec}" ] \
+    || skip "no supported sandbox on this platform (see #233)"
+}
+
 # ────────────────────────────────────────────────────────────
 #  1. USAGE — a missing or malformed --pr is a usage error
 # ────────────────────────────────────────────────────────────
@@ -223,34 +233,20 @@ print(value)
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: disposable worktree is created at the head SHA and destroyed" {
+  _needs_sandbox
   # Tier 0 no longer runs the gate (#195), so the worktree is proven by the
   # thing that still needs it: a Tier 1B verification command, which executes
   # with the worktree as its CWD.
-  MOCK_CURL_RESPONSE="$(python3 - "$SANDBOX/verify-cwd.txt" <<'PY'
-import json, sys
-inner = json.dumps({
-    "findings": [{
-        "severity": "blocking",
-        "summary": "worktree probe",
-        "verification_command": "pwd >> %s" % sys.argv[1],
-    }],
-    "commentary": "",
-})
-print(json.dumps({
-    "model": "deepseek-chat",
-    "choices": [{"message": {"content": inner}, "finish_reason": "stop"}],
-}))
-PY
-)"
+  # Confinement forbids writing outside the worktree (#228), so the probe
+  # reports its CWD on stdout and the assertion reads the runner's log.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"worktree probe","verification_command":"pwd"}]')"
   export MOCK_CURL_RESPONSE
 
   run run_review --pr 178
   [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
 
-  [ -f "$SANDBOX/verify-cwd.txt" ]
-  # Verification runs the command at the head and then at the base (#196), so
-  # the file holds two paths; the first is the head worktree.
-  verify_cwd="$(head -1 "$SANDBOX/verify-cwd.txt")"
+  verify_cwd="$(sed -n '/=== stdout (head) ===/{n;p;}' "$run_dir/verify.tier1a.0.log")"
   [[ "$verify_cwd" == "$SANDBOX/tmp/review-worktree."* ]]
 
   # No worktree registration remains — the fixture's own worktree is all.
@@ -428,6 +424,7 @@ PY
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1a mock success returns complete and writes a valid artifact" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate misses a check.\",\"verification_command\":\"test -f head-marker.txt\"},{\"question\":\"1c\",\"severity\":\"non-blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -578,6 +575,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: tier1b mock success returns complete and writes a valid artifact" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"3\",\"severity\":\"blocking\",\"summary\":\"The gate check is untested.\",\"verification_command\":\"test -f head-marker.txt\"},{\"question\":\"1b\",\"severity\":\"non-blocking\",\"summary\":\"The diff itself is the attack.\"}],\"commentary\":\"Full analysis text.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -813,6 +811,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding verified by its command aggregates to REJECT" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"category\":\"substrate-dependency\",\"file\":\"scripts/gate.sh\",\"line\":1,\"summary\":\"The gate would miss a real defect.\",\"verification_command\":\"test -f head-marker.txt\"}],\"commentary\":\"The blocking defect is real.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -849,6 +848,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding refuted by its command aggregates to APPROVE" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"A file that must exist does not.\",\"verification_command\":\"test -f nonexistent-file\"}],\"commentary\":\"Suspected defect.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -877,6 +877,7 @@ PYEOF
 # ────────────────────────────────────────────────────────────
 
 @test "review-runner: blocking finding without a verification command is downgraded" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"1c\",\"severity\":\"blocking\",\"summary\":\"The claims are overstated.\"}],\"commentary\":\"Suspected but unverifiable.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -972,6 +973,7 @@ PYEOF
 }
 
 @test "review-runner: head success and base success is inconclusive and non-blocking" {
+  _needs_sandbox
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Same result in both revisions.\",\"verification_command\":\"test -f scripts/gate.sh\"}],\"commentary\":\"Check both revisions.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
   [ "$status" -eq 0 ]
@@ -986,8 +988,11 @@ PYEOF
 }
 
 @test "review-runner: head failure rejects and does not run the base command" {
-  export VERIFY_SHA_FILE="$SANDBOX/verify-shas"
-  export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Head command rejects.\",\"verification_command\":\"printf \\\"%s\\\\n\\\" \\\"$(git rev-parse HEAD)\\\" >> \\\"$VERIFY_SHA_FILE\\\"; false\"}],\"commentary\":\"Head must reject.\"}"},"finish_reason":"stop"}]}'
+  _needs_sandbox
+  # The command may not write anywhere the test can read (#228), so it reports
+  # on stdout and the assertion reads the per-finding log the runner writes.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"Head command rejects.","verification_command":"git rev-parse HEAD; false"}]')"
+  export MOCK_CURL_RESPONSE
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
@@ -996,10 +1001,176 @@ import json, sys
 f = json.load(open(sys.argv[1]))["findings"][0]
 assert f["verification_status"] == "rejected"
 PYEOF
-  [ "$(sort -u "$VERIFY_SHA_FILE" | tr -d '\n')" = "$MOCK_HEAD_SHA" ]
+  # The head SHA appears in the log, and there is no base section at all: a
+  # command that fails at the head is never run at the base.
+  grep -q "$MOCK_HEAD_SHA" "$run_dir/verify.tier1a.0.log"
+  ! grep -q "(base)" "$run_dir/verify.tier1a.0.log"
+}
+
+# ────────────────────────────────────────────────────────────
+#  Verification cannot write to what it verifies (#228)
+# ────────────────────────────────────────────────────────────
+#
+# Run rv-20260810-004 confirmed five blocking findings. Two of their commands
+# ran `git checkout -- <file under review>` and `sed -i` on it, as the invoking
+# user, with no restriction of any kind.
+#
+# The remedy is prevention, not detection: each command runs under seatbelt
+# with the worktree readable and not writable, and a scratch directory it may
+# write to. Same mechanism as core/profiles/worker.sb, which this repository
+# has carried and canary-tested since Slice 1.
+#
+# Measured before this was written:
+#   write into the tree  -> "Operation not permitted", file unchanged
+#   read from the tree   -> ok
+#   write into scratch   -> ok
+#
+# Prevention is also the smaller design. With an unwritable tree there is
+# nothing to detect afterwards and no need for a fresh checkout per command.
+
+_finding_response() {
+  python3 -c "
+import json, sys
+findings = json.loads(sys.argv[1])
+inner = json.dumps({'findings': findings, 'commentary': ''})
+print(json.dumps({'model': 'm', 'choices': [{'message': {'content': inner}, 'finish_reason': 'stop'}]}))
+" "$1"
+}
+
+@test "review-runner: isolation — a command cannot write into the worktree" {
+  # Writes to a file that exists at BOTH revisions, then discriminates on the
+  # head-only marker. Without the sandbox the write succeeds and the finding is
+  # confirmed — having rewritten a tracked file on the way. With it the write
+  # fails, the command fails with it, and nothing is confirmed.
+  #
+  # Appending to head-marker.txt instead would be vacuous: at the base the
+  # redirect creates the file, so the command passes at both revisions and
+  # #196 downgrades it for the wrong reason.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"tries to write","verification_command":"printf x >> scripts/review.sh && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'WREOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] != "confirmed", f["verification_status"]
+assert f["severity"] == "non-blocking", f["severity"]
+WREOF
+}
+
+@test "review-runner: isolation — one finding's command cannot change another's result" {
+  _needs_sandbox
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"deletes the marker","verification_command":"rm -f head-marker.txt; true"},{"severity":"blocking","summary":"needs the marker","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  # The second finding discriminates on its own: the marker is at the head and
+  # not at the base. It must reach that result whatever the first tried.
+  python3 - "$run_dir/tier1a.json" <<'ISOEOF'
+import json, sys
+findings = json.load(open(sys.argv[1]))["findings"]
+assert findings[1]["verification_status"] == "confirmed", findings[1]["verification_status"]
+ISOEOF
+}
+
+@test "review-runner: isolation — an unavailable sandbox fails closed" {
+  # A missing sandbox must never mean "run it unconfined". If the confinement
+  # cannot be established, nothing was verified.
+  export REVIEW_SANDBOX_BIN="$SANDBOX/no-such-sandbox-exec"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'FCEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive", f["verification_status"]
+assert f["severity"] == "non-blocking"
+FCEOF
+}
+
+@test "review-runner: isolation — a command cannot write outside the worktree" {
+  # Deny-default, not a deny-list. core/profiles/worker.sb states why in its
+  # own header: a block list has to enumerate what must stay hidden and is
+  # incomplete by construction — two earlier versions left /Library/Keychains
+  # and /private/tmp open and passed every canary anyway.
+  #
+  # Confining only the worktree would leave $HOME, the real checkout and the
+  # secrets file writable by a command a language model wrote.
+  printf 'untouched\n' > "$SANDBOX/outside-canary.txt"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"writes outside","verification_command":"printf x >> '"$SANDBOX"'/outside-canary.txt && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SANDBOX/outside-canary.txt")" = "untouched" ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'OUTEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] != "confirmed", f["verification_status"]
+OUTEOF
+}
+
+@test "review-runner: isolation — a command cannot read a secret outside the worktree" {
+  # Mirrors core/canaries/fs_confinement: reading a planted secret outside the
+  # workspace must fail. Network is denied too, but a command that can read a
+  # credential can also write it somewhere the next one collects it.
+  printf 'SECRETVALUE\n' > "$SANDBOX/fake-secret.txt"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads a secret","verification_command":"grep -q SECRETVALUE '"$SANDBOX"'/fake-secret.txt && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'SECEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] != "confirmed", f["verification_status"]
+SECEOF
+}
+
+@test "review-runner: isolation — a git-based command still works confined" {
+  _needs_sandbox
+  # The confinement must not become an off switch. Measured while specifying
+  # it: a git worktree keeps its object database outside the worktree, and git
+  # also reads ~/.gitconfig, so a naive profile breaks every git-based
+  # verification command with exit 128.
+  #
+  # What makes it work, verified before asking for it: file-read-metadata for
+  # path traversal, read access to the main repository's git directory, and
+  # HOME pointed at the scratch directory so git never reaches for the owner's
+  # config. All confinement checks still hold with those in place.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"uses git","verification_command":"git rev-parse HEAD >/dev/null && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'GITEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "confirmed", f["verification_status"]
+GITEOF
+}
+
+@test "review-runner: isolation — a read-only command still confirms" {
+  _needs_sandbox
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'ROEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "confirmed", f["verification_status"]
+assert f["severity"] == "blocking"
+ROEOF
 }
 
 @test "review-runner: unavailable base SHA is inconclusive and marked base-unverified" {
+  _needs_sandbox
   # Present but unusable: a well-formed SHA that is not in the repository, so
   # the base worktree cannot be created. Distinct from a missing baseRefOid,
   # which fails metadata resolution before any model call — see the test
@@ -1019,6 +1190,7 @@ PYEOF
 }
 
 @test "review-runner: base verification timeout is inconclusive and marked base-timeout" {
+  _needs_sandbox
   export REVIEW_VERIFY_TIMEOUT=1
   export MOCK_CURL_RESPONSE='{"model":"mock-reviewer-model","choices":[{"message":{"content":"{\"findings\":[{\"question\":\"4c\",\"severity\":\"blocking\",\"summary\":\"Base command hangs.\",\"verification_command\":\"test -f head-marker.txt || sleep 5\"}],\"commentary\":\"Bounded timeout case.\"}"},"finish_reason":"stop"}]}'
   run run_review --pr 178
