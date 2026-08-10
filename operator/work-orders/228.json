@@ -1,7 +1,7 @@
 {
   "work_order_id": "wo-228-0",
   "issue": 228,
-  "base_sha": "d2a66c3b00b897fa3ff4f8a7b47d3d1bf5fff784",
+  "base_sha": "718955041b59c0767ff0abae99ed41c17e6a48cd",
   "allowed_paths": [
     "scripts/review.sh"
   ],
@@ -26,7 +26,7 @@
   ],
   "acceptance_commands": [
     "bash -n scripts/review.sh",
-    "bats -f mutating scripts/test/review-runner.bats"
+    "bats -f isolation scripts/test/review-runner.bats"
   ],
   "oracle_paths": [
     "scripts/test/review-runner.bats",
