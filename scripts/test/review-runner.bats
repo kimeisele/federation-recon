@@ -649,7 +649,13 @@ PYEOF
 }
 
 @test "review-runner: other provider preserves arbitrary reasoning effort" {
-  export REVIEW_PROVIDER=other REVIEW_REASONING_EFFORT=medium
+  # The model, not the route, decides the thinking contract (#227), so this
+  # passthrough has to be pinned with a model that is genuinely not DeepSeek.
+  # It used to set only REVIEW_PROVIDER=other and inherit the default DeepSeek
+  # model, which made "no thinking field" and "deepseek model" true at once —
+  # a contradiction the builder could only resolve by weakening the guard,
+  # because scripts/test/ is forbidden to it.
+  export REVIEW_PROVIDER=other REVIEW_MODEL=qwen3.7-plus REVIEW_REASONING_EFFORT=medium
   run run_review --pr 178
   [ "$status" -eq 0 ]
   run_dir="$(latest_run_dir)"
@@ -680,6 +686,56 @@ PYEOF
   export REVIEW_REASONING_EFFORT=high
   run run_review --pr 178
   [ "$status" -eq 0 ]
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  Thinking is a property of the MODEL, not of the route (#227)
+# ────────────────────────────────────────────────────────────
+#
+# Measured on 2026-08-10, same review request, deepseek-v4-pro through
+# https://opencode.ai/zen/go/v1:
+#
+#   as sent today:            finish=length  completion=8192   reasoning=7953
+#   + thinking: disabled:     finish=stop    completion=1203   reasoning=0
+#
+# A tenth of the tokens and the more complete answer. The guard existed and
+# silently did not apply, because it was keyed on REVIEW_PROVIDER while the
+# contract belongs to the model at the end of the route.
+
+@test "review-runner: a deepseek model keeps the thinking contract off-provider" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-pro
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"thinking": {' "$run_dir/tier1a.request.json"
+  grep -q '"type": "disabled"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: enabled thinking off-provider still sends effort" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-flash
+  export REVIEW_DEEPSEEK_THINKING_MODE=enabled REVIEW_REASONING_EFFORT=high
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"type": "enabled"' "$run_dir/tier1a.request.json"
+  grep -q '"reasoning_effort": "high"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: a non-deepseek model on any route sends no thinking field" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=qwen3.7-plus
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  ! grep -q '"thinking"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: an invalid thinking mode fails closed off-provider too" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-pro
+  export REVIEW_DEEPSEEK_THINKING_MODE=sometimes
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  # A misconfigured contract must stop before the provider is called at all.
   [ ! -s "$MOCK_CURL_ARGS_FILE" ]
 }
 
