@@ -227,13 +227,13 @@ At the end of every recovery session append one short entry below with:
 
 ---
 
-## RECOVERY-0 — forensic baseline — COMPLETE (2026-08-10)
+## RECOVERY-0 — forensic baseline — IN PROGRESS (2026-08-10, corrected)
 
 Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durable conclusions:
 
 **Quarantine range `5b964a4..2cc5bfb`:** 14 changed files; five touch `scripts/review.sh`. Full list and per-PR semantic records in #236.
 
-**Reconnaissance core — trusted.** Not in the changed-path set (scope), and the `CI — artifact & digest invariants` workflow (validate-artifacts `--strict` + reproduce-fixpoint, a macOS↔Linux equivalence check regenerating every artifact from committed pins) is SUCCESS at `2cc5bfb`. Reproduction, not merely absence-from-diff.
+**Reconnaissance core — scope verified; reproduction evidence is environment-specific.** An earlier revision claimed reproduction from a CI run at `2cc5bfb`; that was a **push** run where `reproduce-fixpoint` is skipped (`.github/workflows/ci.yml:78`, gated on `pull_request`). Linux `reproduce-fixpoint` completed successfully on PR #247 at `2b4ee0c`, proving that the committed artifacts equal the workflow's fresh `--reproduce` result in that run. An independent macOS attempt at `a93babb` did not complete: several GitHub reads became partial and `scripts/recon-run.sh` exited at line 1060 with an unbound `CLAIM_FILES["rb-agent-world"]`; the chained census, consumption, composer, and final diff never ran. This is evidence that `--reproduce` is not offline and that its failure semantics still need disposition. **Property-specific:** the quarantine did not change the recon paths, and one Linux workflow reached the committed-artifact fixpoint. There is no repository-wide trust claim, global trusted baseline, or independently confirmed macOS fixpoint.
 
 **Baseline `5b964a4` — REJECTED as a clean recovery base.** The approval fail-open is present there in full: `scripts/review.sh:350-360` downgrades a blocking finding to `non-blocking/inconclusive` keeping `claimed_severity`, and `scripts/review-verdict.sh:67` keys Rule 4 on `severity`. The disease predates the quarantine range. Rolling back to `5b964a4` reinstates the fail-open; the correct recovery is forward.
 
@@ -250,4 +250,13 @@ Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durab
 
 The dispositions are the operator's; the accepted-vs-proposed distinction and baseline audit sign-off remain a reviewer decision.
 
-**RECOVERY-0 done-criteria met**, except sign-off, which is not the operator's to give.
+**RECOVERY-0 remains IN PROGRESS.** Baseline rejection is supported, but the macOS reproduction failure and the meaning of environment-dependent reproduction remain open. Sign-off is component- and property-specific.
+
+
+### Correction 2026-08-10 (independent review)
+
+- RECOVERY-0 reopened to IN PROGRESS; the reproduction claim is corrected above with both the successful Linux workflow and the failed independent macOS attempt.
+- PR #238 is **REBUILD**: its aggregator keys on `claimed_severity`, which the verdict schema forbids (`additionalProperties: false`), so the field never reaches the aggregator in production — a vacuous-green oracle; the fail-open remains. Needs a true end-to-end test through `write_verdict()`.
+- PR #242 is **REBUILD**: missing/unparseable diff counts default to LOW (fail-open); booleans/negatives not rejected. Invalid counts must be terminal PARTIAL/UNKNOWN, never LOW.
+- Both candidates rejected, not reopened; branches kept as evidence. RECOVERY-2 re-derived fresh.
+- Owner decisions (#236): independence procedurally mandatory (other provider optional); owner is root-of-trust and merges manually until a least-privilege integrator exists; baselines are component/property-specific.
