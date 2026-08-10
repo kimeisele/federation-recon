@@ -52,7 +52,33 @@ no session context.
 | Kimi K3 | Moonshot | direct API — see below. **Do not use `jcode run` for Kimi.** |
 | Qwen 3.7 Max | OpenCode Go service; Qwen upstream model | `scripts/consult-opencode.sh qwen3.7-max <output.md> <prompt-file> <source-repo>` |
 
-### Current non-JCode review channel (2026-08-02)
+### Current non-JCode review channel (2026-08-02, superseded 2026-08-10)
+
+> **This channel does not execute on the operator host and there is no
+> affordable substitute. Measured 2026-08-10.**
+>
+> Both bundled `opencode` binaries die on exec — `opencode-darwin-x64` and
+> `opencode-darwin-x64-baseline`, exit 137 — so `consult-opencode.sh` cannot
+> run here at all. The section below described the adopted channel while no
+> consultation could be produced through it.
+>
+> The catalogue is reachable directly over HTTP at
+> `https://opencode.ai/zen/go/v1` with the `opencode-go` key, but only
+> `deepseek-v4-flash` has usable quota; every other model exhausts almost
+> immediately. Of those tried on a strict-JSON prompt, `kimi-k3` answered with
+> `tool_calls` and empty content, `glm-5.2` returned empty content, and
+> `grok-4.5` returned an upstream error.
+>
+> **So a different-provider reviewer is not purchasable on this project's
+> budget.** `docs/review-pipeline-spec-v0.md` now sources Tier 1B's
+> independence from executed, base-discriminating, confined verification rather
+> than from provider diversity, and states what that costs. The cross-provider
+> requirement for risk class HIGH in `CLAUDE.md` is **not** resolved by that
+> change and is currently unmet on every change — recorded in
+> `docs/enforcement-inventory.md` as unsatisfiable rather than quietly broken.
+>
+> The text below is kept because the mechanism it describes is sound and would
+> be the right channel again if the constraint lifts.
 
 The current operator is OpenAI and the current builder is DeepSeek. Sol and
 DeepSeek therefore cannot supply the different-provider judgment for work they

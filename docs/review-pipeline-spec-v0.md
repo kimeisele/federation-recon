@@ -65,15 +65,31 @@ call the same script.
 
 ### Tier 0 — Deterministic (always runs)
 
-Runs the existing `gate.sh` once and captures its phase results:
+Reads the CI status rollup for the PR head. It does **not** run `gate.sh`.
 
-- Schema validation (pass/fail + count)
-- Test suite (pass/fail + count)
-- Reproduce fixpoint (match/mismatch, `--full` only)
-- Tree state (clean/dirty)
-- CI status via `gh` API (pass/fail/pending/error/missing)
+- All checks completed and successful, neutral or skipped → `pass`
+- Any check completed with failure, timeout, cancellation or startup failure → `fail`
+- Any check not completed, or an empty, absent or unparseable rollup → `error`
 
-No duplication — Tier 0 instruments the gate, not reimplements it.
+`error` is not `fail`: `fail` asserts CI ran and rejected the commit, `error`
+asserts nothing is known. An empty rollup is never a vacuous pass.
+
+The rollup arrives in the same `gh pr view` response as the head SHA, so a
+conclusion cannot be bound to a commit other than the one under review.
+
+**This section previously specified running `gate.sh` once and capturing five
+results, of which CI status was one.** That was implemented and measured:
+review `rv-20260809-009` spent 1997 of 2001 seconds inside `gate.sh --full`,
+re-running a gate GitHub Actions had already run green on the same commit — and
+then failed the pull request on eight tests that pass on that commit, because
+the reviewer's own environment leaked into the gate subprocess.
+
+Re-deriving the gate locally means deriving it under operator conditions:
+environment, locale and installed tools are all inputs the reviewer controls
+and CI does not. Reading CI's conclusion is both faster and the more trustworthy
+of the two, and it removes that class of failure rather than mitigating it.
+
+No duplication — Tier 0 reads the gate's verdict, it does not re-run it.
 
 ### Tier 1A — Review analysis (1 read-only model call)
 
