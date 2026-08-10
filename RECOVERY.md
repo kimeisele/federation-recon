@@ -81,20 +81,47 @@ The history is linear and preserved; this is a trust failure, not data loss.
 ## Affordable trust contract to design toward
 
 The founding package does not require a second model to rebuild code. It
-requires deterministic Evidence to be reproducible without an LLM. Keep these
-three activities separate:
+requires deterministic Evidence to be reproducible without an LLM. There is no
+general requirement for a different model or provider. Trust must come from the
+architecture of the review process, not from an unaffordable vendor roster.
+
+Keep these activities separate:
 
 1. **Deterministic reproduction:** model-free and routine.
-2. **Cheap untrusted work:** Flash/Luna/DeepSeek may perform reconnaissance and
-   bounded builds; their output is never self-authorizing.
-3. **Independent semantic judgment:** a measured different provider is reserved
-   for explicitly authorized HIGH-risk or constitutional decisions. If it is
-   unavailable or unaffordable, the result is `HOLD`, never simulated
-   independence.
+2. **Cheap untrusted work:** Flash/Luna/DeepSeek may perform reconnaissance,
+   bounded builds, and review reasoning; their output is never self-authorizing.
+3. **Architecturally independent review:** builder and reviewer use separate
+   invocations, immutable inputs, fresh environments, independently derived
+   oracles, and adversarial objectives. Deterministic controls decide whether
+   the resulting evidence is sufficient.
+4. **Optional external consultation:** another provider may add evidence when it
+   is available and explicitly authorized, but is never a general prerequisite
+   for review or operation.
 
-Vendor/model rosters belong in a measured operational pointer, not normative
-prose. A second run from the same provider can be useful consultation but is not
-provider-independent review.
+Provider and model identity must still be measured for attribution and cost.
+Neither identity grants authority. The same affordable model may build and
+review when the process separation above is enforced; correlated model blind
+spots are mitigated by mutation, differential checks, canaries, reproduction,
+small diffs, staged activation, and rollback.
+
+### Trust kernel and autonomous extension
+
+The autonomous pipeline needs a small deterministic trust kernel that owns only
+policy evaluation, immutable subject identity, capability checks, verdict state,
+and bounded integration. Models propose patches, findings, and verification
+ideas; they do not decide their own authority.
+
+Ordinary repository work may eventually flow autonomously through that kernel.
+Changes to the kernel itself use a two-generation protocol:
+
+1. the old kernel evaluates the proposed new kernel against fixed invariants and
+   deliberately broken fixtures;
+2. the new kernel runs in shadow mode without integration authority;
+3. old and new decisions are compared and unexplained divergence stops adoption;
+4. activation is prospective, bounded, logged, and reversible.
+
+No change may simultaneously redefine a rule, replace its oracle, and authorize
+itself under the replacement.
 
 ## Serial recovery workstreams
 
@@ -116,7 +143,10 @@ incident.
 Complete the normative inventory started by PR #234. For each rule record its
 source, actual behavior, enforcement, observed negative evidence, cost, and
 status (`enforced`, `unenforced`, `contradictory`, `owner decision`). Separate
-deterministic reproduction from model review. Draft constitutional changes
+deterministic reproduction, model reasoning, and deterministic authority. Remove
+general different-model and different-provider requirements from the proposed
+operating contract. Specify architectural review independence and the
+two-generation trust-kernel protocol instead. Draft constitutional changes
 prospectively; do not adopt them in a technical PR.
 
 Relevant existing work: #55, #220, PR #234.
@@ -187,6 +217,9 @@ At the end of every recovery session append one short entry below with:
 - Confirmed an approval fail-open in the review verdict path.
 - Confirmed hard-coded LOW risk, Tier-2 stub, missing enforced independence, and
   diff/SHA TOCTOU.
+- Corrected the target architecture: review independence is procedural and
+  technical, not a mandatory different-provider requirement; autonomous
+  self-extension is rooted in a deterministic two-generation trust kernel.
 - No recovery code, merge, credential, permission, or constitutional change was
   made.
 - Opened umbrella issue #236; no PR was opened.
