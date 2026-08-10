@@ -219,3 +219,41 @@ read away.
 The next pass should cover `docs/founding-package-v0.2.md`, because it is named
 in `CLAUDE.md:168` as "constitution + invariants" and is the largest unread
 normative document in the repository.
+
+---
+
+## RECOVERY-1 — the affordable-trust separation (issue #236)
+
+The recovery record `#236` supersedes the "unsatisfiable cross-provider" tangle
+above with a contract that is affordable and that this inventory can check. It
+turns on keeping three activities apart, and never letting one stand in for
+another:
+
+| activity | who | authority |
+|---|---|---|
+| **deterministic reproduction** | no model | the fixpoint job already decides this; model-free |
+| **cheap untrusted work** | one affordable model (Flash) | proposes builds, findings, verification ideas — **never self-authorizing** |
+| **deterministic authority** | a small trust kernel | evaluates policy, immutable subject identity, capability, verdict, bounded integration |
+
+The rule that makes it hold: **no change may simultaneously redefine a rule,
+replace its oracle, and authorize itself under the replacement.** That is the
+exact move this session made repeatedly — writing an oracle, satisfying it, and
+merging on the strength of it, all as one actor.
+
+What this retires from the tables above:
+
+- The **unsatisfiable** cross-provider requirement is no longer a standing rule
+  to break. Independence is procedural — separate invocations, immutable inputs,
+  fresh environments, independently derived oracles — not a vendor roster.
+  Provider identity is still *measured* for attribution and cost; it grants no
+  authority.
+- The **approval fail-open** (verified in the handover above) is the first thing
+  the trust kernel must forbid: no `inconclusive`, missing dependency, stale SHA,
+  parser failure, timeout, or unsupported-confinement state may yield `APPROVE`,
+  and the runner may not lower a claimed severity that the aggregator then reads.
+  That is RECOVERY-2 and is where the kernel earns its place.
+
+The self-extension protocol for the kernel itself — old kernel judges new kernel
+against broken fixtures, shadow run, divergence stops adoption, reversible
+activation — is the structural answer to "an operator cannot certify its own
+authority", which is the defect this whole session demonstrated.
