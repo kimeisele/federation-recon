@@ -224,3 +224,30 @@ At the end of every recovery session append one short entry below with:
   made.
 - Opened umbrella issue #236; no PR was opened.
 - Next action: execute RECOVERY-0 only.
+
+---
+
+## RECOVERY-0 — forensic baseline — COMPLETE (2026-08-10)
+
+Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durable conclusions:
+
+**Quarantine range `5b964a4..2cc5bfb`:** 14 changed files; five touch `scripts/review.sh`. Full list and per-PR semantic records in #236.
+
+**Reconnaissance core — trusted.** Not in the changed-path set (scope), and the `CI — artifact & digest invariants` workflow (validate-artifacts `--strict` + reproduce-fixpoint, a macOS↔Linux equivalence check regenerating every artifact from committed pins) is SUCCESS at `2cc5bfb`. Reproduction, not merely absence-from-diff.
+
+**Baseline `5b964a4` — REJECTED as a clean recovery base.** The approval fail-open is present there in full: `scripts/review.sh:350-360` downgrades a blocking finding to `non-blocking/inconclusive` keeping `claimed_severity`, and `scripts/review-verdict.sh:67` keys Rule 4 on `severity`. The disease predates the quarantine range. Rolling back to `5b964a4` reinstates the fail-open; the correct recovery is forward.
+
+**Per-PR dispositions** (evidence in #236; discrimination mutations for #223/#224/#229/#231/#232 run first-hand by the operator):
+
+| PR | disposition |
+|---|---|
+| #215 token caps | rebuild (sound; shares the quarantined file; RECOVERY-3) |
+| #223 provider-probe clock | retain (audit zone, not review control) |
+| #224 Tier 0 from CI | rebuild (verdict input; re-express fail-closed) |
+| #229 thinking-by-model | retain-with-audit (request shaping only) |
+| #231 base discrimination | rebuild (its downgrade feeds the fail-open) |
+| #232 confinement | rebuild (same coupling; runs as operator uid, #233) |
+
+The dispositions are the operator's; the accepted-vs-proposed distinction and baseline audit sign-off remain a reviewer decision.
+
+**RECOVERY-0 done-criteria met**, except sign-off, which is not the operator's to give.
