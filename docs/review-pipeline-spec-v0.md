@@ -98,10 +98,44 @@ Covers the executing questions:
 - Mutation testing (Q3)
 - Self-application (Q9)
 
-Runs in the disposable worktree. Must use a model distinct from the builder —
-the builder's own model family cannot review its own output. Model provenance
-verified via the `model` field in the API response; mismatch → task fails,
-never silently completes.
+Runs in the disposable worktree.
+
+**Independence comes from execution, not from a second vendor.** An earlier
+version of this line required a model distinct from the builder, on the
+reasoning that a model cannot review its own output. That requirement is
+unsatisfiable here and was therefore silently violated rather than obeyed:
+`deepseek-v4-flash` is the only model with usable quota on the operator's
+subscription, and reviews on 2026-08-10 ran the same family that built the
+change while nothing in `scripts/review.sh` noticed.
+
+The reasoning behind it was sound for the process this pipeline replaced —
+the monolithic cross-provider review that collapsed on 2026-08-02, described
+in the problem statement above. In that process the model's *judgement* was
+the verdict, so whose judgement it was decided everything.
+
+Here it is not. A blocking finding must supply a `verification_command` that
+**fails at the PR base and passes at the head**, executed under confinement
+that cannot write to the tree it examines. A command that passes at both is
+downgraded; one that cannot fail is downgraded; one that mutates the subject
+is downgraded. Those are machine properties, and they hold identically whether
+the model is the builder's, a competitor's, or a random number generator that
+happened to emit valid JSON.
+
+So the model's role in Tier 1B is **to propose commands**, not to decide. A
+proposer with a conflict of interest is a weaker proposer, not an invalid one,
+and the cost of insisting otherwise is a rule nobody can follow.
+
+What the model must still do honestly is declare itself: provenance is
+recorded from the `model` field of the API response, and a response that does
+not report its model is a task error, never a silent completion.
+
+**Stated limit.** This removes the last check on the *quality* of proposed
+commands. A builder-family reviewer that proposes only commands its own change
+satisfies produces an empty review, not a wrong one — the verdict degrades to
+APPROVE-by-absence rather than to a false REJECT. That failure mode is real,
+is not detected today, and is the price of the constraint. Re-adopting a
+distinct reviewer is a prospective decision to make if the budget ever allows,
+not a rule to keep on the books while breaking it.
 
 ### Tier 2 — Independent verification (escalation only)
 

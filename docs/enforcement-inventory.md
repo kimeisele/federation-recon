@@ -28,7 +28,7 @@ reading first possible for the next session.
 | **Source** | file and line, so it can be re-read rather than remembered |
 | **Enforced by** | the check that fails when the rule is broken |
 | **Proven by** | the test that has been observed to go red when the check is removed |
-| **Status** | `enforced` · `unenforced` · `contradicted` · `unread` |
+| **Status** | `enforced` · `unenforced` · `unsatisfiable` · `contradicted` · `unread` |
 
 A rule with an **Enforced by** and no **Proven by** is not enforced. It is a
 check nobody has watched fail, which `docs/operator-lessons.md` names as an
@@ -176,6 +176,22 @@ table, labelling itself a widening rather than a clarification.
 So the prohibition survived the exact amendment that acknowledged the project
 had grown an execution layer. Whatever should happen next, it cannot rest on
 the claim that the constitution has not caught up.
+
+### Unsatisfiable — the rule cannot be met under the project's real constraints
+
+This category is separate from *unenforced* on purpose, and it is expected to
+be the largest one. An unenforced rule is a control someone forgot to build. An
+unsatisfiable rule is a control that **cannot** be built here, so it is broken
+every time it is invoked, quietly, by whoever is doing the work. That is worse
+than having no rule: it teaches every reader that the documents are decorative.
+
+The remedy is never to obey it. It is to change the rule to what is actually
+achievable and say why, or to state plainly that the project is blocked on it.
+
+| Rule | Source | Why it cannot be met | Disposition |
+|---|---|---|---|
+| Tier 1B must use a model distinct from the builder | `docs/review-pipeline-spec-v0.md:101` | `deepseek-v4-flash` is the only model with usable quota on the operator's subscription. Other models exist in the catalogue but exhaust their quota almost immediately, so a distinct reviewer is not purchasable. | **Rewritten.** Independence now comes from executed, base-discriminating, confined verification — machine properties that do not depend on whose model proposed the command. The stated limit is recorded in the spec. |
+| Risk class HIGH requires an independent expert red-team from a different provider before integration | `CLAUDE.md:106`; `governance/reviewers.md` | Same constraint, same reason. Every roster entry other than the builder's own model is either unaffordable or, measured on 2026-08-10, does not hold the strict-JSON contract: `kimi-k3` answers with `tool_calls` and empty content, `glm-5.2` returns empty content, `grok-4.5` returns an upstream error. | **Open.** Not addressed by the Tier 1B rewrite, because it governs integration rather than the pipeline. It is currently unmet on every change. |
 
 ### Contradicted
 
