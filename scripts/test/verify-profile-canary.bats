@@ -1,0 +1,132 @@
+#!/usr/bin/env bats
+#
+# Paired tests for the verification confinement profile (#232, #233).
+#
+# `docs/execution-core-adr.md` §7.3 states the rule this file exists to satisfy:
+#
+#   Der Fäulnisvektor ist Druck, nicht Größe: ein breites `allow`, nachts
+#   eingefügt, um zu entsperren — exakt so entstand das undichte Profil in der
+#   Messung oben. **Keine `allow`-Zeile ohne gepaarten Negativtest.**
+#
+# The profile shipped in #232 had none. Every `allow` line below therefore gets
+# two assertions: that it permits what it was added for (**preservation**), and
+# that it does not reach past its subpath (**denial**).
+#
+# Both halves are mandatory and the reason is measured, not theoretical. §7.3
+# again: "Ein Loch besteht jeden Erhaltungstest, eine Leiche besteht jeden
+# Verweigerungstest — dieses Projekt hat eine Leiche ausgeliefert." A profile
+# that fails to parse blocks everything and passes every denial test alone. An
+# ad-hoc run of these checks on 2026-08-10 accidentally included a heredoc
+# terminator in the profile and would have reported exactly that false pass;
+# only the preservation half caught it.
+#
+# This suite reads the profile out of `scripts/review.sh` rather than carrying
+# its own copy. `docs/operator-lessons.md`: a test that duplicates what it
+# guards is not a test — it passes when production breaks.
+
+setup_file() {
+  export REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd -P)"
+}
+
+setup() {
+  command -v sandbox-exec >/dev/null \
+    || skip "no sandbox-exec on this platform (see #233)"
+
+  SANDBOX="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
+  export WT="$SANDBOX/wt" SCRATCH="$SANDBOX/scratch" OUTSIDE="$SANDBOX/outside"
+  mkdir -p "$WT" "$SCRATCH" "$OUTSIDE"
+  printf 'worktree content\n' > "$WT/file.txt"
+  printf 'SECRETVALUE\n' > "$OUTSIDE/secret.txt"
+
+  # The profile under test, extracted from the runner itself.
+  PROFILE="$SANDBOX/verify.sb"
+  awk '/^\(version 1\)$/,/^SBEOF$/' "$REPO_ROOT/scripts/review.sh" \
+    | grep -v '^SBEOF$' > "$PROFILE"
+  [ -s "$PROFILE" ] || fail "could not extract the profile from scripts/review.sh"
+}
+
+# sb <command> — run confined; echoes "allowed" or "blocked".
+sb() {
+  if sandbox-exec -f "$PROFILE" -D WT="$WT" -D SCRATCH="$SCRATCH" \
+       /bin/sh -c "$1" >/dev/null 2>&1; then
+    echo allowed
+  else
+    echo blocked
+  fi
+}
+
+# ── the profile must parse ─────────────────────────────────────────────────
+# Without this, every denial assertion below passes on a corpse.
+
+@test "verify-profile: the extracted profile parses and permits work" {
+  [ "$(sb "test -f $WT/file.txt")" = allowed ]
+}
+
+# ── (allow file-read* (subpath "/bin" "/usr/bin" …)) ───────────────────────
+
+@test "verify-profile: tool paths readable — and no wider than their subpaths" {
+  [ "$(sb '/bin/test -x /bin/sh')" = allowed ]
+  [ "$(sb '/usr/bin/grep -q worktree '"$WT"'/file.txt')" = allowed ]
+  # /usr is not allowed; only named subpaths under it are.
+  [ "$(sb 'cat /usr/local/etc/* 2>/dev/null || cat /etc/hosts')" = blocked ]
+}
+
+@test "verify-profile: exec is confined to the same tool paths" {
+  # A binary outside the allowed subpaths must not execute, even though the
+  # profile grants process-exec* generously within them.
+  cp /bin/echo "$WT/echo-copy" 2>/dev/null || skip "cannot stage a binary"
+  [ "$(sb "$WT/echo-copy hi")" = blocked ]
+}
+
+# ── (allow file-read-metadata) — global, and the one that needs watching ───
+
+@test "verify-profile: metadata is global but never grants content" {
+  # Preservation: metadata anywhere is what path resolution needs.
+  [ "$(sb "test -e $OUTSIDE/secret.txt")" = allowed ]
+  # Denial: the same path's content stays unreadable.
+  [ "$(sb "cat $OUTSIDE/secret.txt")" = blocked ]
+  [ "$(sb "grep -q SECRETVALUE $OUTSIDE/secret.txt")" = blocked ]
+}
+
+# ── (allow file-read* (subpath (param "WT"))) ──────────────────────────────
+
+@test "verify-profile: the worktree is readable and not writable" {
+  [ "$(sb "cat $WT/file.txt")" = allowed ]
+  [ "$(sb "printf x >> $WT/file.txt")" = blocked ]
+  [ "$(sb "rm -f $WT/file.txt")" = blocked ]
+  [ "$(cat "$WT/file.txt")" = "worktree content" ]
+}
+
+# ── (allow file-read* file-write* (subpath (param "SCRATCH"))) ─────────────
+
+@test "verify-profile: scratch is writable and does not extend past itself" {
+  [ "$(sb "echo x > $SCRATCH/f")" = allowed ]
+  [ "$(sb "printf x >> $OUTSIDE/secret.txt")" = blocked ]
+  [ "$(cat "$OUTSIDE/secret.txt")" = "SECRETVALUE" ]
+}
+
+# ── (deny network*) ────────────────────────────────────────────────────────
+#
+# §7.3 requires a standalone preservation probe for no_network before the next
+# profile change, because today no_network and fs_confinement share one. The
+# denial half is asserted here; the preservation half is the compute-only work
+# above, which is the same coupling the ADR names. Recorded, not hidden.
+
+@test "verify-profile: network is denied" {
+  command -v curl >/dev/null || skip "curl unavailable"
+  [ "$(sb 'curl -s --max-time 5 https://api.github.com >/dev/null')" = blocked ]
+}
+
+# ── the fs_confinement must-hold list, run against this profile ────────────
+#
+# core/canaries/fs_confinement.py names these for the execution-core backend.
+# The review runner is a second confinement with a different threat model, and
+# holding it to the same list is the differential check that a single
+# implementation cannot provide.
+
+@test "verify-profile: fs_confinement must-hold list" {
+  [ "$(sb 'cat ~/.config/secrets/env')" = blocked ]
+  [ "$(sb 'ls ~/')" = blocked ]
+  [ "$(sb 'ls /Library/Keychains')" = blocked ]
+  [ "$(sb 'ls /private/tmp')" = blocked ]
+}

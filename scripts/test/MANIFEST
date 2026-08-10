@@ -41,6 +41,7 @@ pin-gate.bats
 pr-opener-canary.bats
 provider-probe-clock.bats
 review-tier0-ci.bats
+verify-profile-canary.bats
 review-runner.bats
 review-verdict.bats
 schedule-watchdog.bats
