@@ -84,7 +84,10 @@ timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # ---- Constants for the review pipeline --------------------------------------
 
 # Risk classification is a separate concern (spec: "What this does NOT
-# change"); until a classifier exists every run records LOW.
+# change"). LOW here is the pre-metadata default: the classifier below only
+# runs once the PR metadata has been fetched, and every path that cannot
+# fetch it (python3 missing, gh failure, unresolved head or base) records
+# the unresolved count as LOW rather than inventing a third state (#236).
 risk_class="LOW"
 # Tier artifacts record structured JSON findings. Blocking findings carry a
 # verification_command that is executed in the worktree, and only findings
@@ -1149,14 +1152,16 @@ finalize() {
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
 #
-# The head SHA, the base SHA, and the CI status rollup come from the SAME
-# `gh pr view` response. Fetched in separate calls they can straddle a push,
-# and Tier 0 would then report a conclusion belonging to a commit that is not
-# the one under review (#195). Verification also needs the base SHA, and it
-# must travel with the head SHA: a base fetched later could belong to a
-# different revision of the PR (#196).
+# The head SHA, the base SHA, the CI status rollup, and the diff line counts
+# come from the SAME `gh pr view` response. Fetched in separate calls they can
+# straddle a push, and Tier 0 would then report a conclusion belonging to a
+# commit that is not the one under review (#195). Verification also needs the
+# base SHA, and it must travel with the head SHA: a base fetched later could
+# belong to a different revision of the PR (#196). The risk classifier reads
+# additions and deletions from this same response so the risk input is bound
+# to the reviewed commit too (#236).
 _progress "starting review of PR #$pr_number"
-if ! pr_json="$(gh pr view "$pr_number" --json headRefOid,baseRefOid,statusCheckRollup 2>"$run_dir/gh.log")"; then
+if ! pr_json="$(gh pr view "$pr_number" --json headRefOid,baseRefOid,statusCheckRollup,additions,deletions 2>"$run_dir/gh.log")"; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
   # crash. A later process comparing this verdict against the PR's real head
@@ -1204,6 +1209,39 @@ if [ -z "$base_sha" ]; then
   echo "Artifacts: $run_dir/"
   exit 0
 fi
+
+# ---- 3b. Risk classification from diff size --------------------------------
+# Rule 6 of the aggregator — HIGH work needs Tier 2 complete — can only fire
+# if risk_class is actually HIGH. The mechanical trigger (CLAUDE.md): a diff
+# over 200 lines is HIGH. Additions and deletions come from the same
+# `gh pr view` response as the head SHA, so the risk input is bound to the
+# reviewed commit (#236). A missing or unparseable count keeps the LOW
+# default: the aggregator's fail-closed behaviour covers the unresolved case,
+# and a later pass can tighten it. No third state (#236).
+additions="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin).get("additions")
+except Exception:
+    v = None
+print(v if isinstance(v, int) else "")
+')"
+deletions="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin).get("deletions")
+except Exception:
+    v = None
+print(v if isinstance(v, int) else "")
+')"
+if [ -n "$additions" ] && [ -n "$deletions" ]; then
+  if [ $((10#$additions + 10#$deletions)) -gt 200 ]; then
+    risk_class="HIGH"
+  else
+    risk_class="LOW"
+  fi
+fi
+_progress "risk: $risk_class ($additions+$deletions lines)"
 
 # ---- 4. Disposable worktree -----------------------------------------------
 
