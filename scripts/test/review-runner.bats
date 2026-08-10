@@ -683,6 +683,56 @@ PYEOF
   [ ! -s "$MOCK_CURL_ARGS_FILE" ]
 }
 
+# ────────────────────────────────────────────────────────────
+#  Thinking is a property of the MODEL, not of the route (#227)
+# ────────────────────────────────────────────────────────────
+#
+# Measured on 2026-08-10, same review request, deepseek-v4-pro through
+# https://opencode.ai/zen/go/v1:
+#
+#   as sent today:            finish=length  completion=8192   reasoning=7953
+#   + thinking: disabled:     finish=stop    completion=1203   reasoning=0
+#
+# A tenth of the tokens and the more complete answer. The guard existed and
+# silently did not apply, because it was keyed on REVIEW_PROVIDER while the
+# contract belongs to the model at the end of the route.
+
+@test "review-runner: a deepseek model keeps the thinking contract off-provider" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-pro
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"thinking": {' "$run_dir/tier1a.request.json"
+  grep -q '"type": "disabled"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: enabled thinking off-provider still sends effort" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-flash
+  export REVIEW_DEEPSEEK_THINKING_MODE=enabled REVIEW_REASONING_EFFORT=high
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  grep -q '"type": "enabled"' "$run_dir/tier1a.request.json"
+  grep -q '"reasoning_effort": "high"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: a non-deepseek model on any route sends no thinking field" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=qwen3.7-plus
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  ! grep -q '"thinking"' "$run_dir/tier1a.request.json"
+}
+
+@test "review-runner: an invalid thinking mode fails closed off-provider too" {
+  export REVIEW_PROVIDER=opencode-go REVIEW_MODEL=deepseek-v4-pro
+  export REVIEW_DEEPSEEK_THINKING_MODE=sometimes
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  # A misconfigured contract must stop before the provider is called at all.
+  [ ! -s "$MOCK_CURL_ARGS_FILE" ]
+}
+
 @test "review-runner: parse errors retain response usage and provenance" {
   export MOCK_CURL_RESPONSE='{"model":"served-model","usage":{"prompt_tokens":11,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":3}},"choices":[{"message":{"content":"{\"findings\":[]}"},"finish_reason":"length"}]}'
   run run_review --pr 178
