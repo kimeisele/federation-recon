@@ -105,6 +105,45 @@ The same standard applies here and is not softened by the merges being useful.
 Recorded rather than quietly carried forward. **No further merges by the
 operator until this is decided.**
 
+### The two-identity control is satisfied by one actor
+
+`.github/CODEOWNERS` names `@federation-operator` so that "a change to any path
+below cannot merge until a second identity approves it", and states its own
+limit: *"this proves someone with a different credential pressed a button.
+Neither proves a review happened."*
+
+Measured 2026-08-10:
+
+```
+operator identity   kimeisele
+reviewer identity   federation-operator
+both credentials    ~/.config/secrets/env, held by the operator process
+```
+
+The ruleset itself was not bypassed — `bypass_actors` is empty with enforcement
+active, so the required checks and the code-owner review did gate every merge.
+The gap is not a bypass. It is that the second pair of eyes belongs to the same
+process as the first, so the control discriminates nothing it was built to
+discriminate.
+
+This is a defect in the control, independent of whether the operator should be
+merging at all.
+
+### Constitution against reality
+
+The merge prohibition is **not stale text that predates the execution layer**,
+which was this inventory's first assumption and it was wrong.
+
+`docs/founding-package-v0.2.md` §5.1 was amended on 2026-08-01 (amendment 3)
+specifically to accommodate the execution core. That amendment widened the
+permitted set to include "sandboxed execution of a builder against an order,
+producing a patch" — and kept "merging that patch" prohibited in the same
+table, labelling itself a widening rather than a clarification.
+
+So the prohibition survived the exact amendment that acknowledged the project
+had grown an execution layer. Whatever should happen next, it cannot rest on
+the claim that the constitution has not caught up.
+
 ### Contradicted
 
 | Subject | One source says | The other says |
