@@ -85,8 +85,8 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
       # tests that do not care about CI keep their previous tier0: pass.
       _base="$MOCK_BASE_SHA"
       [ "${MOCK_GH_EMPTY_BASE:-0}" = "1" ] && _base=""
-      printf '{"headRefOid":"%s","baseRefOid":"%s","statusCheckRollup":%s}\n' \
-        "$MOCK_HEAD_SHA" "$_base" "$MOCK_PR_CHECKS"
+      printf '{"headRefOid":"%s","baseRefOid":"%s","statusCheckRollup":%s,"additions":%s,"deletions":%s}\n' \
+        "$MOCK_HEAD_SHA" "$_base" "$MOCK_PR_CHECKS" "${MOCK_PR_ADDITIONS:-1}" "${MOCK_PR_DELETIONS:-0}"
       ;;
     *headRefOid*) printf '%s\n' "$MOCK_HEAD_SHA" ;;
     *body*) printf '%s\n' "$MOCK_PR_BODY" ;;
@@ -137,6 +137,7 @@ setup() {
   export MOCK_CURL_RESPONSE='{"model":"deepseek-chat","choices":[{"message":{"content":"{\"findings\":[],\"commentary\":\"No issues found.\"}"},"finish_reason":"stop"}]}'
 
   unset MOCK_GH_FAIL MOCK_CURL_FAIL MOCK_GATE_STATUS MOCK_GATE_CWD_FILE MOCK_GH_EMPTY_BASE
+  unset MOCK_PR_ADDITIONS MOCK_PR_DELETIONS MOCK_GH_CALLS_FILE
   # Tier 0 reads CI, not a local gate (#195). One green check by default, so a
   # test that says nothing about CI gets tier0: pass, as it did before.
   export MOCK_PR_CHECKS='[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]'
@@ -1227,4 +1228,59 @@ PYEOF
   [ ! -s "$MOCK_CURL_ARGS_FILE" ]
   [ "$(git -C "$FIXTURE" worktree list --porcelain)" = "$before_worktrees" ]
   [ "$(find "$SANDBOX/tmp" -maxdepth 1 -type d -name 'review-worktree.*' | wc -l | tr -d ' ')" -eq 0 ]
+}
+
+# ────────────────────────────────────────────────────────────
+#  Risk classification from diff size (#236 RECOVERY-2)
+# ────────────────────────────────────────────────────────────
+#
+# risk_class was hard-coded to LOW, so Rule 6 of the aggregator — HIGH work
+# needs Tier 2 independent verification before it can pass — could never fire,
+# and a 400-line change auto-approved on the same footing as a one-line one.
+# CLAUDE.md names the mechanical trigger: a diff over 200 lines is HIGH.
+#
+# The line count comes from the same `gh pr view` response as the head SHA and
+# the rollup, so the risk input is bound to the reviewed commit, not refetched.
+# Given Tier 2 is a not_run stub, a HIGH verdict is PARTIAL, never APPROVE —
+# which is the fail-closed behaviour a large unverified change should get.
+
+@test "risk: a diff over 200 lines is classified HIGH" {
+  export MOCK_PR_ADDITIONS=250 MOCK_PR_DELETIONS=0
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(_verdict_field "$(latest_run_dir)/verdict.json" risk_class)" = "HIGH" ]
+}
+
+@test "risk: additions and deletions are summed, not taken singly" {
+  export MOCK_PR_ADDITIONS=150 MOCK_PR_DELETIONS=120
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(_verdict_field "$(latest_run_dir)/verdict.json" risk_class)" = "HIGH" ]
+}
+
+@test "risk: a diff at or under 200 lines stays LOW" {
+  export MOCK_PR_ADDITIONS=180 MOCK_PR_DELETIONS=20
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(_verdict_field "$(latest_run_dir)/verdict.json" risk_class)" = "LOW" ]
+}
+
+@test "risk: a HIGH diff cannot APPROVE while Tier 2 is a stub" {
+  # Rule 6: HIGH work needs tier2 complete. The stub never completes, so a
+  # large change fails closed to PARTIAL rather than auto-approving.
+  export MOCK_PR_ADDITIONS=500 MOCK_PR_DELETIONS=0
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  [ "$(_verdict_field "$run_dir/verdict.json" risk_class)" = "HIGH" ]
+  [ "$(_verdict_field "$run_dir/verdict.json" verdict)" != "APPROVE" ]
+}
+
+@test "risk: the line count is bound to the same gh pr view as the head SHA" {
+  export MOCK_PR_ADDITIONS=250 MOCK_PR_DELETIONS=0
+  export MOCK_GH_CALLS_FILE="$SANDBOX/gh-calls.txt"
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  # exactly one metadata call carried head, base, rollup and the line counts
+  [ "$(grep -c 'headRefOid,baseRefOid' "$MOCK_GH_CALLS_FILE" 2>/dev/null || echo 0)" -eq 1 ]
 }
