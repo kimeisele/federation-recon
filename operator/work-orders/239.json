@@ -1,11 +1,40 @@
 {
-  "work_order_id": "wo-239-0",
+  "work_order_id": "wo-239-1",
   "issue": 239,
   "base_sha": "c51bb0db3b64d5c97d82491206ccc137ba69b174",
-  "allowed_paths": ["scripts/review.sh"],
-  "forbidden_paths": ["CLAUDE.md","AGENTS.md",".github/","operator/","schemas/","scripts/test/","scripts/review-verdict.sh","docs/","claims/","coverage/","digest/","drift/","evidence/","findings/","pins/","consumption/","governance/","core/","STATE.md"],
-  "acceptance_commands": ["bash -n scripts/review.sh","bats -f \"risk\" scripts/test/review-runner.bats","bats scripts/test/review-runner.bats"],
-  "oracle_paths": ["scripts/test/review-runner.bats","scripts/test/MANIFEST"],
+  "allowed_paths": [
+    "scripts/review.sh"
+  ],
+  "forbidden_paths": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".github/",
+    "operator/",
+    "schemas/",
+    "scripts/test/",
+    "scripts/review-verdict.sh",
+    "docs/",
+    "claims/",
+    "coverage/",
+    "digest/",
+    "drift/",
+    "evidence/",
+    "findings/",
+    "pins/",
+    "consumption/",
+    "governance/",
+    "core/",
+    "STATE.md"
+  ],
+  "acceptance_commands": [
+    "bash -n scripts/review.sh",
+    "bats -f risk scripts/test/review-runner.bats",
+    "bats scripts/test/review-runner.bats"
+  ],
+  "oracle_paths": [
+    "scripts/test/review-runner.bats",
+    "scripts/test/MANIFEST"
+  ],
   "builder": "operator/builders/jcode.sh",
   "builder_timeout_seconds": 2400
 }
