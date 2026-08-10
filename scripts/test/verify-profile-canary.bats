@@ -105,16 +105,47 @@ sb() {
   [ "$(cat "$OUTSIDE/secret.txt")" = "SECRETVALUE" ]
 }
 
-# ── (deny network*) ────────────────────────────────────────────────────────
+# ── (deny network*) — with its own preservation load ───────────────────────
 #
-# §7.3 requires a standalone preservation probe for no_network before the next
-# profile change, because today no_network and fs_confinement share one. The
-# denial half is asserted here; the preservation half is the compute-only work
-# above, which is the same coupling the ADR names. Recorded, not hidden.
+# §7.3 requires a standalone preservation probe for no_network, because in the
+# execution core it shares one with fs_confinement: "Ein Fehler in dieser
+# Payload färbt daher beide Canaries rot … die beiden Fähigkeiten sind dadurch
+# nicht unabhängig belegt." The probe is mandatory *before* the next profile
+# change, which makes it a precondition of everything #233 leads to.
+#
+# Independence here means the preservation load touches no file the
+# fs_confinement assertions depend on: pure computation through an interpreter,
+# nothing read, nothing written.
 
-@test "verify-profile: network is denied" {
-  command -v curl >/dev/null || skip "curl unavailable"
-  [ "$(sb 'curl -s --max-time 5 https://api.github.com >/dev/null')" = blocked ]
+@test "verify-profile: no_network preserves compute that touches no file" {
+  [ "$(sb '/usr/bin/python3 -c "import sys; sys.exit(0 if sum(range(1000))==499500 else 1)"')" = allowed ]
+}
+
+@test "verify-profile: network reachability is unavailable — and why that is the weaker claim" {
+  # The strong claim — "(deny network*) is what stops the connection" — cannot
+  # be established inside this profile, and saying so is the point.
+  #
+  # Measured: /usr/bin/python3 runs, but `import socket` dies with
+  # PermissionError, because the stdlib lives under /usr/lib and the profile
+  # grants /usr/bin, /usr/libexec, /bin and CommandLineTools only. So a failed
+  # connection attempt is indistinguishable from a tool that could not load —
+  # the same shape as docs/operator-lessons.md's "a search that skips a file
+  # reports the same thing as a search that finds nothing".
+  #
+  # An earlier revision of this file asserted `exit != 0` for a socket connect
+  # and for getaddrinfo. Both passed, and both passed on the import failure,
+  # not on the network rule. They are removed rather than left looking strong.
+  #
+  # What is honestly assertable is the conjunction: nothing in this confinement
+  # reaches the network, whether because the rule denies it or because no tool
+  # can get far enough to try. For a verification command that is the property
+  # that matters; for the `no_network` capability of the execution core it is
+  # not, and that capability is claimed by a backend with its own canary
+  # (core/canaries/no_network.py), not by this profile.
+  [ "$(sb '/usr/bin/python3 -c "import socket"')" = blocked ]
+  if command -v curl >/dev/null; then
+    [ "$(sb 'curl -s --max-time 5 https://api.github.com')" = blocked ]
+  fi
 }
 
 # ── the fs_confinement must-hold list, run against this profile ────────────
