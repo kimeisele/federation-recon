@@ -779,6 +779,59 @@ json.dump({"run_id": sys.argv[1], "task": sys.argv[2], "status": "not_run", "rea
 PYEOF
 }
 
+# _tier0_status <pr-json> — derive Tier 0 from the CI status rollup that came
+# in the same `gh pr view` response as the head SHA. Prints exactly one word:
+#
+#   pass   every check COMPLETED with conclusion SUCCESS, NEUTRAL or SKIPPED
+#   fail   some check COMPLETED with conclusion FAILURE, TIMED_OUT, CANCELLED,
+#          ACTION_REQUIRED or STARTUP_FAILURE — CI ran and rejected the commit
+#   error  a check not yet COMPLETED, an empty/missing/unparseable rollup, or
+#          a conclusion that is neither a pass nor a listed failure — nothing
+#          is known, and an empty rollup is never a vacuous pass
+_tier0_status() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+
+PASS_CONCLUSIONS = ("SUCCESS", "NEUTRAL", "SKIPPED")
+FAIL_CONCLUSIONS = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("error")
+    sys.exit(0)
+
+rollup = data.get("statusCheckRollup")
+if not isinstance(rollup, list) or not rollup:
+    print("error")
+    sys.exit(0)
+
+saw_pending = False
+for check in rollup:
+    if not isinstance(check, dict):
+        print("error")
+        sys.exit(0)
+    conclusion = check.get("conclusion")
+    if conclusion in FAIL_CONCLUSIONS:
+        # Failures are scanned first: if CI ran and rejected the commit, that
+        # is the strongest known signal even while another check is running.
+        print("fail")
+        sys.exit(0)
+    if check.get("status") != "COMPLETED":
+        saw_pending = True
+    elif conclusion not in PASS_CONCLUSIONS:
+        # COMPLETED with a conclusion that is neither a pass nor a listed
+        # failure (null, missing, unknown): the state is unknown, not green.
+        print("error")
+        sys.exit(0)
+
+if saw_pending:
+    print("error")
+else:
+    print("pass")
+'
+}
+
 # ---- Verdict assembly and aggregation (functions) -------------------------
 
 # write_verdict <subject_sha> <tier0> <tier1a> <tier1b> <tier2> — assemble the
@@ -907,13 +960,35 @@ finalize() {
 # A review is bound to a specific commit: the PR's head SHA. A verdict for
 # commit X is never applied to a later commit on the same PR — the aggregator
 # refuses (STALE) when the stored SHA does not match the current head.
+#
+# The head SHA and the CI status rollup come from the SAME `gh pr view`
+# response. Fetched in separate calls they can straddle a push, and Tier 0
+# would then report a conclusion belonging to a commit that is not the one
+# under review (#195).
 _progress "starting review of PR #$pr_number"
-if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>"$run_dir/gh.log")" || [ -z "$head_sha" ]; then
+if ! pr_json="$(gh pr view "$pr_number" --json headRefOid,statusCheckRollup 2>"$run_dir/gh.log")"; then
   # gh failed or returned nothing: the review cannot start. Record a PARTIAL
   # verdict bound to no commit and exit 0 — the review is incomplete, never a
   # crash. A later process comparing this verdict against the PR's real head
   # sees a mismatch and marks it STALE, which is the correct fate for a
   # review that never started.
+  verdict_word="$(finalize "unresolved" "error" "not_run" "not_run" "not_run")"
+  echo "Review $run_id for PR #$pr_number (head SHA unresolved): $verdict_word"
+  echo "Artifacts: $run_dir/"
+  exit 0
+fi
+
+# The response must be a JSON object carrying headRefOid. Anything else — a
+# bare SHA, a redirect page, an API error body — means the review cannot
+# start; it records the same unresolved PARTIAL as a gh failure.
+if ! head_sha="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+try:
+    sha = json.load(sys.stdin).get("headRefOid", "")
+except Exception:
+    sha = ""
+print(sha)
+')" || [ -z "$head_sha" ]; then
   verdict_word="$(finalize "unresolved" "error" "not_run" "not_run" "not_run")"
   echo "Review $run_id for PR #$pr_number (head SHA unresolved): $verdict_word"
   echo "Artifacts: $run_dir/"
@@ -953,18 +1028,21 @@ tier2_status="not_run"
 
 _progress "worktree at ${head_sha:0:12}"
 if git worktree add "$wt_dir" "$head_sha" --detach --quiet 2>"$run_dir/worktree.log"; then
-  # ---- 5. Tier 0 — run the gate ------------------------------------------
-  _progress "tier0: gate starting"
-  # The gate runs in the worktree with the worktree as CWD, in a subshell so
-  # the cd cannot leak into the primary checkout. Exit mapping: 0 -> pass;
-  # non-zero with a gate script present -> fail (the gate ran and failed);
-  # anything else -> error (the gate could not run at all, e.g. a broken
-  # worktree).
-  if ( cd "$wt_dir" && bash scripts/gate.sh --full ) > "$run_dir/tier0.log" 2>&1; then
-    tier0_status="pass"
-  elif [ -f "$wt_dir/scripts/gate.sh" ]; then
-    tier0_status="fail"
-  fi
+  # ---- 5. Tier 0 — CI status for the subject commit ----------------------
+  # Tier 0 reads the CI conclusion for the exact commit under review from the
+  # status rollup that came with the head SHA. It does NOT re-run
+  # scripts/gate.sh locally: that re-ran a gate GitHub Actions had already run
+  # green on the same commit (1997 of 2001 seconds in rv-20260809-009), and a
+  # local re-derivation under operator conditions inherited the reviewer's own
+  # environment (#221) and locale (#217). CI ran under controlled conditions;
+  # its conclusion is the source of truth, and a broken local gate is
+  # irrelevant to Tier 0.
+  tier0_status="$(_tier0_status "$pr_json")"
+  {
+    printf 'tier0: CI status rollup for %s\n' "$head_sha"
+    printf 'tier0: %s\n' "$tier0_status"
+    printf '%s\n' "$pr_json"
+  } > "$run_dir/tier0.log"
   _progress "tier0: $tier0_status"
 
   # ---- 6. Tier 1A — review analysis (model call) --------------------------
