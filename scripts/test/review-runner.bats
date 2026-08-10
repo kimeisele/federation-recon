@@ -999,6 +999,95 @@ PYEOF
   [ "$(sort -u "$VERIFY_SHA_FILE" | tr -d '\n')" = "$MOCK_HEAD_SHA" ]
 }
 
+# ────────────────────────────────────────────────────────────
+#  Verification must not be able to change what it verifies (#228)
+# ────────────────────────────────────────────────────────────
+#
+# Run rv-20260810-004 confirmed five blocking findings. Two of their commands
+# ran `git checkout -- <file under review>` and `sed -i` on it inside the
+# shared worktree, then ran the suite and reported on the result. Commands
+# execute in order in one tree, so a finding silently changed the subject that
+# every later command was measured against.
+#
+# Base discrimination (#196) does not help: a mutating command corrupts the
+# base run too.
+
+_finding_response() {
+  python3 -c "
+import json, sys
+findings = json.loads(sys.argv[1])
+inner = json.dumps({'findings': findings, 'commentary': ''})
+print(json.dumps({'model': 'm', 'choices': [{'message': {'content': inner}, 'finish_reason': 'stop'}]}))
+" "$1"
+}
+
+@test "review-runner: a command that writes to the tree is inconclusive, not confirmed" {
+  # Passes at head and fails at base, so discrimination alone would confirm it.
+  # It also rewrites a tracked file, which has to override that.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"writes to the subject","verification_command":"printf x >> head-marker.txt; test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'MUTEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive", f["verification_status"]
+assert f["severity"] == "non-blocking"
+assert f["summary"].startswith("[mutating-verification] "), f["summary"]
+MUTEOF
+}
+
+@test "review-runner: an untracked file left behind is also a mutation" {
+  # `git checkout -- .` is a no-op in a freshly checked-out worktree, so a
+  # revert alone is not a distinct case. What is distinct: contamination does
+  # not need to touch a tracked file. A command that drops a scratch file into
+  # the tree changes the ground every later command stands on, so any change
+  # to the worktree counts — tracked or not.
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"leaves a scratch file","verification_command":"touch scratch-evidence.txt; test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'UNTEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "inconclusive", f["verification_status"]
+assert f["summary"].startswith("[mutating-verification] "), f["summary"]
+UNTEOF
+}
+
+
+@test "review-runner: one finding's command cannot change another finding's result" {
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"deletes the marker","verification_command":"rm -f head-marker.txt; true"},{"severity":"blocking","summary":"needs the marker","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  # The second finding discriminates on its own: the marker exists at the head
+  # and not at the base. It must reach that result whatever the first command
+  # did to the tree.
+  python3 - "$run_dir/tier1a.json" <<'ISOEOF'
+import json, sys
+findings = json.load(open(sys.argv[1]))["findings"]
+assert findings[1]["verification_status"] == "confirmed", findings[1]["verification_status"]
+ISOEOF
+}
+
+@test "review-runner: a read-only command is unaffected by the isolation" {
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'ROEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] == "confirmed", f["verification_status"]
+assert f["severity"] == "blocking"
+ROEOF
+}
+
 @test "review-runner: unavailable base SHA is inconclusive and marked base-unverified" {
   # Present but unusable: a well-formed SHA that is not in the repository, so
   # the base worktree cannot be created. Distinct from a missing baseRefOid,
