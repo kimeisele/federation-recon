@@ -1083,6 +1083,45 @@ assert f["severity"] == "non-blocking"
 FCEOF
 }
 
+@test "review-runner: isolation — a command cannot write outside the worktree" {
+  # Deny-default, not a deny-list. core/profiles/worker.sb states why in its
+  # own header: a block list has to enumerate what must stay hidden and is
+  # incomplete by construction — two earlier versions left /Library/Keychains
+  # and /private/tmp open and passed every canary anyway.
+  #
+  # Confining only the worktree would leave $HOME, the real checkout and the
+  # secrets file writable by a command a language model wrote.
+  printf 'untouched\n' > "$SANDBOX/outside-canary.txt"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"writes outside","verification_command":"printf x >> '"$SANDBOX"'/outside-canary.txt && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SANDBOX/outside-canary.txt")" = "untouched" ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'OUTEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] != "confirmed", f["verification_status"]
+OUTEOF
+}
+
+@test "review-runner: isolation — a command cannot read a secret outside the worktree" {
+  # Mirrors core/canaries/fs_confinement: reading a planted secret outside the
+  # workspace must fail. Network is denied too, but a command that can read a
+  # credential can also write it somewhere the next one collects it.
+  printf 'SECRETVALUE\n' > "$SANDBOX/fake-secret.txt"
+  MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads a secret","verification_command":"grep -q SECRETVALUE '"$SANDBOX"'/fake-secret.txt && test -f head-marker.txt"}]')"
+  export MOCK_CURL_RESPONSE
+  run run_review --pr 178
+  [ "$status" -eq 0 ]
+  run_dir="$(latest_run_dir)"
+  python3 - "$run_dir/tier1a.json" <<'SECEOF'
+import json, sys
+f = json.load(open(sys.argv[1]))["findings"][0]
+assert f["verification_status"] != "confirmed", f["verification_status"]
+SECEOF
+}
+
 @test "review-runner: isolation — a read-only command still confirms" {
   MOCK_CURL_RESPONSE="$(_finding_response '[{"severity":"blocking","summary":"reads only","verification_command":"test -f head-marker.txt"}]')"
   export MOCK_CURL_RESPONSE
