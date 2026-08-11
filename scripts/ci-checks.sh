@@ -12,11 +12,10 @@
 #      digest/state-digest.json must be a pure function of the per-procedure
 #      sub-digests (digest/<id>.json). If re-running the composer changes them,
 #      the committed digest is stale or hand-edited — reject it.
-#   4. Consultation artifact gate: any PR whose diff touches CLAUDE.md,
-#      docs/founding-package-v0.2.md, or docs/*-adr.md must carry a committed,
-#      verbatim consultation transcript from an independent cross-provider
-#      reviewer at governance/consultations/<pr>.md. Enforces CLAUDE.md →
-#      Delegated judgment.
+#   4. Review-control gate: any protected review-control surface must carry an
+#      audit-only owner record bound to the exact base SHA and complete PR diff;
+#      provider names and markdown never grant authority. Consultation is
+#      optional evidence; a supplied REJECT blocks.
 #
 #   5. Suite inventory: the .bats files present must match the committed list
 #      in scripts/test/MANIFEST. The runner reports what it ran; nothing else
@@ -105,7 +104,7 @@ rm -rf "$tmp"
 source "$(dirname "$0")/lib/consultation-gate.sh"
 
 echo
-echo "== [4/9] consultation artifact gate =="
+echo "== [4/9] review-control owner/consultation gate =="
 # PR number: env var (CI) takes priority, else try to extract from branch name.
 pr="${CONSULTATION_PR_NUMBER:-}"
 if [ -z "$pr" ]; then

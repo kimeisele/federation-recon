@@ -39,7 +39,7 @@ Offline except for `gh` reads, with no LLM in the decision path.
 | **1 CLASSIFY** | Categorize work; enforce WIP≤1, budget caps | ADVANCE or STOP |
 | **2 DELEGATE** | WIP<1 AND approved issue without PR | `BUILD issue #N` |
 | **3 REVIEW** | Open PR exists | `REVIEW PR #N` |
-| **4 INTEGRATE** | PR approved + CI green | reserved; v1 does not merge |
+| **4 INTEGRATE** | PR approved + CI green | reserved; v1 does not merge; owner merges manually |
 | **5 SWEEP** | Stale PR (>7d) or issue (>14d), no progress | `SWEEP #N` |
 | *(none)* | No actionable work | `HOLD` |
 
@@ -48,8 +48,9 @@ WIP cap → budget cap → stale SWEEP → open-PR REVIEW → approved-issue BUI
 HOLD. The stored phase records the selected handling state; it does not authorize
 execution. GitHub reads are always resolved from this repository root.
 
-**Escalation triggers** (Opus instead of DeepSeek): risk class HIGH, diff >200
-lines, CI red, review conflict. Otherwise DeepSeek default.
+**Escalation triggers** (additional operator scrutiny): risk class HIGH, diff
+>200 lines, CI red, or review conflict. The routine pipeline model remains
+DeepSeek V4 Flash; escalation does not authorize a provider or model swap.
 
 Hard limits enforced: WIP ≤ 1, expert calls ≤ budget.max_expert_calls.
 Violation → STOP (terminal hold). Phase 4 INTEGRATE/execution remains
@@ -78,9 +79,17 @@ discard the mutation. Never perform this test against a live control or external
 system: a session that stops between breaking and restoring leaves the control
 weakened with nobody watching.
 
-**Have someone else look.** Risk class HIGH requires a reviewer from a different
-provider (`governance/adversarial-review.md`). An author cannot audit their own
-blind spot.
+**Have someone else look.** Risk class HIGH requires an architecturally and
+procedurally separate review: a fresh invocation, immutable subject and oracle
+inputs, deterministic evidence, and an adversarial objective. Different-provider
+or different-model diversity is optional metadata, not a prerequisite. An author
+cannot audit their own blind spot.
+
+This is the adopted policy, not a claim of current enforcement. Provider
+allowlisting in `scripts/review.sh`, immutable-input separation, Tier 2, and the
+deterministic trust kernel remain RECOVERY-2 implementation gaps; current
+pipeline verdicts are non-authoritative until those gaps are separately adopted
+and verified.
 
 Use committed invocations verbatim; do not rebuild an equivalent by hand. A
 model's self-report is not evidence.
@@ -104,7 +113,8 @@ Risk classes:
 - **LOW**: bounded, reversible repository work with green tests may be reviewed
   and shipped autonomously through the protected PR path.
 - **HIGH**: security-sensitive, >200-line, red-CI, low-confidence, or conflicting
-  review work requires an independent expert red-team before integration.
+  review work requires the architectural/procedural separation and deterministic
+  evidence contract in `docs/recovery-1-contract.md` before integration.
 - **OWNER-ONLY / STOP**: money or spend changes, actions involving real people,
   credential or permission changes, cross-repository writes, and repository
   creation are never auto-executed.
@@ -142,13 +152,16 @@ Risk classes:
 
 ## Model Economy
 
-- **DeepSeek** = worker (cheap, API). Default for builds.
+- **DeepSeek V4 Flash** = adopted sole routine pipeline model (cheap, API), for
+  bounded builds and review reasoning. The current runner remains technically
+  configurable until RECOVERY-2 provider allowlisting; its output remains
+  untrusted evidence.
 - **Opus** = operator: spec, review, gate. Standing merge authority is not
-  claimed here and must be reconciled with Phase 4 ("v1 does not merge").
-- **Independent judgment / red-team** = a frontier model of a different provider,
-  on escalation triggers and before integrating risk-class HIGH work. The current
-  concrete roster lives in `governance/reviewers.md`, deliberately outside this
-  file: a vendor snapshot has no business in a constitution.
+  claimed here; Phase 4 remains owner-manual-merge only.
+- **Independent judgment / red-team** = a separate invocation and deterministic
+  evidence path, not a mandatory provider change. Provider/model identity is
+  recorded for attribution and cost. No Qwen or paid consultation is required
+  for routine operation.
 - Frontier chat sparingly — long sessions are the most expensive mode.
 
 ## Limits & Enforcement

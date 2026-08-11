@@ -18,6 +18,7 @@ Adoption baseline: see `docs/founding-decision-record.md`.
 | 3 | 2026-08-01 | **#150** | §5 and FR-CON-002 made decidable for the execution layer and for self-observation | pending — see PR |
 | 4 | 2026-08-01 | *this PR* | `docs/self-remediation-adr.md` accepted — FR-CON-002 exempts Recon's own runtime state; the carve-out narrowed to the *record* of a Finding rather than its repair | [152.md](../governance/consultations/152.md) |
 | 5 | 2026-08-03 | *this PR* | Review pipeline capability landed — Tier 1A/1B in `scripts/review.sh` make real provider calls (implementation step 2). **Not adopted**: pipeline is manually invocable only, not wired to heartbeat, not enforced as a gate. Step 3 was self-approved via `GH_TOKEN_REVIEWER` (operator's own second credential), not independently reviewed. | pending — see PR |
+| 6 | 2026-08-11 | **#251** | RECOVERY-1 review-control policy adopted prospectively: architectural/procedural independence, deterministic fail-closed evidence, owner-alone manual merge, property-specific baselines, and safe self-extension. Mandatory different-provider review and Qwen/paid routine consultation are repealed; DeepSeek V4 Flash is the sole routine policy model. Runner enforcement remains a RECOVERY-2 gap. | [owner decision](../governance/owner-decisions/251.md) |
 
 > **Amendment 2 was accepted on 2026-07-30 and entered here on 2026-08-01.**
 >

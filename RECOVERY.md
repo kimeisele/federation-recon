@@ -144,10 +144,10 @@ Complete the normative inventory started by PR #234. For each rule record its
 source, actual behavior, enforcement, observed negative evidence, cost, and
 status (`enforced`, `unenforced`, `contradictory`, `owner decision`). Separate
 deterministic reproduction, model reasoning, and deterministic authority. Remove
-general different-model and different-provider requirements from the proposed
-operating contract. Specify architectural review independence and the
-two-generation trust-kernel protocol instead. Draft constitutional changes
-prospectively; do not adopt them in a technical PR.
+general different-model and different-provider requirements from the operating
+contract. Specify architectural review independence and the two-generation
+trust-kernel protocol instead. Adopt constitutional changes prospectively only
+through an explicit owner decision, not a technical PR.
 
 Relevant existing work: #55, #220, PR #234.
 
@@ -268,17 +268,25 @@ Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durab
 - PR #238 and #242 remain rejected candidates and must be re-derived in RECOVERY-2.
 - Next workstream: RECOVERY-1 Part B, prospective adoption of the executable trust contract.
 
-### RECOVERY-1 Part B — DRAFT PROPOSAL — NOT ADOPTED — OWNER DECISION REQUIRED
+### RECOVERY-1 Part B — OWNER-ADOPTED PROSPECTIVELY — 2026-08-11
 
-The prospective contract is drafted in
+The owner-adopted prospective contract is recorded in
 [`docs/recovery-1-contract.md`](docs/recovery-1-contract.md). It defines
 architectural review independence, the deterministic fail-closed trust kernel,
-owner-alone manual merge; any future integrator is outside this proposal and
-requires a separate constitutional amendment,
-property-specific baselines, and safe two-generation self-extension. Provider
+owner-alone manual merge; any future integrator is outside this adopted
+contract and requires a separate constitutional amendment; it also defines
+property-specific baselines and safe two-generation self-extension. Provider
 diversity is optional metadata, not the independence property.
 
-This is **not adopted or complete**. Existing conflicting constitution text,
-scripts, gates, permissions, and historical records remain in force until a
-separate owner-authorized adoption/implementation sequence. This proposal
-authorizes no code, permission, credential, guardrail, or ruleset change.
+The owner decision is evidenced by
+[`governance/owner-decisions/251.md`](governance/owner-decisions/251.md) and
+the appended amendment entry. This adopts the normative contract prospectively
+only; RECOVERY-2 kernel/runner implementation remains unadopted, and this
+decision authorizes no credentials, permissions, branch-ruleset, or merge-
+authority change. Historical records remain unchanged.
+
+The owner record is audit evidence only, bound to the exact base SHA and
+complete PR-diff digest by the review-control gate; it is not authentication.
+Actual authority remains the protected manual owner merge or external owner
+instruction, which the repository cannot distinguish from an operator holding
+an owner token.

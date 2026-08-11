@@ -45,6 +45,15 @@ report file named at the end. Do not commit and do not push.
 This repository is a read-only, fully deterministic federation observatory. Read
 `CLAUDE.md` and `docs/founding-package-v0.2.md` before judging anything.
 
+> **Current-policy supersession — 2026-08-11:** This prompt is a historical
+> consultation template. Consultation is optional evidence, provider identity
+> grants no authority, Qwen is non-operative, and owner adoption/merge authority
+> is external to this transcript. The adopted RECOVERY-1 contract and gate are
+> current; the template below remains unchanged as provenance. If supplied to
+> the current gate, a consultation must contain exactly one
+> `diff_sha256: <64hex>` for the complete PR diff; `REJECT` blocks and
+> `APPROVE` remains non-authoritative.
+
 The change under review is the diff appended below, in full and unedited. It was
 written by the operator — an AI agent — acting under authority delegated by a
 non-technical owner who does not review code and does not merge. Where the change

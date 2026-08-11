@@ -1,577 +1,377 @@
 #!/usr/bin/env bats
-# consultation-gate.bats — Tests for the constitutional consultation artifact gate.
-#
-# The gate enforces CLAUDE.md → Delegated judgment: any PR whose diff touches
-# constitutional files must carry a committed consultation artifact.
-#
-# Every failure condition has a test that PROVES the gate rejects: construct
-# the bad state, assert the gate fails, and assert the message names the
-# actual problem.
+# Focused oracle tests for the review-control audit gate.
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
   # shellcheck disable=SC1091
   source "$REPO_ROOT/scripts/lib/consultation-gate.sh"
-
-  # Neutralise the ambient CI environment. GitHub Actions exports
-  # GITHUB_EVENT_NAME=pull_request and this workflow exports
-  # CONSULTATION_PR_NUMBER to every step, so tests that mean "no event, no PR
-  # number" silently inherit real values and assert the wrong branch. That is
-  # how these two tests passed locally and failed on CI — the environment was
-  # an unstated input. Each test sets what it needs explicitly.
   unset GITHUB_EVENT_NAME CONSULTATION_PR_NUMBER
+  BASE_SHA=1111111111111111111111111111111111111111
+  WORKDIR="$(mktemp -d)"
+  cd "$WORKDIR"
 }
 
-# A realistic-looking synthetic diff with two hunk headers.
-VALID_DIFF='diff --git a/CLAUDE.md b/CLAUDE.md
-index abc1234..def5678 100644
---- a/CLAUDE.md
-+++ b/CLAUDE.md
-@@ -10,4 +10,7 @@ some context line
- unchanged line
-+added line
-+another added line
- unchanged line
-@@ -50,3 +53,5 @@ other context
- old line
--new line
-+changed line
-still here'
+teardown() {
+  rm -rf "$WORKDIR"
+}
 
-# ---------------------------------------------------------------------------
-# Positive: no PR number → silent pass
-# ---------------------------------------------------------------------------
+make_diff() {
+  local path="$1"
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n-old\n+new\n' \
+    "$path" "$path" "$path" "$path"
+}
 
-@test "consultation-gate: no PR number — silent pass (no-op)" {
+write_owner_record() {
+  local pr="$1" diff_text="$2" base="${3:-$BASE_SHA}"
+  local digest
+  digest="$(_sha256_text "$diff_text")"
+  mkdir -p governance/owner-decisions
+  printf '%s\n' \
+    '# Audit record — not authentication' \
+    'record_version: 1' \
+    'authority: AUDIT_ONLY' \
+    'owner: kimeisele' \
+    'decision: ADOPT' \
+    'decision_date: 2026-08-11' \
+    "decision_pr: ${pr}" \
+    'decision_scope: review-control audit binding' \
+    "base_sha: ${base}" \
+    "diff_sha256: ${digest}" > "governance/owner-decisions/${pr}.md"
+}
+
+write_consultation() {
+  local pr="$1" verdict="$2" diff_text="$3"
+  local digest
+  digest="$(_sha256_text "$diff_text")"
+  mkdir -p governance/consultations
+  printf '%s\n' \
+    "# Consultation — PR #${pr}" \
+    '- **Reviewer:** TestBot' \
+    '- **Provider:** DeepSeek' \
+    "verdict: ${verdict}" \
+    "diff_sha256: ${digest}" \
+    '```diff' \
+    "$diff_text" \
+    '```' > "governance/consultations/${pr}.md"
+}
+
+@test "no PR context remains a no-op" {
   run check_consultation_gate ""
   [ "$status" -eq 0 ]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: empty diff → pass
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: empty diff — pass (no constitutional files touched)" {
-  run check_consultation_gate 99 ""
+@test "unprotected diff needs no owner record" {
+  diff_text="$(make_diff docs/ordinary-note.md)"
+  run check_consultation_gate 1 "$diff_text" "$BASE_SHA"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no constitutional files touched"* ]]
+  [[ "$output" == *"no protected"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: valid APPROVE artifact with matching diff hunks
-# ---------------------------------------------------------------------------
+@test "every protected surface class requires an audit record" {
+  local path diff_text
+  for path in \
+    CLAUDE.md \
+    RECOVERY.md \
+    docs/founding-package-v0.2.md \
+    docs/recovery-1-contract.md \
+    docs/amendments.md \
+    docs/review-pipeline-spec-v0.md \
+    docs/operator-handover.md \
+    governance/consultation-prompt.md \
+    docs/example-adr.md \
+    governance/reviewers.md \
+    scripts/ci-checks.sh \
+    scripts/lib/consultation-gate.sh \
+    scripts/review.sh \
+    scripts/review-verdict.sh \
+    schemas/review-verdict.schema.json \
+    governance/owner-decisions/other.md; do
+    diff_text="$(make_diff "$path")"
+    run check_consultation_gate 2 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "protected path bypassed: $path"
+    [[ "$output" == *"audit record"* ]]
+  done
+}
 
-@test "consultation-gate: APPROVE artifact with matching diff hunks — pass" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  printf '# Consultation — PR #1\n\n' > governance/consultations/1.md
-  printf -- '- **Reviewer:** TestBot\n' >> governance/consultations/1.md
-  printf -- '- **Provider:** TestCorp\n\n' >> governance/consultations/1.md
-  printf 'verdict: APPROVE\n\n' >> governance/consultations/1.md
-  printf '## Diff under review\n\n' >> governance/consultations/1.md
-  printf '```diff\n' >> governance/consultations/1.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/1.md
-  printf '```\n' >> governance/consultations/1.md
-
-  run check_consultation_gate 1 "$VALID_DIFF"
+@test "valid audit record is bound to exact base and complete diff" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 3 "$diff_text"
+  run check_consultation_gate 3 "$diff_text" "$BASE_SHA"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"verdict=APPROVE"* ]]
-  [[ "$output" == *"diff hunks verified"* ]]
+  [[ "$output" == *"matches base SHA and complete PR diff"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: REJECT + second APPROVE artifact — pass
-# ---------------------------------------------------------------------------
+@test "missing audit record fails closed" {
+  diff_text="$(make_diff CLAUDE.md)"
+  run check_consultation_gate 4 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires audit record"* ]]
+}
 
-@test "consultation-gate: REJECT with second APPROVE artifact — pass" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
+@test "malformed audit record fails closed" {
+  diff_text="$(make_diff CLAUDE.md)"
+  mkdir -p governance/owner-decisions
+  printf 'owner: kimeisele\ndecision: ADOPT\n' > governance/owner-decisions/5.md
+  run check_consultation_gate 5 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing or malformed"* ]]
+}
 
-  mkdir -p governance/consultations
-  # Primary: REJECT
-  printf '# Consultation — PR #2\n\n' > governance/consultations/2.md
-  printf -- '- **Reviewer:** TestBot\n' >> governance/consultations/2.md
-  printf -- '- **Provider:** TestCorp\n\n' >> governance/consultations/2.md
-  printf 'verdict: REJECT\n\n' >> governance/consultations/2.md
-  printf '## Diff under review\n\n' >> governance/consultations/2.md
-  printf '```diff\n' >> governance/consultations/2.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/2.md
-  printf '```\n' >> governance/consultations/2.md
+@test "mutating the diff after recording fails digest binding" {
+  original="$(make_diff CLAUDE.md)"
+  mutated="$(make_diff CLAUDE.md)\n+tampered"
+  write_owner_record 6 "$original"
+  run check_consultation_gate 6 "$mutated" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"diff_sha256"* ]]
+}
 
-  # Second: APPROVE from third provider
-  printf '# Second opinion — PR #2\n\n' > governance/consultations/2-third.md
-  printf -- '- **Reviewer:** ThirdBot\n' >> governance/consultations/2-third.md
-  printf -- '- **Provider:** ThirdCorp\n\n' >> governance/consultations/2-third.md
-  printf 'verdict: APPROVE\n\n' >> governance/consultations/2-third.md
-  printf '## Diff under review\n\n' >> governance/consultations/2-third.md
-  printf '```diff\n' >> governance/consultations/2-third.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/2-third.md
-  printf '```\n' >> governance/consultations/2-third.md
+@test "changing the base SHA fails binding" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 7 "$diff_text" "$BASE_SHA"
+  run check_consultation_gate 7 "$diff_text" 2222222222222222222222222222222222222222
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"base_sha"* ]]
+}
 
-  run check_consultation_gate 2 "$VALID_DIFF"
+@test "owner or provider literals alone are not authority" {
+  diff_text="$(make_diff CLAUDE.md)"
+  mkdir -p governance/owner-decisions governance/consultations
+  printf 'owner: kimeisele\nProvider: DeepSeek\ndecision: ADOPT\n' > governance/owner-decisions/8.md
+  write_consultation 8 APPROVE "$diff_text"
+  run check_consultation_gate 8 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing or malformed"* ]]
+}
+
+@test "optional APPROVE passes but has no authority" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 9 "$diff_text"
+  write_consultation 9 APPROVE "$diff_text"
+  run check_consultation_gate 9 "$diff_text" "$BASE_SHA"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"second-approve artifact found"* ]]
+  [[ "$output" == *"APPROVE is non-authoritative"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: missing artifact
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: constitutional files touched, no artifact — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  run check_consultation_gate 3 "$VALID_DIFF"
+@test "consultation body mutation with unchanged hunks fails digest binding" {
+  original="$(make_diff CLAUDE.md)"
+  mutated="${original/new/changed-body}"
+  write_owner_record 21 "$original"
+  # The mutated body keeps every hunk header but its own exact digest changes.
+  write_artifact 21 '- **Reviewer:** TestBot' '- **Provider:** DeepSeek' 'verdict: APPROVE' "$mutated"
+  run check_consultation_gate 21 "$original" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no consultation artifact"* ]]
-  [[ "$output" == *"governance/consultations/3.md"* ]]
+  [[ "$output" == *"diff_sha256"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: artifact missing reviewer
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: artifact missing reviewer — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+@test "optional consultation without a diff digest fails closed" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 22 "$diff_text"
   mkdir -p governance/consultations
-  cat > governance/consultations/4.md <<'ARTIFACT'
-# Consultation — PR #4
-
-- **Provider:** SomeCorp
-
-verdict: APPROVE
-
-```diff
-@@ -1,3 +1,4 @@
- test
-+add
-```
-ARTIFACT
-
-  SIMPLE_DIFF='diff --git a/CLAUDE.md b/CLAUDE.md
-@@ -1,3 +1,4 @@
- test
-+add'
-  run check_consultation_gate 4 "$SIMPLE_DIFF"
+  printf '%s\n' \
+    '# Consultation — PR #22' \
+    '- **Reviewer:** TestBot' \
+    '- **Provider:** DeepSeek' \
+    'verdict: APPROVE' \
+    '```diff' \
+    "$diff_text" \
+    '```' > governance/consultations/22.md
+  run check_consultation_gate 22 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not name a reviewer"* ]]
+  [[ "$output" == *"needs exactly one diff_sha256"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: artifact missing provider
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: artifact missing provider — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+@test "supplied REJECT blocks without a second-provider override" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 10 "$diff_text"
+  write_consultation 10 REJECT "$diff_text"
   mkdir -p governance/consultations
-  cat > governance/consultations/5.md <<'ARTIFACT'
-# Consultation — PR #5
-
-- **Reviewer:** SomeBot
-
-verdict: APPROVE
-
-```diff
-@@ -1,3 +1,4 @@
-test
-+add
-```
-ARTIFACT
-
-  SIMPLE_DIFF='diff --git a/CLAUDE.md b/CLAUDE.md
-@@ -1,3 +1,4 @@
-test
-+add'
-  run check_consultation_gate 5 "$SIMPLE_DIFF"
+  printf 'verdict: APPROVE\n' > governance/consultations/10-second.md
+  run check_consultation_gate 10 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not name a provider"* ]]
+  [[ "$output" == *"REJECT"* ]]
+}
+
+@test "git mode recomputes the exact base and complete diff" {
+  git init -q
+  git config user.email test@example.invalid
+  git config user.name Test
+  printf 'baseline\n' > CLAUDE.md
+  git add CLAUDE.md
+  git commit -qm baseline
+  base_sha="$(git rev-parse HEAD)"
+  git update-ref refs/remotes/origin/main "$base_sha"
+
+  printf 'changed\n' > CLAUDE.md
+  git add CLAUDE.md
+  git commit -qm change
+  digest="$(git diff --no-ext-diff --binary "$base_sha...HEAD" -- . ':(exclude)governance/owner-decisions/11.md' | shasum -a 256 | awk '{print $1}')"
+  mkdir -p governance/owner-decisions
+  printf '%s\n' \
+    'record_version: 1' \
+    'authority: AUDIT_ONLY' \
+    'owner: kimeisele' \
+    'decision: ADOPT' \
+    'decision_date: 2026-08-11' \
+    'decision_pr: 11' \
+    'decision_scope: review-control audit binding' \
+    "base_sha: ${base_sha}" \
+    "diff_sha256: ${digest}" > governance/owner-decisions/11.md
+
+  run check_consultation_gate 11
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"matches base SHA and complete PR diff"* ]]
 }
 
 # ---------------------------------------------------------------------------
-# Negative: missing verdict line
+# Structural consultation coverage retained from the original gate suite.
 # ---------------------------------------------------------------------------
 
-@test "consultation-gate: artifact missing verdict line — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+write_artifact() {
+  local pr="$1" reviewer="$2" provider="$3" verdict="$4" body="$5" digest_text="${6:-$body}"
+  local digest
+  digest="$(_sha256_text "$digest_text")"
   mkdir -p governance/consultations
-  cat > governance/consultations/6.md <<'ARTIFACT'
-# Consultation — PR #6
-
-- **Reviewer:** SomeBot
-- **Provider:** SomeCorp
-
-This artifact has no verdict line.
-
-```diff
-@@ -1,3 +1,4 @@
-test
-+add
-```
-ARTIFACT
-
-  SIMPLE_DIFF='diff --git a/CLAUDE.md b/CLAUDE.md
-@@ -1,3 +1,4 @@
-test
-+add'
-  run check_consultation_gate 6 "$SIMPLE_DIFF"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"does not contain"* ]]
+  printf '# Consultation — PR #%s\n%s\n%s\n%s\n%s\n' \
+    "$pr" "$reviewer" "$provider" "$verdict" "$body" > "governance/consultations/${pr}.md"
+  printf 'diff_sha256: %s\n' "$digest" >> "governance/consultations/${pr}.md"
 }
 
-# ---------------------------------------------------------------------------
-# Negative: verdict line with extra text beyond APPROVE/REJECT
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: verdict line with extra text — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  cat > governance/consultations/7.md <<ARTIFACT
-# Consultation — PR #7
-
-- **Reviewer:** SomeBot
-- **Provider:** SomeCorp
-
-verdict: APPROVE with edits
-
-\`\`\`diff
-${VALID_DIFF}
-\`\`\`
-ARTIFACT
-
-  run check_consultation_gate 7 "$VALID_DIFF"
+@test "optional artifact missing reviewer is rejected" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 12 "$diff_text"
+  write_artifact 12 '' '- **Provider:** TestCorp' 'verdict: APPROVE' "$diff_text" "$diff_text"
+  run check_consultation_gate 12 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not contain"* ]]
+  [[ "$output" == *"no reviewer"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: artifact missing raw diff (hunk headers absent)
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: artifact missing raw diff hunks — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  cat > governance/consultations/8.md <<'ARTIFACT'
-# Consultation — PR #8
-
-- **Reviewer:** SomeBot
-- **Provider:** SomeCorp
-
-verdict: APPROVE
-
-The diff looks fine. I reviewed it.
-ARTIFACT
-
-  run check_consultation_gate 8 "$VALID_DIFF"
+@test "optional artifact missing provider is rejected" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 13 "$diff_text"
+  write_artifact 13 '- **Reviewer:** TestBot' '' 'verdict: APPROVE' "$diff_text" "$diff_text"
+  run check_consultation_gate 13 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not contain"* ]]
-  [[ "$output" == *"raw diff"* ]]
+  [[ "$output" == *"no provider"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: artifact mentions filenames, no hunk headers
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: artifact mentions filenames, no hunk headers — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  cat > governance/consultations/9.md <<'ARTIFACT'
-# Consultation — PR #9
-
-- **Reviewer:** SomeBot
-- **Provider:** SomeCorp
-
-verdict: APPROVE
-
-I reviewed the changes to CLAUDE.md and docs/founding-package-v0.2.md.
-Everything looks fine.
-ARTIFACT
-
-  run check_consultation_gate 9 "$VALID_DIFF"
+@test "optional artifact missing verdict is rejected" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 14 "$diff_text"
+  write_artifact 14 '- **Reviewer:** TestBot' '- **Provider:** TestCorp' '' "$diff_text" "$diff_text"
+  run check_consultation_gate 14 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not contain"* ]]
-  [[ "$output" == *"raw diff"* ]]
+  [[ "$output" == *"no exact verdict"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: REJECT without second APPROVE artifact
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: REJECT without second APPROVE artifact — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  printf '# Consultation — PR #10\n\n' > governance/consultations/10.md
-  printf -- '- **Reviewer:** TestBot\n' >> governance/consultations/10.md
-  printf -- '- **Provider:** TestCorp\n\n' >> governance/consultations/10.md
-  printf 'verdict: REJECT\n\n' >> governance/consultations/10.md
-  printf '## Diff under review\n\n' >> governance/consultations/10.md
-  printf '```diff\n' >> governance/consultations/10.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/10.md
-  printf '```\n' >> governance/consultations/10.md
-
-  run check_consultation_gate 10 "$VALID_DIFF"
+@test "optional artifact extra-text verdict is rejected" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 15 "$diff_text"
+  write_artifact 15 '- **Reviewer:** TestBot' '- **Provider:** TestCorp' 'verdict: APPROVE with edits' "$diff_text" "$diff_text"
+  run check_consultation_gate 15 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no second artifact"* ]]
+  [[ "$output" == *"no exact verdict"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: REJECT with second artifact that is also REJECT
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: REJECT with second artifact that is also REJECT — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  # Primary: REJECT
-  printf '# Consultation — PR #11\n\n' > governance/consultations/11.md
-  printf -- '- **Reviewer:** TestBot\n' >> governance/consultations/11.md
-  printf -- '- **Provider:** TestCorp\n\n' >> governance/consultations/11.md
-  printf 'verdict: REJECT\n\n' >> governance/consultations/11.md
-  printf '## Diff under review\n\n' >> governance/consultations/11.md
-  printf '```diff\n' >> governance/consultations/11.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/11.md
-  printf '```\n' >> governance/consultations/11.md
-
-  # Second: also REJECT
-  printf '# Second opinion — PR #11\n\n' > governance/consultations/11-third.md
-  printf -- '- **Reviewer:** ThirdBot\n' >> governance/consultations/11-third.md
-  printf -- '- **Provider:** ThirdCorp\n\n' >> governance/consultations/11-third.md
-  printf 'verdict: REJECT\n\n' >> governance/consultations/11-third.md
-  printf '## Diff under review\n\n' >> governance/consultations/11-third.md
-  printf '```diff\n' >> governance/consultations/11-third.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/11-third.md
-  printf '```\n' >> governance/consultations/11-third.md
-
-  run check_consultation_gate 11 "$VALID_DIFF"
+@test "optional artifact missing raw diff is rejected" {
+  diff_text="$(make_diff CLAUDE.md)"
+  write_owner_record 16 "$diff_text"
+  write_artifact 16 '- **Reviewer:** TestBot' '- **Provider:** TestCorp' 'verdict: APPROVE' 'I reviewed the file name only.' "$diff_text"
+  run check_consultation_gate 16 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no second artifact"* ]]
+  [[ "$output" == *"complete raw diff"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: REJECT with second APPROVE missing diff hunks
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: REJECT with second APPROVE missing diff hunks — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  mkdir -p governance/consultations
-  # Primary: REJECT with full diff
-  printf '# Consultation — PR #12\n\n' > governance/consultations/12.md
-  printf -- '- **Reviewer:** TestBot\n' >> governance/consultations/12.md
-  printf -- '- **Provider:** TestCorp\n\n' >> governance/consultations/12.md
-  printf 'verdict: REJECT\n\n' >> governance/consultations/12.md
-  printf '## Diff under review\n\n' >> governance/consultations/12.md
-  printf '```diff\n' >> governance/consultations/12.md
-  printf '%s\n' "$VALID_DIFF" >> governance/consultations/12.md
-  printf '```\n' >> governance/consultations/12.md
-
-  # Second: APPROVE but NO diff hunks
-  cat > governance/consultations/12-third.md <<'ARTIFACT'
-# Second opinion — PR #12
-
-- **Reviewer:** ThirdBot
-- **Provider:** ThirdCorp
-
-verdict: APPROVE
-
-Looks good to me.
-ARTIFACT
-
-  run check_consultation_gate 12 "$VALID_DIFF"
+@test "filename-only artifact with a no-hunk diff is rejected" {
+  diff_text='diff --git a/CLAUDE.md b/CLAUDE.md'
+  write_owner_record 17 "$diff_text"
+  write_artifact 17 '- **Reviewer:** TestBot' '- **Provider:** TestCorp' 'verdict: APPROVE' 'CLAUDE.md was reviewed.' "$diff_text"
+  run check_consultation_gate 17 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no second artifact"* ]]
+  [[ "$output" == *"no hunk headers"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: some but not all hunk headers present
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: partial hunk headers — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
-  TWO_HUNK_DIFF='diff --git a/CLAUDE.md b/CLAUDE.md
-index abc1234..def5678 100644
+@test "optional artifact with partial hunk coverage is rejected" {
+  diff_text='diff --git a/CLAUDE.md b/CLAUDE.md
 --- a/CLAUDE.md
 +++ b/CLAUDE.md
-@@ -10,4 +10,7 @@ first hunk
- unchanged
-+added
-@@ -50,3 +53,5 @@ second hunk
- old
--new'
-
-  mkdir -p governance/consultations
-  # Artifact only contains one of the two hunks
-  cat > governance/consultations/13.md <<'ARTIFACT'
-# Consultation — PR #13
-
-- **Reviewer:** SomeBot
-- **Provider:** SomeCorp
-
-verdict: APPROVE
-
-```diff
-@@ -10,4 +10,7 @@ first hunk
- unchanged
-+added
-```
-ARTIFACT
-
-  run check_consultation_gate 13 "$TWO_HUNK_DIFF"
+@@ -1 +1 @@
+-old
++new
+@@ -9 +9 @@
+-old2
++new2'
+  write_owner_record 18 "$diff_text"
+  partial='@@ -1 +1 @@
+-old
++new'
+  write_artifact 18 '- **Reviewer:** TestBot' '- **Provider:** TestCorp' 'verdict: APPROVE' "$partial" "$diff_text"
+  run check_consultation_gate 18 "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"absent from the artifact"* ]]
+  [[ "$output" == *"complete raw diff"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: PR touching no constitutional file — gate passes
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: PR with no constitutional files in diff — pass" {
-  run check_consultation_gate 15 ""
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"no constitutional files touched"* ]]
-}
-
-# ===========================================================================
-# CI-LIKE CONDITION TESTS — The existing tests all supply a PR number
-# explicitly, so the entire class of defect where the gate receives no PR
-# number in CI is untested. These tests exercise the conditions the gate
-# actually encounters in GitHub Actions: detached HEAD, branch name with no
-# digits, CONSULTATION_PR_NUMBER unset on a pull_request event, shallow clone
-# without origin/main.
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Negative: pull_request event with no PR number
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: pull_request event, no PR number — fail" {
-  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+@test "malformed PR number fails closed" {
+  diff_text="$(make_diff CLAUDE.md)"
+  run check_consultation_gate 'not-a-pr' "$diff_text" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no PR number available"* ]]
-  [[ "$output" == *"CONSULTATION_PR_NUMBER is unset"* ]]
+  [[ "$output" == *"malformed PR number"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: pull_request event with CONSULTATION_PR_NUMBER empty
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: pull_request event, CONSULTATION_PR_NUMBER empty — fail" {
-  CONSULTATION_PR_NUMBER="" GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+@test "pull_request event without PR number fails closed" {
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ''
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no PR number available"* ]]
+  [[ "$output" == *"no PR number"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: detached HEAD on pull_request — fail (branch fallback yields HEAD)
-# ---------------------------------------------------------------------------
+@test "pull_request event with empty consultation number fails closed" {
+  CONSULTATION_PR_NUMBER='' GITHUB_EVENT_NAME=pull_request run check_consultation_gate ''
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no PR number"* ]]
+}
 
-@test "consultation-gate: detached HEAD on pull_request — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+@test "detached pull_request context still fails without subject identity" {
   git init -q
-  git config user.email "test@test"
-  git config user.name "Test"
+  git config user.email test@example.invalid
+  git config user.name Test
   touch CLAUDE.md
   git add CLAUDE.md
-  git commit -m "init" -q
+  git commit -qm init
   git checkout --detach -q
-
-  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ''
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no PR number available"* ]]
+  [[ "$output" == *"no PR number"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: branch name with no digits on pull_request — fail
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: branch with no digits on pull_request — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+@test "branch without a numeric PR cannot silently run in pull_request context" {
   git init -q
-  git config user.email "test@test"
-  git config user.name "Test"
-  git checkout -b fix/security-patch -q
-
-  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ""
+  git config user.email test@example.invalid
+  git config user.name Test
+  git checkout -qb fix/security-patch
+  GITHUB_EVENT_NAME=pull_request run check_consultation_gate ''
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no PR number available"* ]]
+  [[ "$output" == *"no PR number"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Negative: shallow clone without origin/main — fail
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: shallow clone without origin/main — fail" {
-  WORKDIR="$(mktemp -d)"
-  trap "rm -rf $WORKDIR" RETURN
-  cd "$WORKDIR"
-
+@test "git resolution without origin/main fails closed" {
   git init -q
-  git config user.email "test@test"
-  git config user.name "Test"
+  git config user.email test@example.invalid
+  git config user.name Test
   touch CLAUDE.md
   git add CLAUDE.md
-  git commit -m "init" -q
-
-  # No origin remote at all — _consultation_diff will fail.
-  # Gate gets a PR number but no diff override, so it must compute the diff.
-  run check_consultation_gate 99
+  git commit -qm init
+  run check_consultation_gate 19
   [ "$status" -ne 0 ]
-  [[ "$output" == *"cannot resolve origin/main"* ]]
-  [[ "$output" == *"fetch-depth: 0"* ]]
+  [[ "$output" == *"cannot resolve exact PR base SHA"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: push event (not pull_request), no PR number — silent pass
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: push event, no PR number — silent pass" {
-  GITHUB_EVENT_NAME=push run check_consultation_gate ""
+@test "push context without a PR number remains a no-op" {
+  GITHUB_EVENT_NAME=push run check_consultation_gate ''
   [ "$status" -eq 0 ]
 }
 
-# ---------------------------------------------------------------------------
-# Positive: no GITHUB_EVENT_NAME, no PR number — silent pass (local dev)
-# ---------------------------------------------------------------------------
-
-@test "consultation-gate: local dev (no GITHUB_EVENT_NAME), no PR number — silent pass" {
-  run check_consultation_gate ""
+@test "explicit empty diff remains a pass" {
+  run check_consultation_gate 20 '' "$BASE_SHA"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"empty PR diff"* ]]
 }

@@ -7,6 +7,13 @@ new session.
 Provisional federation standard: the same shape should hold in any repository
 that runs an operator, adjusted for that repository's own constitution.
 
+> **Current-policy supersession — 2026-08-11:** The owner-adopted RECOVERY-1
+> policy makes architectural/procedural separation the independence property;
+> provider diversity is optional. DeepSeek V4 Flash is the sole routine model,
+> Qwen is retired and must not be invoked, and the owner alone merges manually.
+> The historical guidance below is retained for provenance; it is not current
+> authorization. Technical enforcement remains a RECOVERY-2 gap.
+
 ---
 
 ## 1. Role

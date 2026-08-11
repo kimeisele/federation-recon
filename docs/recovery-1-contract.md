@@ -1,13 +1,23 @@
-# RECOVERY-1 Part B — Review-control contract proposal
+# RECOVERY-1 Part B — Review-control contract
 
-**Status:** DRAFT PROPOSAL — NOT ADOPTED — OWNER DECISION REQUIRED (2026-08-11)
+**Status:** OWNER-ADOPTED PROSPECTIVELY — 2026-08-11 owner decision (PR #251)
 
-This is a prospective contract for the recovery work. It is not an amendment,
-does not adopt itself, and authorizes no code, credential, permission, branch
-ruleset, risk-envelope, or guardrail change. Until a separate adoption PR is
-accepted, the currently committed constitution, scripts, gates, and historical
-records remain in force, including their known contradictions and provider
-requirements.
+This is the owner-adopted prospective contract for RECOVERY-1 Part B. The
+decision is recorded in
+[`governance/owner-decisions/251.md`](../governance/owner-decisions/251.md) and
+`docs/amendments.md`. It changes the normative review-control contract only; it
+does not authorize RECOVERY-2 implementation, grant merge authority, or change
+credentials, permissions, branch rulesets, or historical records.
+
+Existing implementation gaps remain untrusted and non-adopted until their own
+implementation PRs satisfy the acceptance criteria below. Historical records
+remain unchanged.
+
+In particular, the policy is not a claim that the current runner enforces it:
+the `scripts/review.sh` provider allowlist, immutable-input separation, Tier-2
+completion, and deterministic kernel enforcement remain RECOVERY-2 gaps.
+Current pipeline verdicts are non-authoritative until those implementation PRs
+are separately adopted and verified.
 
 The contract applies to review and integration of this repository's work. It
 does not alter the founding package's Slice-v0 evidence model or its rule that
@@ -171,7 +181,7 @@ credentials, permissions, and kill switch remain outside autonomous adoption.
 
 The implementation sequence is not eligible for activation as complete until
 all of these produce the stated result in a disposable checkout or fixture.
-The proposal/adoption PR defines these criteria but does not falsely claim to
+This adopted contract defines these criteria but does not falsely claim to
 execute code that does not yet exist:
 
 1. **Identity binding:** mutate the PR head after capture; the kernel returns
@@ -218,10 +228,9 @@ oracle does not satisfy the criterion.
 The following order is normative for subsequent work; each item is a separate
 reviewable PR or explicitly linked recovery record:
 
-1. **Adoption PR:** owner adopts or rejects this contract prospectively. No
-   implementation code is included. This draft PR may become that adoption PR
-   only after the explicit owner decision is recorded and the status in this
-   same diff is changed from proposal to adopted.
+1. **Adoption record:** the owner decision is recorded in the owner-decision
+   artifact and amendment log. No RECOVERY-2 implementation is included in
+   this adoption step.
 2. **Kernel contract PR:** make the verdict schema and deterministic aggregator
    exact, fail-closed, SHA-bound, and mutation-tested. Keep integration inert.
 3. **Runner isolation PR:** capture immutable diff/identities once, separate
@@ -233,8 +242,8 @@ reviewable PR or explicitly linked recovery record:
    shadow comparison, staged activation, rollback, and bounded audit logging;
    no self-adoption.
 6. **Out-of-scope option:** a future integrator and its constitutional
-   amendment are deliberately not designed or authorized by this proposal; the
-   owner remains the only merge authority meanwhile.
+   amendment are deliberately not designed or authorized by this adopted
+   contract; the owner remains the only merge authority meanwhile.
 7. **Activation decision:** run the complete acceptance matrix and the ordinary
    or full gate required by the touched paths. A failed, unavailable, or
    inconclusive check stops the sequence; it does not get downgraded.
