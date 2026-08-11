@@ -17,37 +17,13 @@
 # Deliberately no `set` here: this file is sourced, and `set` acts on the
 # sourcing shell. A library must not change its caller's failure semantics.
 
-_review_control_paths() {
-  local f
-  for f in \
-    "CLAUDE.md" \
-    "RECOVERY.md" \
-    "docs/founding-package-v0.2.md" \
-    "docs/recovery-1-contract.md" \
-    "docs/amendments.md" \
-    "docs/review-pipeline-spec-v0.md" \
-    "docs/operator-handover.md" \
-    "governance/consultation-prompt.md" \
-    "governance/reviewers.md" \
-    "scripts/ci-checks.sh" \
-    "scripts/lib/consultation-gate.sh" \
-    "scripts/review.sh" \
-    "scripts/review-verdict.sh" \
-    "schemas/review-verdict.schema.json"; do
-    [ -e "$f" ] && printf '%s\n' "$f"
-  done
-  for f in docs/*-adr.md governance/owner-decisions/*.md; do
-    [ -e "$f" ] && printf '%s\n' "$f"
-  done
-}
-
 _owner_record_path() {
   printf 'governance/owner-decisions/%s.md\n' "$1"
 }
 
 _path_is_review_control() {
   case "$1" in
-    CLAUDE.md|RECOVERY.md|docs/founding-package-v0.2.md|docs/recovery-1-contract.md|docs/amendments.md|docs/review-pipeline-spec-v0.md|docs/operator-handover.md|governance/consultation-prompt.md|governance/reviewers.md|scripts/ci-checks.sh|scripts/lib/consultation-gate.sh|scripts/review.sh|scripts/review-verdict.sh|schemas/review-verdict.schema.json|docs/*-adr.md|governance/owner-decisions/*.md)
+    CLAUDE.md|RECOVERY.md|docs/founding-package-v0.2.md|docs/recovery-1-contract.md|docs/amendments.md|docs/review-pipeline-spec-v0.md|docs/operator-handover.md|governance/adversarial-review.md|governance/consultation-prompt.md|governance/reviewers.md|scripts/ci-checks.sh|scripts/gate.sh|scripts/lib/consultation-gate.sh|scripts/review.sh|scripts/review-verdict.sh|schemas/review-verdict.schema.json|docs/*-adr.md|governance/owner-decisions/*.md)
       return 0 ;;
     *) return 1 ;;
   esac

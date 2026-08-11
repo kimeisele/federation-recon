@@ -77,10 +77,12 @@ write_consultation() {
     docs/amendments.md \
     docs/review-pipeline-spec-v0.md \
     docs/operator-handover.md \
+    governance/adversarial-review.md \
     governance/consultation-prompt.md \
     docs/example-adr.md \
     governance/reviewers.md \
     scripts/ci-checks.sh \
+    scripts/gate.sh \
     scripts/lib/consultation-gate.sh \
     scripts/review.sh \
     scripts/review-verdict.sh \
