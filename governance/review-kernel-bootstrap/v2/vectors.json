@@ -1,0 +1,2487 @@
+[
+  {
+    "id": "approve",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-001",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-001",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-001:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-001",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "19960b4aa238c300525b8adf38f53661987a58a802690718bbcbf48326c44059"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-001:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-001",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "143752b4dd5b1276beba27b277b52d41c456488a9317bc80a523d08d3d5a0705"
+          }
+        },
+        "run_id": "rv-20260811-001",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "8981cbc876c6157ad442b200174d92089178bf1cecafab08c0fe73dcd31ed221"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "stale",
+    "current_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-002",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-002",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-002:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-002",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c1be8a59ca29ee0d20bbaeb222eb6360c2ef3ae5019f2009475924b19bba1839"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-002:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-002",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "3c6f7f75adee0a53c4d8ec87f30b13a00e1c11b7fd3c91d0d4bb025b93ae5642"
+          }
+        },
+        "run_id": "rv-20260811-002",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "8e9867392454659086d8f063b6e4707fc16a6e2166e8ff31c6c4bcfefb07239d"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "malformed-sha",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-003",
+      "pr_number": 251,
+      "subject_head_sha": "abc",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-003",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-003:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-003",
+            "subject_head_sha": "abc",
+            "evidence_sha256": "77720fd0488f3bbc2707eca24a9d8f53fbdba201124ccf868e09de473bc89f1b"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-003:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-003",
+            "subject_head_sha": "abc",
+            "evidence_sha256": "3dd39a687ea8349a07f03e3788558dc879c1f5c3bb3d9b67201e2f423a706e96"
+          }
+        },
+        "run_id": "rv-20260811-003",
+        "subject_head_sha": "abc",
+        "reservation_sha256": "802fbbf95881a60fff4242b8626ab74f1219ed907870476b8841cd33cb257a35"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "unavailable-current",
+    "current_head_sha": "unavailable",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-004",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-004",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-004:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-004",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "a6db557d1ba14f0b4d0a1d0cdb70cd63b3ecc6b019b67902f897160b070524aa"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-004:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-004",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "6bfa9fb59464e81b49445f40f4fd31b8b0f2ca219c50977160cf39d8a7aecfdf"
+          }
+        },
+        "run_id": "rv-20260811-004",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "69e436a335be1b8b262263a652aa323e582b168a08b09d1525f9c33a108a0d20"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "legacy-v1",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v1",
+      "run_id": "rv-20260811-005",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-005",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-005:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-005",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "cea8afb0b11829bd1d4adcd2801c9a0635a7f6107ce755f0cb46bedd0b5e9cc6"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-005:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-005",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c82ebc4e10995d6bbc694f62503daf018bb64a01af5efb24454d19ad5c05d0e1"
+          }
+        },
+        "run_id": "rv-20260811-005",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "1bc726eed83d456919eecbf0e7cf4d41debb7bf370c85b4a5c4eccdab59fb090"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "extra-field",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-006",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-006",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-006:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-006",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "49b8770e61442f514c98646a1773c3d29d47422c7599cf5b59476a27e3d1aa12"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-006:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-006",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "18f9d7c0f5d05ab2fd4875720d31410cebd2982395d413ef20d171cf3dc7c488"
+          }
+        },
+        "run_id": "rv-20260811-006",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "96cd5118da229da947aeb2d11757653ff9382cad5de6282a423444b9b1c48358"
+      },
+      "verdict": "APPROVE",
+      "extra": true
+    }
+  },
+  {
+    "id": "missing-tasks",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-007",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-007",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-007:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-007",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "dc80198284a90d35b5660bfb850fdcdfda774ee2ddd2d2687c63bf4a8f98c0e2"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-007:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-007",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "028265eb3f1c4ddd97f06b747d1fb317079c925fc97121e21d3b676dfb800ef3"
+          }
+        },
+        "run_id": "rv-20260811-007",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "fbcf778b73e64b324bb2a2a7185cc684ffc2655341e0bb5212f7440e61a08514"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "wrong-pr",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-008",
+      "pr_number": true,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-008",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-008:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-008",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "d4c56f37e04e3915c511933c068b0b1bb036db2b8e25bda3e90e10a5829bf903"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-008:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-008",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "5cf24ee3c2024b131db37ddbc9cb12495270522b90015c8110b5ac7ab3e4771c"
+          }
+        },
+        "run_id": "rv-20260811-008",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "396ecb409542f2de50d5e700ba008f931e4ba4e8f5652101060dc02fcfe705c6"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "wrong-findings-type",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-009",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": {},
+      "budget": {
+        "reservation_id": "res-rv-009",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-009:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-009",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "b862bf5ca26fda85499d2dc659e4f7dd8acf80647edfc21835065cca636752bd"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-009:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-009",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "18dbb179ebbb85268542238e40990146c9d3d365ec6cd65857a315f0e3be23c1"
+          }
+        },
+        "run_id": "rv-20260811-009",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "16eebef11b65f2ffb60fac9a162bd90f82cccd80e3878cb947e59a8b4420f5cf"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "high-tier2-not-run",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-010",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "HIGH",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-010",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-010:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-010",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0ef5a216f09a7b42d32c133c5689ffa79e55f1bf893f782951b1e52141e5ecfb"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-010:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-010",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "2a91c47de74fb63985f7b059c5ab1df4d1a5a82bc705e6a1f6912fb6fa590db3"
+          }
+        },
+        "run_id": "rv-20260811-010",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "f7bae580ba05e487daec9b161342ad18825cc02eba3c585090ff1128092be801"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "tier2-complete",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-011",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "complete"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-011",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-011:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-011",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c4c1026001186e5d8a8614b0ee0a300f58d4f00e128e17a89530cd52d967e2c9"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-011:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-011",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "2907b95f904eecc87aeed8109deb1a2450a7dee98066910d6896e8c14ae3aafc"
+          }
+        },
+        "run_id": "rv-20260811-011",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "c959a0abfab2c5af26ef47fa92fa66ed06d204f64754c7737c75fad22757b5d8"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "tier2-error",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-012",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "error"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-012",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-012:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-012",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "e69cf8af93d5e8187b75165bd8aa8c9d0094da6c94b40ab436897f649e88725d"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-012:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-012",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "fc3a37a2d354b5265d23482c44e456fc3725df72717f8879f77056ffa456f35c"
+          }
+        },
+        "run_id": "rv-20260811-012",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "d18d3e74a3f476ac3ee2feb27a5671caa4d741b26eee853466979999ba1a5e4c"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "blocking-confirmed",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-013",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-013",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Confirmed blocking property failure.",
+          "verification_status": "confirmed"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-013",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-013:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-013",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c1ebe945aea10d2600880c31f211231aacf0440bbb667e916560ecbcb68d71e5"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-013:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-013",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "71fd02305fb398cb646ae18be1906fb8814d5f782c1b7347b4fcc08d571a2cf8"
+          }
+        },
+        "run_id": "rv-20260811-013",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "1589080c98597352461611e81b79b2bacf0caf1c7e3fccb8bf745401cefdf2b1"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "blocking-inconclusive",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-014",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-014",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking property could not be classified.",
+          "verification_status": "inconclusive"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-014",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-014:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-014",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "4a5335476bddbe3638ee5e50c3470176c71a4901f0215340372a663132304cf4"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-014:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-014",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "a2f363d89e13a06324f97332b9289fb61158c38319d4a6a9450c94b805876927"
+          }
+        },
+        "run_id": "rv-20260811-014",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "a00e11895e68c3abc08dc49a872e47ddfbc2eb031c0c32032182e9383a6b2e81"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "blocking-not-run",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-023",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-023",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking property has not been run.",
+          "verification_status": "not_run"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-023",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-023:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-023",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "400bca1877cac8e6036980a85b0440f87e684f687080bb765c2e6841e491ce36"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-023:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-023",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "8eae69d5b6d2cb8064b1c6c8445d482bc3d9cf7a7e923348829067e209c4d2a1"
+          }
+        },
+        "run_id": "rv-20260811-023",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "394a44ac384c57c8989ae706ed00984f19f196427d16e19a9f971a86f8ad32e1"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "claimed-blocking-downgraded",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-015",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-015",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "non-blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking claim was downgraded without proof.",
+          "verification_status": "inconclusive"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-015",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-015:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-015",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "227e86dc0a6a57e5cdf30d4996b5bcb4ff95bd49a2ceec33c43d4ad7108d9c44"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-015:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-015",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "ebd0f81df0622bf69f2a2c70d441447fe1fd6b11b5ac316f85b95b215d4c7852"
+          }
+        },
+        "run_id": "rv-20260811-015",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "83976adaaa846fbdc86bcb36c8b723ab5607b58c4a99d9fd6e50972c9b767bd4"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "mandatory-incomplete",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-016",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "not_run",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-016",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-016:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-016",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "304a439dae0afb4ee8516aafeed0735108caee63cc4def5bfbd8e3ecc428da90"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-016:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-016",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "f0b930a8495831c470f2330fffc174c2608b2e8034dabc53d6203413b929b18a"
+          }
+        },
+        "run_id": "rv-20260811-016",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "2971c3f550da40acafd25b05bdcc86f43d58a114ad476dd72d70984460698e97"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "tier0-fail",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-017",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "fail",
+        "review-analysis": "not_run",
+        "adversarial-execution": "not_run",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-017",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-017:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-017",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "73221442be646377b0a803f97c106007181cd0891fc019bacd386c9b6147286f"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-017:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-017",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "d16bbf0be426372eeba17c0c1dc8a4065fb85ca4ec0bb011a2c24c04ec9568bf"
+          }
+        },
+        "run_id": "rv-20260811-017",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "001b879a9928c8406e522aecf03969c71ff37804eb426be4c35a2a82e8887b39"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "missing-reservation",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-018",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-018:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "evidence_sha256": "5000020fe23cfdfb9ed0abd9329e2af2baf3b3bc6d110c9dda6773a34622acf0"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-018:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "evidence_sha256": "9380cc1984f9e6bd3c55d62d0911828bf8914d2158784c176bae91e2c6010df8"
+          }
+        },
+        "reservation_sha256": "48968f425be221f8042af8c29dde867d76831465ff734a4bc60467fc8e363675"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "provider-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-019",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-019",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "other",
+            "model": "other-model",
+            "provenance": "broker:rv-20260811-019:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-019",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "22a6f5b3347a0858e92cb8336684c4afe350847b58aba7244a6a682cd8c686d6"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-019:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-019",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "ce7b36ddbed9ab3f536275ea829bf9c8de2a51db6390511457b06eb401d60f1d"
+          }
+        },
+        "run_id": "rv-20260811-019",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "3139cb53fdde121d773398a29ac9fb7fe4f5943a5a6fe2fa6a562c3a1ba21834"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "usage-incomplete",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-020",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-020",
+        "reservation_status": "committed",
+        "actual_usage_complete": false,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-020:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-020",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "16a444c38245b7669856d2e67c52470aa87ef1b51387cc8ab556deadd87ed75a"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-020:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-020",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "dbd5ac141a4e5c296344948e416ccbba0f9b38bc798c8d16fc0b4aba9ccb38ea"
+          }
+        },
+        "run_id": "rv-20260811-020",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "ea01a9aa733479305ceabcd9b83242daa8c8a24dc978674160c5704be56bdf1f"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "cost-missing",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-021",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-021",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-021:review-analysis",
+            "cost_usd": null,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-021",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0f4444f7666dee220ab2870a920bebc3d2045ab7460ddf6d8e3dba3364744967"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-021:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-021",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "ba527310ebd893ce6881596ab0fc12694b7ad2722aafcd1240a47c1198d9867e"
+          }
+        },
+        "run_id": "rv-20260811-021",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "ac31684986f9ec3ac2831f02021c3317af3466864bf631140b5073e1e54b690f"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "tokens-boolean",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-022",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-022",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-022:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": true,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-022",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "a6eab4347f62568fc49f44ba8884b8e0f0f035b83298ec4d05879192f7cdb790"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-022:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-022",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "d78dec868f85b8045385a847ff23ea1af2f9e1e8b085c79b3f6413e4fbe141ee"
+          }
+        },
+        "run_id": "rv-20260811-022",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "d846d720005755dc52fb79263526e5572d04b00967626d3ce9e3dca75d8cb8e5"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "partial-stored",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-024",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-024",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-024:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-024",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "ae1c0b4f90afb8a596081b5d7e9df71b45b6b3c68a1d1194a4b2276534f68a57"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-024:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-024",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "b04a4c8e285597c9209fb751f56b34bbe6b43887b4349c61a68a4fdd5390c1fe"
+          }
+        },
+        "run_id": "rv-20260811-024",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "280d350ea9e2d1f4288d13e04514474004423d1d534cc6cf1db1e837c7f4dc48"
+      },
+      "verdict": "PARTIAL"
+    }
+  },
+  {
+    "id": "tier0-error",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-025",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "error",
+        "review-analysis": "not_run",
+        "adversarial-execution": "not_run",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-025",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-025:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-025",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "e8a94beda0fe7db05e8d9aae1b9d803ce68229d5f5aac4d035237013bfaf275f"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-025:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-025",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "b54f891225430ff9e683c8146a808eab8d180e124d97c02062f29ed10f01e9bf"
+          }
+        },
+        "run_id": "rv-20260811-025",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "5bc75083f51145bb988b67fc65e0c820aa26c01a64348e0d3ce7fc8d3a8d0438"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "finding-error",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-026",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-014",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking property could not be classified.",
+          "verification_status": "error"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-026",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-026:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-026",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "45fa1e59654ea3395fd3db5454ea4e3fd2da130ec1417a695bddad85eb8df083"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-026:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-026",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0271a9204bec6047642333edbebc1947239db3e84c1945071766cfaae8644811"
+          }
+        },
+        "run_id": "rv-20260811-026",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "2bb45355463628a991d9058409bca40f0e53e17dd9d2b96670a55029e90a5547"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "nonblocking-inconclusive",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-027",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-027",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "non-blocking",
+          "claimed_severity": "non-blocking",
+          "summary": "Non-blocking result is inconclusive.",
+          "verification_status": "inconclusive"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-027",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-027:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-027",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "19451f5b9db80e0a8999fc2abaaa042ee30249ec5c72b48bc0421f72b0b63a89"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-027:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-027",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "61b18b776daff721371139a4522ecfd278679a421ff7f3efde4371988579c297"
+          }
+        },
+        "run_id": "rv-20260811-027",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "a0769151a772573b981d26e5473a9a39f6796c98412a74b13087c2cfea6fe65c"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "finding-unrun",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-028",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-028",
+          "tier": 2,
+          "task": "tier2",
+          "severity": "non-blocking",
+          "claimed_severity": "non-blocking",
+          "summary": "Finding claims a task that did not run.",
+          "verification_status": "confirmed"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-028",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-028:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-028",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "dd8c5fe74a4290368446631341bb016d8700b3488badeb07bfe45d91747341cd"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-028:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-028",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "cd3126283841e98c14fc61af1930731a4df3c1cc63b64b4307070568fe3f81e6"
+          }
+        },
+        "run_id": "rv-20260811-028",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "bd22fa119fb9d8e7dcd2ffe897b3ded99bc885dfc6b2bc99c6d783c46e262c39"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "duplicate-finding-id",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-029",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-014",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking property could not be classified.",
+          "verification_status": "inconclusive"
+        },
+        {
+          "id": "rf-014",
+          "tier": 1,
+          "task": "review-analysis",
+          "severity": "blocking",
+          "claimed_severity": "blocking",
+          "summary": "Blocking property could not be classified.",
+          "verification_status": "inconclusive"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-029",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-029:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-029",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "a68f6b690c917814e38116d81c1d7e577329d7f68cfdbd11a93c1df6e9b3deeb"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-029:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-029",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "4e4e8aade9a0de3ab4298c2c0d0ad0e879d23f0afba5bb8b3708ff23731ebcdf"
+          }
+        },
+        "run_id": "rv-20260811-029",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "efd59facbf07b2abb350df10c9bae120454c94d27ab5b7a263c4ac6a0b70d461"
+      },
+      "verdict": "APPROVE"
+    }
+  },
+  {
+    "id": "wrong-finding-tier",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-030",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [
+        {
+          "id": "rf-030",
+          "tier": 2,
+          "task": "review-analysis",
+          "severity": "non-blocking",
+          "claimed_severity": "non-blocking",
+          "summary": "Finding tier does not match task.",
+          "verification_status": "confirmed"
+        }
+      ],
+      "budget": {
+        "reservation_id": "res-rv-030",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-030:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-030",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c82b8baa1076e82167613df18d7fa345ef24f60d7ce03c79ef65b41ff018d1a8"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-030:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-030",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "6608e2006db9f13288d4af66cc0cfa878c2dea71dccfc025d26f48ccdf6271e7"
+          }
+        },
+        "run_id": "rv-20260811-030",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "c171da8ec45b052feb2e3fcb69efee4503545d3d464e3ad1d8f751c7462be3e3"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "run-date-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-031",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-10T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-031",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-031:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-031",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "3d3ffab7a98272612186b87630040771ce981be8b894bf8c3fa2c107b51e60a6"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-031:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-031",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "d152be7630fe2e2a24ff7bcb7578d0bde15d9c0bd160cca7e4e5311cdec76f13"
+          }
+        },
+        "run_id": "rv-20260811-031",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "a2e92261b8a73c52e0d450b5d9fe8f4265c31ca6db5f5d1bc022b3ed54da0c2b"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "budget-run-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-032",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-032",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-032:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-032",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "52e26fdf1a544d8c8c2b4216af2b1a3cf6b728de435c53ba496ba50e3404ed93"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-032:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-032",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "d8a4b3d77f8f954d546d6c9daca8c224be99f764d3f013dc969e28f962aa2785"
+          }
+        },
+        "run_id": "rv-20260811-999",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "4dde60f6ecf107574175e990bc1b2be1619daa765ab46f60aaea792ad9ff9eb6"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "budget-head-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-033",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-033",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-033:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-033",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "3536a40538d79385196afeb209dca6dffc92976051298616442767dd8d676b51"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-033:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-033",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "6c551cf128af9fba32a69d7cb61ed17c7634895d5e669a4408cfd19081b57c2a"
+          }
+        },
+        "run_id": "rv-20260811-033",
+        "subject_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reservation_sha256": "c4b38062cf4356d0f8b4d7a860e2c3dbaea779735b30ba3a5262c4bc7a5137d4"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "evidence-digest-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-034",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-034",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-034:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-034",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-034:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-034",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "aaf70d9624eb892276203d3a761e94513ea5a209b3c317cfd54dc9ed0d0a9482"
+          }
+        },
+        "run_id": "rv-20260811-034",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "a3385fd9e1008aea72ca4def5d2f703711343268dbd3da11366ad951c1446081"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "reservation-digest-mismatch",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-035",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-035",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-035:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-035",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "cfbc74c246ab575f7c5f6c920b1c6ff2d00bd5ed8b334a5903dd6c2abeb2c39a"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-035:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-035",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "19993fd4bf924bc2fa7d535371a500af244bc11ec283c90c84f3bb1b26cbeea6"
+          }
+        },
+        "run_id": "rv-20260811-035",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "cost-negative",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-036",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-036",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-036:review-analysis",
+            "cost_usd": -1,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-001",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "9a019f56e07ab1fb16e0ad441b5b504a146576522dbc8138edb25df0c001a5b5"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-036:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-001",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "ad6ebddaa281ef49b9d96048fcb2057d965f50a7319a553ed8f0460bb3c9e57c"
+          }
+        },
+        "run_id": "rv-20260811-001",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "fcfbe56a5ddbc50cf6ca1e972c6749b6260640308c0665f01c685c7cddaece7d"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "unknown-stored",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-037",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-037",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-037:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-037",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0bc4927d29fc2fa23bafd5834251988320242e633d665b8e03a126606c7b48bb"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-037:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-037",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "9507d9d1c3531c841fe12ad9a35134169175cd5abe10581337f79a13ac31c98b"
+          }
+        },
+        "run_id": "rv-20260811-037",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "2a92fa585ffda7d924e48bab86ada40620a8a69b88dcdea140490f1758342c77"
+      },
+      "verdict": "UNKNOWN"
+    }
+  },
+  {
+    "id": "tier0-unavailable",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-038",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "not_run",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-038",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-038:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-038",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "2c3e77290594ab5456bd1f0a97f846fb77328d74f57418f0bade500ee1c20f4e"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-038:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-038",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "a5d955a7d53035ae203d85183bbbc4a59148baadca35bc762755dac76eae617d"
+          }
+        },
+        "run_id": "rv-20260811-038",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "34185cb0b96c282cb1446ad3bc3cc68d56a49c3c895f360927952501f1ec1797"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "sha64",
+    "current_head_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-039",
+      "pr_number": 251,
+      "subject_head_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-039",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-039:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-039",
+            "subject_head_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "evidence_sha256": "dc35edfccbcc7abd9ab34c9e6b5184e3b38e03a7fbc5f887313a927c40e3e8b1"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "broker:rv-20260811-039:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-039",
+            "subject_head_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "evidence_sha256": "952aa8d37fcb32665cebc59de373cd673ee69456a04fba8804ae78ae63616924"
+          }
+        },
+        "run_id": "rv-20260811-039",
+        "subject_head_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "reservation_sha256": "b62fe9b0eb363e062999c13ce789e17b6e858c09cfdcdfc570944a9ec46d4fdb"
+      },
+      "verdict": "REJECT"
+    }
+  },
+  {
+    "id": "fabricated-provenance",
+    "current_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": {
+      "schema": "review-verdict-v2",
+      "run_id": "rv-20260811-040",
+      "pr_number": 251,
+      "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "risk_class": "LOW",
+      "timestamp": "2026-08-11T10:00:00Z",
+      "tasks": {
+        "tier0": "pass",
+        "review-analysis": "complete",
+        "adversarial-execution": "complete",
+        "tier2": "not_run"
+      },
+      "findings": [],
+      "budget": {
+        "reservation_id": "res-rv-040",
+        "reservation_status": "committed",
+        "actual_usage_complete": true,
+        "provider_evidence": {
+          "review-analysis": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "fabricated:rv-20260811-040:review-analysis",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 100,
+              "completion": 50,
+              "reasoning": 0
+            },
+            "task": "review-analysis",
+            "run_id": "rv-20260811-040",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "0f8b1d0055c124ca121934383888fecabf6b3865250d03510d81da8e5cc88831"
+          },
+          "adversarial-execution": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provenance": "fabricated:rv-20260811-040:adversarial-execution",
+            "cost_usd": 0.001,
+            "token_usage": {
+              "prompt": 110,
+              "completion": 55,
+              "reasoning": 0
+            },
+            "task": "adversarial-execution",
+            "run_id": "rv-20260811-040",
+            "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_sha256": "c49c16e856058a07c72e4fa566a65ce7e433c71ac93ff5dd73dbd919149fb200"
+          }
+        },
+        "run_id": "rv-20260811-040",
+        "subject_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation_sha256": "6ab48ecfad53a16e22ba906e484303a218c4bd7e0194bff9c7a0d53c9e922866"
+      },
+      "verdict": "REJECT"
+    }
+  }
+]
