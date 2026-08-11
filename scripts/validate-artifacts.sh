@@ -153,6 +153,18 @@ if [ "$ref_err" -eq 0 ]; then
   echo "  [OK] Pin references: all resolve to existing pin files"
 fi
 
+# Federation intelligence has a stricter relational contract than JSON Schema
+# can express: validate the exact three-node scope and every pin/evidence link.
+if [ -f "digest/federation-intelligence-v0.json" ]; then
+  if python3 scripts/federation-intelligence.py --validate-only \
+      --pins-root pins/v1-census --output digest/federation-intelligence-v0.json; then
+    echo "  [OK] Federation intelligence: relational validation passed"
+  else
+    echo "  [FAIL] Federation intelligence: relational validation failed"
+    ERRORS=$(( ERRORS + 1 ))
+  fi
+fi
+
 # Validate machine-readable digest (no official schema yet — syntax check only)
 if [ -f "digest/state-digest.json" ]; then
   if validate_json_syntax "digest/state-digest.json"; then

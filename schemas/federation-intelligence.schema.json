@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://federation-recon/schemas/federation-intelligence.schema.json",
+  "title": "Federation Intelligence Index v0",
+  "description": "Machine-readable structural interface for the deterministic, read-only pinned-tree index. The executable --validate-only contract additionally checks cross-record relations; candidate paths are inferences, not proof of exposure or dependency.",
+  "type": "object",
+  "required": ["schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "findings", "attention_items", "summary", "limitations"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "federation-intelligence-v0" },
+    "procedure_id": { "const": "federation-intelligence-v0" },
+    "procedure_version": { "const": "1" },
+    "run_timestamp": { "type": "string", "format": "date-time" },
+    "procedure": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "const": "federation-intelligence-v0" },
+        "version": { "const": "1" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": ["node_ids", "source_state", "current_branch_state_checked"],
+      "additionalProperties": false,
+      "properties": {
+        "node_ids": { "const": ["kimeisele/agent-world", "kimeisele/agent-internet", "kimeisele/agent-city"] },
+        "source_state": { "const": "historical_pinned_commits" },
+        "current_branch_state_checked": { "const": false }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["node_id", "repository_pin", "pin_sha", "commit_sha", "requested_ref", "acquisition_method", "dirty_state_assertion", "pin_observation_timestamp", "source_state", "tree", "evidence_refs", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "node_id": { "type": "string" },
+          "repository_pin": { "type": "string" },
+          "pin_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "requested_ref": { "type": "string" },
+          "acquisition_method": { "type": "string" },
+          "dirty_state_assertion": { "type": "boolean" },
+          "pin_observation_timestamp": { "type": "string", "format": "date-time" },
+          "source_state": { "const": "historical_pinned_commit" },
+          "tree": {
+            "type": "object",
+            "required": ["sha", "total_entry_count", "truncated", "counts", "extension_counts"],
+            "additionalProperties": false,
+            "properties": {
+              "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "total_entry_count": { "type": "integer", "minimum": 0 },
+              "truncated": { "const": false },
+              "counts": {
+                "type": "object",
+                "required": ["blob_count", "tree_count", "commit_count"],
+                "additionalProperties": false,
+                "properties": {
+                  "blob_count": { "type": "integer", "minimum": 0 },
+                  "tree_count": { "type": "integer", "minimum": 0 },
+                  "commit_count": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "extension_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+            }
+          },
+          "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "confidence": { "$ref": "#/$defs/confidence" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["evidence_id", "repository_pin", "procedure_id", "procedure_version", "observation_type", "tree_sha", "entry_count", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": { "type": "string" },
+          "repository_pin": { "type": "string" },
+          "node_id": { "type": "string" },
+          "procedure_id": { "const": "federation-intelligence-v0" },
+          "procedure_version": { "const": "1" },
+          "observation_type": { "const": "path_inventory" },
+          "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "tree_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "entry_count": { "type": "integer", "minimum": 0 },
+          "value": { "const": "pinned_git_tree_metadata" }
+        }
+      }
+    },
+    "entrypoints": { "$ref": "#/$defs/candidates" },
+    "contracts": {
+      "type": "object",
+      "required": ["observed", "candidates"],
+      "additionalProperties": false,
+      "properties": {
+        "observed": { "type": "array", "maxItems": 0, "items": { "$ref": "#/$defs/candidate" } },
+        "candidates": { "$ref": "#/$defs/candidates" }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "required": ["observed_edges", "candidates"],
+      "additionalProperties": false,
+      "properties": {
+        "observed_edges": { "type": "array", "maxItems": 0, "items": { "$ref": "#/$defs/dependency" } },
+        "candidates": { "$ref": "#/$defs/candidates" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "status", "statement", "evidence_refs", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string" },
+          "status": { "enum": ["observed", "inferred", "unavailable"] },
+          "statement": { "type": "string", "maxLength": 256 },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "$ref": "#/$defs/confidence" }
+        }
+      }
+    },
+    "attention_items": { "const": [] },
+    "summary": {
+      "type": "object",
+      "required": ["pins", "observed_nodes", "tree_entries", "blob_entries", "entrypoint_candidates", "contract_candidates", "dependency_candidates", "findings"],
+      "additionalProperties": false,
+      "properties": {
+        "pins": { "type": "integer", "minimum": 0 },
+        "observed_nodes": { "type": "integer", "minimum": 0 },
+        "tree_entries": { "type": "integer", "minimum": 0 },
+        "blob_entries": { "type": "integer", "minimum": 0 },
+        "entrypoint_candidates": { "type": "integer", "minimum": 0 },
+        "contract_candidates": { "type": "integer", "minimum": 0 },
+        "dependency_candidates": { "type": "integer", "minimum": 0 },
+        "findings": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "limitations": { "type": "array", "items": { "type": "string", "maxLength": 256 } }
+  },
+  "$defs": {
+    "confidence": {
+      "type": "object",
+      "required": ["level", "basis", "caveats"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "enum": ["high", "medium", "low", "unknown"] },
+        "basis": { "enum": ["direct_pinned_observation", "path_name_heuristic", "cross_node_comparison", "inference", "unavailable"] },
+        "caveats": { "type": "array", "items": { "type": "string", "maxLength": 256 } }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["node_id", "path", "mode", "type", "sha", "size", "kind", "inference_status", "evidence_refs", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string" },
+        "type": { "const": "blob" },
+        "sha": { "type": "string", "minLength": 7 },
+        "size": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string" },
+        "inference_status": { "const": "candidate_only" },
+        "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "dependency": {
+      "type": "object",
+      "required": ["from_node", "to_node", "kind", "evidence_refs", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "from_node": { "type": "string" },
+        "to_node": { "type": "string" },
+        "kind": { "enum": ["control", "data", "protocol", "runtime", "unknown"] },
+        "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    }
+  }
+}

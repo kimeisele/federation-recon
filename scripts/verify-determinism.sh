@@ -30,6 +30,7 @@ snap_pins() {
 run_reproduce() {
   RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce       >/dev/null 2>&1 || return 1
   RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  python3 scripts/federation-intelligence.py                         >/dev/null 2>&1 || return 1
   RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce  >/dev/null 2>&1 || return 1
   bash scripts/compose-digest.sh                                   >/dev/null 2>&1 || return 1
 }
@@ -37,6 +38,7 @@ run_reproduce() {
 run_reproduce_reverse() {
   RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce  >/dev/null 2>&1 || return 1
   RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce  >/dev/null 2>&1 || return 1
+  python3 scripts/federation-intelligence.py                         >/dev/null 2>&1 || return 1
   RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce        >/dev/null 2>&1 || return 1
   bash scripts/compose-digest.sh                                   >/dev/null 2>&1 || return 1
 }
