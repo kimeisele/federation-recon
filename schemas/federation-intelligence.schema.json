@@ -4,7 +4,7 @@
   "title": "Federation Intelligence Index v0",
   "description": "Machine-readable structural interface for the deterministic, read-only pinned-tree index. The executable --validate-only contract additionally checks cross-record relations; candidate paths are inferences, not proof of exposure or dependency.",
   "type": "object",
-  "required": ["schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "findings", "attention_items", "summary", "limitations"],
+  "required": ["schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "semantic", "relations", "findings", "attention_items", "summary", "limitations"],
   "additionalProperties": false,
   "properties": {
     "schema": { "const": "federation-intelligence-v0" },
@@ -115,6 +115,21 @@
         "candidates": { "$ref": "#/$defs/candidates" }
       }
     },
+    "semantic": {
+      "type": "object",
+      "required": ["observations", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "observations": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "oneOf": [{ "$ref": "#/$defs/descriptor-observation" }, { "$ref": "#/$defs/seeds-observation" }] } },
+        "checks": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/$defs/semantic-check" } }
+      }
+    },
+    "relations": {
+      "type": "object",
+      "required": ["declared_edges"],
+      "additionalProperties": false,
+      "properties": { "declared_edges": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/declared-edge" } } }
+    },
     "findings": {
       "type": "array",
       "maxItems": 0,
@@ -134,7 +149,7 @@
     "attention_items": { "const": [] },
     "summary": {
       "type": "object",
-      "required": ["pins", "observed_nodes", "tree_entries", "blob_entries", "entrypoint_candidates", "contract_candidates", "dependency_candidates", "findings"],
+      "required": ["pins", "observed_nodes", "tree_entries", "blob_entries", "entrypoint_candidates", "contract_candidates", "dependency_candidates", "findings", "semantic_checks", "declared_relations"],
       "additionalProperties": false,
       "properties": {
         "pins": { "type": "integer", "minimum": 0 },
@@ -144,7 +159,9 @@
         "entrypoint_candidates": { "type": "integer", "minimum": 0 },
         "contract_candidates": { "type": "integer", "minimum": 0 },
         "dependency_candidates": { "type": "integer", "minimum": 0 },
-        "findings": { "type": "integer", "minimum": 0 }
+        "findings": { "type": "integer", "minimum": 0 },
+        "semantic_checks": { "const": 1 },
+        "declared_relations": { "type": "integer", "minimum": 0, "maximum": 1 }
       }
     },
     "limitations": { "type": "array", "items": { "type": "string", "maxLength": 256 } }
@@ -192,6 +209,30 @@
         "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "confidence": { "$ref": "#/$defs/confidence" }
       }
+    },
+    "descriptor-observation": {
+      "type": "object", "required": ["observation_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "record_type", "kind", "repo_id", "status", "endpoint_path"], "additionalProperties": false,
+      "properties": {
+        "observation_id": { "type": "string" }, "node_id": { "type": "string" }, "repository_pin": { "type": "string" }, "path": { "type": "string" },
+        "blob_sha": { "type": "string", "minLength": 7, "maxLength": 64 }, "blob_size": { "type": "integer", "minimum": 0, "maximum": 16384 }, "decoded_length": { "type": "integer", "minimum": 0, "maximum": 16384 },
+        "record_type": { "enum": ["internet_descriptor", "city_descriptor"] }, "kind": { "type": "string" }, "repo_id": { "type": "string" }, "status": { "type": "string" }, "endpoint_path": { "type": ["string", "null"] }
+      }
+    },
+    "seeds-observation": {
+      "type": "object", "required": ["observation_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "record_type", "descriptor_url_count", "descriptor_urls_sha256", "matched_city_descriptor_url"], "additionalProperties": false,
+      "properties": {
+        "observation_id": { "type": "string" }, "node_id": { "type": "string" }, "repository_pin": { "type": "string" }, "path": { "type": "string" },
+        "blob_sha": { "type": "string", "minLength": 7, "maxLength": 64 }, "blob_size": { "type": "integer", "minimum": 0, "maximum": 16384 }, "decoded_length": { "type": "integer", "minimum": 0, "maximum": 16384 },
+        "record_type": { "const": "authority_seeds" }, "descriptor_url_count": { "type": "integer", "minimum": 0, "maximum": 128 }, "descriptor_urls_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "matched_city_descriptor_url": { "anyOf": [{ "type": "null" }, { "const": "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json" }] }
+      }
+    },
+    "semantic-check": {
+      "type": "object", "required": ["check_id", "kind", "status", "reason_code", "evidence_refs", "confidence"], "additionalProperties": false,
+      "properties": { "check_id": { "type": "string" }, "kind": { "const": "declared_discovery_seed" }, "status": { "enum": ["observed", "unproven", "mismatch"] }, "reason_code": { "type": "string" }, "evidence_refs": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "string" } }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "declared-edge": {
+      "type": "object", "required": ["from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "evidence_refs", "confidence"], "additionalProperties": false,
+      "properties": { "from_node": { "const": "kimeisele/agent-internet" }, "to_node": { "const": "kimeisele/agent-city" }, "kind": { "const": "declared_discovery_seed" }, "status": { "const": "observed" }, "declaration": { "const": "historical_pinned_sources" }, "target_ref_mutable": { "const": true }, "evidence_refs": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "string" } }, "confidence": { "$ref": "#/$defs/confidence" } }
     }
   }
 }

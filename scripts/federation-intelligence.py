@@ -9,6 +9,7 @@ a contract is exposed or that a dependency is actually used.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ import tempfile
 PROCEDURE_ID = "federation-intelligence-v0"
 PROCEDURE_VERSION = "1"
 MAX_CANDIDATES_PER_KIND = 128
+MAX_SEMANTIC_BLOB_BYTES = 16 * 1024
 CLUSTER = (
     ("kimeisele/agent-world", "agent-world"),
     ("kimeisele/agent-internet", "agent-internet"),
@@ -42,6 +44,13 @@ KNOWN_DEPENDENCY_MANIFESTS = {
     "pnpm-lock.yaml", "poetry.lock", "pyproject.toml", "requirements.txt",
     "requirements-dev.txt", "yarn.lock",
 }
+SEMANTIC_TARGETS = (
+    ("kimeisele/agent-internet", ".well-known/agent-federation.json", "internet_descriptor"),
+    ("kimeisele/agent-internet", "data/federation/authority-descriptor-seeds.json", "authority_seeds"),
+    ("kimeisele/agent-city", ".well-known/agent-federation.json", "city_descriptor"),
+)
+EXPECTED_CITY_URL = "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json"
+SEED_URL_RE = re.compile(r"^https://raw\.githubusercontent\.com/kimeisele/[a-z0-9][a-z0-9._-]*/main/\.well-known/agent-federation\.json$")
 
 
 class InputError(Exception):
@@ -179,6 +188,31 @@ def read_tree(repo: str, commit_sha: str, tree_sha: str) -> dict:
     }
 
 
+def read_blob(repo: str, entry: dict) -> tuple[bytes, int, dict]:
+    """Read one allowlisted blob and bind every transport property."""
+    blob_sha = entry.get("sha")
+    expected_size = entry.get("size")
+    if entry.get("type") != "blob" or not isinstance(blob_sha, str) or not SHA_RE.fullmatch(blob_sha):
+        raise InputError(f"semantic target is not a valid blob for {repo}")
+    if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size < 0 or expected_size > MAX_SEMANTIC_BLOB_BYTES:
+        raise InputError(f"semantic blob size is unavailable or over limit for {repo}")
+    response = read_api(repo, f"git/blobs/{blob_sha}")
+    if response.get("sha") != blob_sha or response.get("encoding") != "base64" or not isinstance(response.get("content"), str):
+        raise InputError(f"semantic blob response is not bound or base64 for {repo}")
+    if response.get("size") != expected_size:
+        raise InputError(f"semantic blob size does not match tree for {repo}")
+    try:
+        raw = base64.b64decode("".join(response["content"].split()), validate=True)
+        text = raw.decode("utf-8")
+        parsed = json.loads(text)
+    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise InputError(f"semantic blob is not valid UTF-8 JSON for {repo}") from exc
+    object_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    if object_sha != blob_sha or len(raw) != expected_size or len(raw) > MAX_SEMANTIC_BLOB_BYTES or not isinstance(parsed, dict):
+        raise InputError(f"semantic blob length or JSON shape is invalid for {repo}")
+    return raw, expected_size, parsed
+
+
 def confidence(level: str, basis: str, *caveats: str) -> dict:
     return {"level": level, "basis": basis, "caveats": list(caveats)}
 
@@ -257,7 +291,7 @@ def validate_candidate(value: object, evidence_by_id: dict, expected_nodes: set[
 
 def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
     index = read_json(index_path)
-    require_keys(index, {"schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "findings", "attention_items", "summary", "limitations"}, "index")
+    require_keys(index, {"schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "semantic", "relations", "findings", "attention_items", "summary", "limitations"}, "index")
     if index["schema"] != "federation-intelligence-v0" or index["procedure_id"] != PROCEDURE_ID or index["procedure_version"] != PROCEDURE_VERSION or index["procedure"] != {"id": PROCEDURE_ID, "version": PROCEDURE_VERSION}:
         raise InputError("index: invalid procedure identity")
     expected_nodes = {repo for repo, _ in CLUSTER}
@@ -339,8 +373,79 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
             raise InputError(f"{label}: candidate cap or shape violation")
         for number, value in enumerate(values):
             validate_candidate(value, evidence_by_id, expected_nodes, f"{label}[{number}]")
-    if index["dependencies"]["observed_edges"]:
-        raise InputError("dependencies: no observed edge is allowed in this metadata-only slice")
+    require_keys(index["semantic"], {"observations", "checks"}, "semantic")
+    semantic_by_id = {}
+    known_semantic = {
+        ("kimeisele/agent-internet", ".well-known/agent-federation.json", "internet_descriptor"),
+        ("kimeisele/agent-internet", "data/federation/authority-descriptor-seeds.json", "authority_seeds"),
+        ("kimeisele/agent-city", ".well-known/agent-federation.json", "city_descriptor"),
+    }
+    for observation in index["semantic"]["observations"]:
+        record_type = observation.get("record_type") if isinstance(observation, dict) else None
+        if record_type in {"internet_descriptor", "city_descriptor"}:
+            expected = {"observation_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "record_type", "kind", "repo_id", "status", "endpoint_path"}
+        elif record_type == "authority_seeds":
+            expected = {"observation_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "record_type", "descriptor_url_count", "descriptor_urls_sha256", "matched_city_descriptor_url"}
+        else:
+            raise InputError("semantic observation: unknown record type")
+        require_keys(observation, expected, "semantic observation")
+        identity = (observation["node_id"], observation["path"], record_type)
+        if identity not in known_semantic or observation["observation_id"] in semantic_by_id:
+            raise InputError("semantic observation: duplicate or out-of-scope target")
+        canonical_posix_path(observation["path"], "semantic observation.path")
+        expected_ref = pin_reference(root, pins_root / f"{observation['node_id'].split('/')[-1]}.json")
+        if observation["repository_pin"] != expected_ref or not SHA_RE.fullmatch(observation["blob_sha"]):
+            raise InputError("semantic observation: pin or blob binding is invalid")
+        for field in ("blob_size", "decoded_length"):
+            if isinstance(observation[field], bool) or not isinstance(observation[field], int) or observation[field] < 0 or observation[field] > MAX_SEMANTIC_BLOB_BYTES:
+                raise InputError("semantic observation: invalid bounded blob size")
+        if observation["decoded_length"] != observation["blob_size"]:
+            raise InputError("semantic observation: decoded length mismatch")
+        if record_type in {"internet_descriptor", "city_descriptor"}:
+            if any(not isinstance(observation[field], str) or len(observation[field]) > 256 for field in ("kind", "repo_id", "status")):
+                raise InputError("semantic observation: descriptor fields must be bounded strings")
+            if observation["endpoint_path"] is not None and (not isinstance(observation["endpoint_path"], str) or len(observation["endpoint_path"]) > 256):
+                raise InputError("semantic observation: endpoint path must be a bounded string")
+        if record_type == "authority_seeds" and (isinstance(observation["descriptor_url_count"], bool)
+                or not isinstance(observation["descriptor_url_count"], int) or observation["descriptor_url_count"] < 0
+                or observation["descriptor_url_count"] > 128 or not re.fullmatch(r"^[0-9a-f]{64}$", observation["descriptor_urls_sha256"])
+                or observation["matched_city_descriptor_url"] not in {None, EXPECTED_CITY_URL}):
+            raise InputError("semantic observation: invalid compact descriptor URL summary")
+        semantic_by_id[observation["observation_id"]] = observation
+    if set((item["node_id"], item["path"], item["record_type"]) for item in index["semantic"]["observations"]) != known_semantic:
+        raise InputError("semantic observations: exact three-target set required")
+    if not isinstance(index["semantic"]["checks"], list) or len(index["semantic"]["checks"]) != 1:
+        raise InputError("semantic checks: exactly one bounded check required")
+    check = index["semantic"]["checks"][0]
+    require_keys(check, {"check_id", "kind", "status", "reason_code", "evidence_refs", "confidence"}, "semantic check")
+    allowed_reasons = {"all_declarations_agree", "internet_descriptor_fields_mismatch", "seed_urls_malformed", "seed_urls_duplicate", "expected_city_seed_not_declared", "city_descriptor_fields_mismatch"}
+    if check["kind"] != "declared_discovery_seed" or check["status"] not in {"observed", "unproven", "mismatch"} or check["reason_code"] not in allowed_reasons or not isinstance(check["evidence_refs"], list) or set(check["evidence_refs"]) != set(semantic_by_id):
+        raise InputError("semantic check: invalid status or evidence binding")
+    internet_observation = next(item for item in semantic_by_id.values() if item["record_type"] == "internet_descriptor")
+    city_observation = next(item for item in semantic_by_id.values() if item["record_type"] == "city_descriptor")
+    seed_observation = next(item for item in semantic_by_id.values() if item["record_type"] == "authority_seeds")
+    if check["status"] == "observed":
+        if (internet_observation["kind"], internet_observation["repo_id"], internet_observation["status"], internet_observation["endpoint_path"]) != ("agent_federation_descriptor", "kimeisele/agent-internet", "active", "data/federation/authority-descriptor-seeds.json"):
+            raise InputError("semantic observation: internet descriptor fields are not exact")
+        if (city_observation["kind"], city_observation["repo_id"], city_observation["status"]) != ("agent_federation_descriptor", "kimeisele/agent-city", "active"):
+            raise InputError("semantic observation: city descriptor fields are not exact")
+        if seed_observation["matched_city_descriptor_url"] != EXPECTED_CITY_URL:
+            raise InputError("semantic check: observed result lacks exact matched city URL")
+    require_keys(index["relations"], {"declared_edges"}, "relations")
+    if check["status"] != "observed" and index["relations"]["declared_edges"]:
+        raise InputError("relations: no declared edge is allowed for a non-observed check")
+    if check["status"] == "observed":
+        edges = index["relations"]["declared_edges"]
+        if len(edges) != 1:
+            raise InputError("semantic check: observed result requires one edge")
+        edge = edges[0]
+        require_keys(edge, {"from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "evidence_refs", "confidence"}, "dependency edge")
+        if (edge["from_node"], edge["to_node"], edge["kind"], edge["status"], edge["declaration"], edge["target_ref_mutable"]) != ("kimeisele/agent-internet", "kimeisele/agent-city", "declared_discovery_seed", "observed", "historical_pinned_sources", True) or set(edge["evidence_refs"]) != set(semantic_by_id):
+            raise InputError("dependency edge: semantic declaration binding invalid")
+    elif index["relations"]["declared_edges"]:
+        raise InputError("relations: no edge is allowed for an unproven or mismatched semantic check")
+    if index["dependencies"]["observed_edges"] != []:
+        raise InputError("dependencies: observed implementation/runtime edges must remain empty")
     if index["findings"] != [] or index["attention_items"] != []:
         raise InputError("findings/attention_items: this slice must remain empty")
     expected_summary = {
@@ -352,11 +457,95 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
         "contract_candidates": len(index["contracts"]["candidates"]),
         "dependency_candidates": len(index["dependencies"]["candidates"]),
         "findings": 0,
+        "semantic_checks": 1,
+        "declared_relations": len(index["relations"]["declared_edges"]),
     }
     if index["summary"] != expected_summary:
         raise InputError("summary does not match indexed records")
     if not isinstance(index["limitations"], list) or not all(isinstance(item, str) and len(item) <= 256 for item in index["limitations"]):
         raise InputError("limitations: invalid shape")
+
+
+def semantic_index(root: Path, pins_root: Path, trees: dict[str, dict]) -> dict:
+    observations = []
+    parsed = {}
+    for repo, path, record_type in SEMANTIC_TARGETS:
+        node_id = repo
+        pin_path = pins_root / f"{node_id.split('/')[-1]}.json"
+        tree = trees[node_id]
+        entry = next((item for item in tree["entries"] if item["path"] == path), None)
+        if entry is None:
+            raise InputError(f"semantic target is absent from pinned tree: {repo}:{path}")
+        raw, size, document = read_blob(repo, entry)
+        observation_id = "evidence-semantic-" + canonical_sha256({"repo": repo, "path": path, "sha": entry["sha"]})[:12]
+        common = {
+            "observation_id": observation_id,
+            "node_id": repo,
+            "repository_pin": pin_reference(root, pin_path),
+            "path": path,
+            "blob_sha": entry["sha"],
+            "blob_size": size,
+            "decoded_length": len(raw),
+        }
+        if record_type in {"internet_descriptor", "city_descriptor"}:
+            endpoints = document.get("endpoints") if isinstance(document.get("endpoints"), dict) else {}
+            observations.append({**common, "record_type": record_type,
+                                 "kind": document.get("kind"), "repo_id": document.get("repo_id"),
+                                 "status": document.get("status"),
+                                 "endpoint_path": endpoints.get("authority_descriptor_seeds")})
+        else:
+            observations.append({**common, "record_type": record_type})
+        parsed[record_type] = document
+
+    for item in observations:
+        if item["record_type"] == "authority_seeds":
+            urls = parsed["authority_seeds"].get("descriptor_urls")
+            valid_urls = isinstance(urls, list) and all(isinstance(url, str) and SEED_URL_RE.fullmatch(url) for url in urls)
+            duplicate_urls = valid_urls and len(urls) != len(set(urls))
+            expected_count = urls.count(EXPECTED_CITY_URL) if isinstance(urls, list) else 0
+            item["descriptor_url_count"] = len(urls) if isinstance(urls, list) else 0
+            item["descriptor_urls_sha256"] = canonical_sha256(sorted(urls)) if valid_urls else "0" * 64
+            item["matched_city_descriptor_url"] = EXPECTED_CITY_URL if valid_urls and expected_count == 1 else None
+    internet = next(item for item in observations if item["record_type"] == "internet_descriptor")
+    seeds = next(item for item in observations if item["record_type"] == "authority_seeds")
+    city = next(item for item in observations if item["record_type"] == "city_descriptor")
+    references = [item["observation_id"] for item in observations]
+    descriptor_fields_ok = (
+        internet["kind"] == "agent_federation_descriptor"
+        and internet["repo_id"] == "kimeisele/agent-internet"
+        and internet["status"] == "active"
+        and internet["endpoint_path"] == "data/federation/authority-descriptor-seeds.json"
+    )
+    city_fields_ok = (
+        city["kind"] == "agent_federation_descriptor"
+        and city["repo_id"] == "kimeisele/agent-city"
+        and city["status"] == "active"
+    )
+    urls = parsed["authority_seeds"].get("descriptor_urls")
+    urls_ok = isinstance(urls, list) and all(isinstance(url, str) and SEED_URL_RE.fullmatch(url) for url in urls)
+    duplicate_urls = urls_ok and len(urls) != len(set(urls))
+    if not descriptor_fields_ok:
+        status, reason = "mismatch", "internet_descriptor_fields_mismatch"
+    elif not urls_ok:
+        status, reason = "mismatch", "seed_urls_malformed"
+    elif duplicate_urls:
+        status, reason = "mismatch", "seed_urls_duplicate"
+    elif EXPECTED_CITY_URL not in urls:
+        status, reason = "unproven", "expected_city_seed_not_declared"
+    elif not city_fields_ok:
+        status, reason = "mismatch", "city_descriptor_fields_mismatch"
+    else:
+        status, reason = "observed", "all_declarations_agree"
+    check = {
+        "check_id": "semantic-check-declared-discovery-seed",
+        "kind": "declared_discovery_seed",
+        "status": status,
+        "reason_code": reason,
+        "evidence_refs": references,
+        "confidence": confidence("medium" if status == "observed" else "low", "direct_pinned_observation",
+                                   "historical declaration is not runtime dependency or current truth"),
+    }
+    return {"observations": observations, "checks": [check]}
 
 
 def build_index(root: Path, pins_root: Path) -> dict:
@@ -367,6 +556,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
     entrypoints = []
     contract_candidates = []
     dependency_candidates = []
+    trees = {}
 
     for repo, node_id in CLUSTER:
         pin_path = pins_root / f"{node_id}.json"
@@ -374,6 +564,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
         pin_sha = pin["resolved_commit_sha"]
         commit = read_commit(repo, pin_sha)
         tree = read_tree(repo, pin_sha, commit["tree_sha"])
+        trees[repo] = tree
         evidence_id = "evidence-intel-" + canonical_sha256({"repo": repo, "sha": pin_sha, "tree": tree["sha"]})[:12]
         evidence.append({
             "evidence_id": evidence_id,
@@ -427,6 +618,20 @@ def build_index(root: Path, pins_root: Path) -> dict:
     run_timestamp = max(node["pin_observation_timestamp"] for node in nodes)
     total_entries = sum(node["tree"]["total_entry_count"] for node in nodes)
     total_blobs = sum(node["tree"]["counts"]["blob_count"] for node in nodes)
+    semantic = semantic_index(root, pins_root, trees)
+    semantic_check = semantic["checks"][0]
+    observed_edges = []
+    if semantic_check["status"] == "observed":
+        observed_edges.append({
+            "from_node": "kimeisele/agent-internet",
+            "to_node": "kimeisele/agent-city",
+            "kind": "declared_discovery_seed",
+            "status": "observed",
+            "declaration": "historical_pinned_sources",
+            "target_ref_mutable": True,
+            "evidence_refs": semantic_check["evidence_refs"],
+            "confidence": semantic_check["confidence"],
+        })
     return {
         "schema": "federation-intelligence-v0",
         "procedure": {"id": PROCEDURE_ID, "version": PROCEDURE_VERSION},
@@ -443,6 +648,8 @@ def build_index(root: Path, pins_root: Path) -> dict:
         "entrypoints": entrypoints,
         "contracts": {"observed": [], "candidates": contract_candidates},
         "dependencies": {"observed_edges": [], "candidates": dependency_candidates},
+        "semantic": semantic,
+        "relations": {"declared_edges": observed_edges},
         "findings": [],
         "attention_items": [],
         "summary": {
@@ -454,10 +661,12 @@ def build_index(root: Path, pins_root: Path) -> dict:
             "contract_candidates": len(contract_candidates),
             "dependency_candidates": len(dependency_candidates),
             "findings": 0,
+            "semantic_checks": len(semantic["checks"]),
+            "declared_relations": len(observed_edges),
         },
         "limitations": [
             "Tree metadata identifies candidate paths only; file contents and runtime wiring were not read.",
-            "No dependency edge is asserted without pinned content evidence.",
+            "One declared discovery relation is historical and mutable; dependencies.observed_edges remains empty because no runtime or implementation dependency is asserted.",
             "The pin records are historical observations and do not claim current branch state.",
         ],
     }
