@@ -6,6 +6,14 @@
 > §3.2). Both files live outside `CLAUDE.md` for the same reason — a model name
 > is a vendor snapshot and will rot.
 
+> **Current-policy supersession — 2026-08-11:** The owner-adopted RECOVERY-1
+> policy makes architectural/procedural separation the independence property;
+> provider diversity is optional. DeepSeek V4 Flash is the sole routine model;
+> Qwen is historical provenance and DO NOT INVOKE/non-operative. Consultation
+> is optional evidence, provider identity grants no authority, and owner-only
+> manual merge remains external to this file. The historical roster below is
+> retained unchanged where possible; RECOVERY-2 enforcement is still open.
+
 ## Primary review channel: the review pipeline
 
 The **review pipeline** (`scripts/review.sh`) is the primary review channel for

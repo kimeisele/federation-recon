@@ -276,8 +276,11 @@ Not established by this gate:
   - that a test fails when the thing it guards breaks. Run the mutation
     yourself: break the check, confirm the suite goes red, restore.
   - that the change is the right thing rather than a correct thing.
-  - that an independent reviewer of a different provider has seen it —
-    required for risk class HIGH. See governance/adversarial-review.md.
+  - that an architecturally separate adversarial review with sealed inputs,
+    pre-existing oracles, and deterministic evidence has completed. That is
+    required for risk class HIGH; current pipeline verdicts remain
+    non-authoritative until RECOVERY-2 closes the enforcement gaps.
+    See governance/adversarial-review.md and docs/recovery-1-contract.md.
 NOTE
 
   exit "$fail"

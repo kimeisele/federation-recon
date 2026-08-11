@@ -4,6 +4,13 @@
 **Risk class:** The specification itself is LOW (document, no code). Adoption
 requires OWNER-ONLY authorization via a separate PR, per `docs/amendments.md`.
 
+> **Current-policy supersession — 2026-08-11:** This is a historical draft, not
+> an execution guarantee. The adopted RECOVERY-1 policy uses DeepSeek V4 Flash
+> for routine operation, does not require provider diversity, and forbids Qwen
+> invocation. Provider allowlisting in `scripts/review.sh`, immutable-input
+> separation, Tier-2 completion, and deterministic kernel enforcement remain
+> RECOVERY-2 gaps; pipeline verdicts are non-authoritative until implemented.
+
 ## Problem statement
 
 The cross-provider adversarial review process collapsed on 2026-08-02:
