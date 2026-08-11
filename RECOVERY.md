@@ -267,3 +267,18 @@ Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durab
 - Environment-dependent reproduction and the partial-read crash are routed to #248 as `REBUILD`; no fix was attempted in RECOVERY-0.
 - PR #238 and #242 remain rejected candidates and must be re-derived in RECOVERY-2.
 - Next workstream: RECOVERY-1 Part B, prospective adoption of the executable trust contract.
+
+### RECOVERY-1 Part B — DRAFT PROPOSAL — NOT ADOPTED — OWNER DECISION REQUIRED
+
+The prospective contract is drafted in
+[`docs/recovery-1-contract.md`](docs/recovery-1-contract.md). It defines
+architectural review independence, the deterministic fail-closed trust kernel,
+owner-alone manual merge; any future integrator is outside this proposal and
+requires a separate constitutional amendment,
+property-specific baselines, and safe two-generation self-extension. Provider
+diversity is optional metadata, not the independence property.
+
+This is **not adopted or complete**. Existing conflicting constitution text,
+scripts, gates, permissions, and historical records remain in force until a
+separate owner-authorized adoption/implementation sequence. This proposal
+authorizes no code, permission, credential, guardrail, or ruleset change.
