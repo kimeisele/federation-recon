@@ -38,15 +38,24 @@ commit_seal_check() {
   printf '%s\n' "$head"
 }
 
+materialize_commit_snapshot() {
+  local root="$1" head="$2" snapshot="$3" path
+  for path in "${SEAL_PATHS[@]}"; do
+    mkdir -p "$snapshot/$(dirname "$path")"
+    git -C "$root" show "$head:$path" >"$snapshot/$path" || return 1
+  done
+}
+
 run_corpus_evaluator() {
-  local head blob_evaluator
+  local head snapshot blob_evaluator
   head="$(commit_seal_check "$REPO_ROOT" 2>/dev/null)" || {
     echo "FAIL — commit seal unavailable; root commit and clean tracked worktree required" >&2
     return 1
   }
-  blob_evaluator="$BATS_TEST_TMPDIR/evaluator-from-$head.py"
-  git -C "$REPO_ROOT" show "$head:governance/review-kernel-bootstrap/v2/evaluator.py" >"$blob_evaluator" || return 1
-  python3 "$blob_evaluator" --corpus-root "$ORACLE"
+  snapshot="$BATS_TEST_TMPDIR/commit-snapshot-$head"
+  materialize_commit_snapshot "$REPO_ROOT" "$head" "$snapshot" || return 1
+  blob_evaluator="$snapshot/governance/review-kernel-bootstrap/v2/evaluator.py"
+  python3 "$blob_evaluator" --corpus-root "$snapshot/governance/review-kernel-bootstrap/v2"
 }
 
 make_seal_fixture() {
@@ -144,17 +153,25 @@ PY
 }
 
 @test "commit seal blocks corpus mutation and evaluator symlink before blob execution" {
-  local fixture head blob fake
+  local fixture head blob fake snapshot before
   fixture="$BATS_TEST_TMPDIR/clean-seal"
   mkdir -p "$fixture"
   make_seal_fixture "$fixture"
   head="$(commit_seal_check "$fixture" 0)"
   [ -n "$head" ]
-  blob="$BATS_TEST_TMPDIR/blob-evaluator.py"
-  git -C "$fixture" show "$head:governance/review-kernel-bootstrap/v2/evaluator.py" >"$blob"
-  run python3 "$blob" --corpus-root "$fixture/governance/review-kernel-bootstrap/v2"
+  snapshot="$BATS_TEST_TMPDIR/fixture-snapshot"
+  materialize_commit_snapshot "$fixture" "$head" "$snapshot"
+  blob="$snapshot/governance/review-kernel-bootstrap/v2/evaluator.py"
+  run python3 "$blob" --corpus-root "$snapshot/governance/review-kernel-bootstrap/v2"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"input_mode":"CORPUS_INTEGRITY_VERIFIED"'* ]]
+
+  before="$output"
+  printf '\ncoordinated worktree mutation\n' >> "$fixture/governance/review-kernel-bootstrap/v2/vectors.json"
+  printf '\ncoordinated worktree mutation\n' >> "$fixture/governance/review-kernel-bootstrap/v2/digests.json"
+  run python3 "$blob" --corpus-root "$snapshot/governance/review-kernel-bootstrap/v2"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$before" ]
 
   printf '\nmutation\n' >> "$fixture/governance/review-kernel-bootstrap/v2/vectors.json"
   run commit_seal_check "$fixture" 0
