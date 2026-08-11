@@ -17,16 +17,55 @@ sha="${endpoint##*/git/}"
 sha="${sha##*/}"
 sha="${sha%%\?*}"
 python3 - "$endpoint" "$sha" <<'PY'
+import base64
+import hashlib
 import json, sys
 import os
 endpoint, sha = sys.argv[1:]
 tree_sha = "9999999999999999999999999999999999999999"
+repo = "/".join(endpoint.split("/")[1:3])
+city_url = "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json"
+descriptor = {"kind": "agent_federation_descriptor", "repo_id": repo, "status": "active", "endpoints": {"authority_descriptor_seeds": "data/federation/authority-descriptor-seeds.json"}}
+if "WRONG_ENDPOINT" in os.environ:
+    descriptor["endpoints"]["authority_descriptor_seeds"] = "wrong.json"
+seeds = {"descriptor_urls": [city_url]}
+if "MISSING_URL" in os.environ:
+    seeds["descriptor_urls"] = []
+if "DUPLICATE_URL" in os.environ:
+    seeds["descriptor_urls"].append(city_url)
+if "MALFORMED_URL" in os.environ:
+    seeds["descriptor_urls"] = ["not-a-url"]
+if "CITY_MISMATCH" in os.environ and "agent-city" in repo:
+    descriptor["repo_id"] = "kimeisele/agent-world"
+if "WRONG_STATUS" in os.environ:
+    descriptor["status"] = "inactive"
+if "WRONG_KIND" in os.environ:
+    descriptor["kind"] = "forged_descriptor"
+payloads = {
+    ".well-known/agent-federation.json": json.dumps(descriptor).encode(),
+    "data/federation/authority-descriptor-seeds.json": json.dumps(seeds).encode(),
+}
+blob_ids = {path: hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() for path, raw in payloads.items()}
 if "/git/commits/" in endpoint:
     response = {"sha": "0000000000000000000000000000000000000000" if "BAD_COMMIT" in os.environ else sha, "tree": {"sha": tree_sha}}
     print(json.dumps(response))
     raise SystemExit
+if "/git/blobs/" in endpoint:
+    target = next((path for path, blob_sha in blob_ids.items() if blob_sha == sha), None)
+    raw = payloads.get(target, b"{}")
+    if "SAME_SIZE_BAD_CONTENT" in os.environ and raw:
+        raw = raw[:-1] + (b"X" if raw[-1:] != b"X" else b"Y")
+    content = base64.b64encode(raw).decode()
+    if "BAD_BLOB_BASE64" in os.environ:
+        content = "%%%"
+    response = {"sha": "0000000000000000000000000000000000000000" if "BAD_BLOB_SHA" in os.environ else sha,
+                "size": len(raw) + (1 if "BAD_BLOB_SIZE" in os.environ else 0),
+                "encoding": "utf-8" if "BAD_BLOB_ENCODING" in os.environ else "base64", "content": content}
+    print(json.dumps(response))
+    raise SystemExit
 tree = [
-        {"path": ".well-known/agent-federation.json", "mode": "100644", "type": "blob", "sha": "1111111111111111111111111111111111111111", "size": 64},
+        {"path": ".well-known/agent-federation.json", "mode": "100644", "type": "blob", "sha": blob_ids[".well-known/agent-federation.json"], "size": len(payloads[".well-known/agent-federation.json"])},
+        {"path": "data/federation/authority-descriptor-seeds.json", "mode": "100644", "type": "blob", "sha": blob_ids["data/federation/authority-descriptor-seeds.json"], "size": len(payloads["data/federation/authority-descriptor-seeds.json"])},
         {"path": "docs/PUBLIC_FEDERATION_SURFACE.md", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222", "size": 128},
         {"path": "package.json", "mode": "100644", "type": "blob", "sha": "3333333333333333333333333333333333333333", "size": 256},
         {"path": "src/main.py", "mode": "100644", "type": "blob", "sha": "4444444444444444444444444444444444444444", "size": 512},
@@ -76,8 +115,16 @@ assert all(n["tree"]["sha"] == "9999999999999999999999999999999999999999" for n 
 assert all(n["commit_sha"] == n["pin_sha"] for n in index["nodes"])
 assert all(n["dirty_state_assertion"] is False for n in index["nodes"])
 assert all("tree_entries" not in n for n in index["nodes"])
-assert all(n["tree"]["counts"]["blob_count"] == 4 for n in index["nodes"])
+assert all(n["tree"]["counts"]["blob_count"] == 5 for n in index["nodes"])
 assert index["dependencies"]["observed_edges"] == []
+assert len(index["relations"]["declared_edges"]) == 1
+assert index["relations"]["declared_edges"][0]["kind"] == "declared_discovery_seed"
+assert index["relations"]["declared_edges"][0]["target_ref_mutable"] is True
+assert index["semantic"]["checks"][0]["status"] == "observed"
+seed = next(item for item in index["semantic"]["observations"] if item["record_type"] == "authority_seeds")
+assert "descriptor_urls" not in seed and seed["matched_city_descriptor_url"].endswith("agent-city/main/.well-known/agent-federation.json")
+assert "display_name" not in json.dumps(index)
+assert "description" not in json.dumps(index)
 assert all(c["inference_status"] == "candidate_only" for c in index["contracts"]["candidates"])
 assert all(c["inference_status"] == "candidate_only" for c in index["dependencies"]["candidates"])
 assert all(c["type"] == "blob" and isinstance(c["size"], int) and len(c["sha"]) == 40 for c in index["contracts"]["candidates"])
@@ -123,6 +170,44 @@ PY
   done
 }
 
+@test "semantic falsifiers produce bounded non-edge results" {
+  for mode in WRONG_ENDPOINT MISSING_URL DUPLICATE_URL MALFORMED_URL CITY_MISMATCH WRONG_STATUS WRONG_KIND; do
+    run env "$mode=1" PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+      --pins-root "$WORKDIR/pins" --output "$WORKDIR/$mode.json"
+    [ "$status" -eq 0 ]
+    python3 - "$WORKDIR/$mode.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+index = json.load(open(path))
+for item in index["nodes"] + index["evidence"] + index["semantic"]["observations"]:
+    item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
+json.dump(index, open(path, "w"), indent=2)
+PY
+    run env PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+      --validate-only --pins-root "$REPO_ROOT/pins/v1-census" --output "$WORKDIR/$mode.json"
+    [ "$status" -eq 0 ]
+    python3 - "$WORKDIR/$mode.json" "$mode" <<'PY'
+import json, sys
+index, mode = json.load(open(sys.argv[1])), sys.argv[2]
+check = index["semantic"]["checks"][0]
+assert check["status"] == ("unproven" if mode == "MISSING_URL" else "mismatch")
+assert index["dependencies"]["observed_edges"] == []
+assert index["relations"]["declared_edges"] == []
+assert all("description" not in item for item in index["semantic"]["observations"])
+PY
+  done
+}
+
+@test "semantic blob transport and content binding fail closed" {
+  for mode in BAD_BLOB_SHA BAD_BLOB_SIZE BAD_BLOB_ENCODING BAD_BLOB_BASE64 SAME_SIZE_BAD_CONTENT; do
+    printf 'sentinel\n' > "$WORKDIR/$mode.json"
+    run env "$mode=1" PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+      --pins-root "$WORKDIR/pins" --output "$WORKDIR/$mode.json"
+    [ "$status" -ne 0 ]
+    grep -qx 'sentinel' "$WORKDIR/$mode.json"
+  done
+}
+
 @test "validate-only rejects an evidence reference that does not resolve" {
   run run_index "$WORKDIR/index.json"
   [ "$status" -eq 0 ]
@@ -134,6 +219,8 @@ for node in index["nodes"]:
     node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
 for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["evidence_refs"] = ["missing-evidence"]
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -154,6 +241,8 @@ for node in index["nodes"]:
     node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
 for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 index["evidence"][0]["tree_sha"] = "8888888888888888888888888888888888888888"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -174,6 +263,8 @@ for node in index["nodes"]:
     node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
 for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["sha"] = "7777777777777777777777777777777777777777"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -194,6 +285,8 @@ for node in index["nodes"]:
     node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
 for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["path"] = "./src/main.py"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -214,6 +307,8 @@ for node in index["nodes"]:
     node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
 for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 index["contracts"]["observed"].append({})
 json.dump(index, open(path, "w"), indent=2)
 PY

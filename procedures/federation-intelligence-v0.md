@@ -10,9 +10,15 @@
 - `--validate-only` checks offline structure, relations, and canonical digest integrity; it does not prove source membership.
 - `--verify-source` additionally performs fresh immutable commit-then-tree reads and compares the complete canonical index, including paths, modes, sizes, and blob SHAs.
 
+The semantic slice records one historical, mutable declared relation in
+`relations.declared_edges`. `dependencies.observed_edges` is intentionally
+always empty: zero runtime and zero implementation dependency edges are
+asserted by this procedure.
+
 The index records immutable tree metadata and bounded path-name candidates for
 entrypoints, contract files, and dependency manifests. A candidate is not an
-observed runtime contract or dependency edge. The output has zero dependency
-edges until pinned content evidence supports one. Any missing, malformed,
-truncated, or mismatched pinned input fails the run without replacing an
-existing output.
+observed runtime contract or dependency edge. `dependencies.observed_edges`
+remains empty. Pinned content may produce at most one historical, mutable
+relation under `relations.declared_edges`; this is not a runtime or
+implementation dependency. Any missing, malformed, truncated, or mismatched
+pinned input fails the run without replacing an existing output.

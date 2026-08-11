@@ -293,7 +293,7 @@
   "findings": [],
   "limitations": [
     "Tree metadata identifies candidate paths only; file contents and runtime wiring were not read.",
-    "No dependency edge is asserted without pinned content evidence.",
+    "One declared discovery relation is historical and mutable; dependencies.observed_edges remains empty because no runtime or implementation dependency is asserted.",
     "The pin records are historical observations and do not claim current branch state."
   ],
   "nodes": [
@@ -424,6 +424,30 @@
   },
   "procedure_id": "federation-intelligence-v0",
   "procedure_version": "1",
+  "relations": {
+    "declared_edges": [
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "historical declaration is not runtime dependency or current truth"
+          ],
+          "level": "medium"
+        },
+        "declaration": "historical_pinned_sources",
+        "evidence_refs": [
+          "evidence-semantic-fcaaf113c091",
+          "evidence-semantic-fca290466815",
+          "evidence-semantic-80798f9fb20b"
+        ],
+        "from_node": "kimeisele/agent-internet",
+        "kind": "declared_discovery_seed",
+        "status": "observed",
+        "target_ref_mutable": true,
+        "to_node": "kimeisele/agent-city"
+      }
+    ]
+  },
   "run_timestamp": "2026-08-08T16:57:21Z",
   "schema": "federation-intelligence-v0",
   "scope": {
@@ -435,14 +459,81 @@
     ],
     "source_state": "historical_pinned_commits"
   },
+  "semantic": {
+    "checks": [
+      {
+        "check_id": "semantic-check-declared-discovery-seed",
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "historical declaration is not runtime dependency or current truth"
+          ],
+          "level": "medium"
+        },
+        "evidence_refs": [
+          "evidence-semantic-fcaaf113c091",
+          "evidence-semantic-fca290466815",
+          "evidence-semantic-80798f9fb20b"
+        ],
+        "kind": "declared_discovery_seed",
+        "reason_code": "all_declarations_agree",
+        "status": "observed"
+      }
+    ],
+    "observations": [
+      {
+        "blob_sha": "b574cc9ef1c39091b70597c0273be6162ef3db42",
+        "blob_size": 518,
+        "decoded_length": 518,
+        "endpoint_path": "data/federation/authority-descriptor-seeds.json",
+        "kind": "agent_federation_descriptor",
+        "node_id": "kimeisele/agent-internet",
+        "observation_id": "evidence-semantic-fcaaf113c091",
+        "path": ".well-known/agent-federation.json",
+        "record_type": "internet_descriptor",
+        "repo_id": "kimeisele/agent-internet",
+        "repository_pin": "pins/v1-census/agent-internet.json",
+        "status": "active"
+      },
+      {
+        "blob_sha": "581d9eb4a68e8b1fa843703426c2fc745f26c9db",
+        "blob_size": 754,
+        "decoded_length": 754,
+        "descriptor_url_count": 7,
+        "descriptor_urls_sha256": "a15b411d7490178c7d04496b5f3950701f35846717b842724adee05568f8678a",
+        "matched_city_descriptor_url": "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json",
+        "node_id": "kimeisele/agent-internet",
+        "observation_id": "evidence-semantic-fca290466815",
+        "path": "data/federation/authority-descriptor-seeds.json",
+        "record_type": "authority_seeds",
+        "repository_pin": "pins/v1-census/agent-internet.json"
+      },
+      {
+        "blob_sha": "fb4c4b82abf749d0b35a2e470cfd58270300bb78",
+        "blob_size": 1029,
+        "decoded_length": 1029,
+        "endpoint_path": null,
+        "kind": "agent_federation_descriptor",
+        "node_id": "kimeisele/agent-city",
+        "observation_id": "evidence-semantic-80798f9fb20b",
+        "path": ".well-known/agent-federation.json",
+        "record_type": "city_descriptor",
+        "repo_id": "kimeisele/agent-city",
+        "repository_pin": "pins/v1-census/agent-city.json",
+        "status": "active"
+      }
+    ]
+  },
   "summary": {
     "blob_entries": 728,
     "contract_candidates": 7,
+    "declared_relations": 1,
     "dependency_candidates": 3,
     "entrypoint_candidates": 2,
     "findings": 0,
     "observed_nodes": 3,
     "pins": 3,
+    "semantic_checks": 1,
     "tree_entries": 797
   }
 }
