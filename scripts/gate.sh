@@ -233,6 +233,7 @@ set -m
       run()  { ( cd "$wt_dir" || exit 1
                  RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce       >"$LOGDIR/reproduce-recon.log"       2>&1
                  RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce >"$LOGDIR/reproduce-census.log"     2>&1
+                 python3 scripts/federation-intelligence.py                       >"$LOGDIR/reproduce-intelligence.log" 2>&1
                  RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce >"$LOGDIR/reproduce-consumption.log" 2>&1
                  bash scripts/compose-digest.sh                                  >"$LOGDIR/reproduce-digest.log"     2>&1 ); }
       before="$(cd "$wt_dir" && snap)"; run; a="$(cd "$wt_dir" && snap)"; run; b="$(cd "$wt_dir" && snap)"
