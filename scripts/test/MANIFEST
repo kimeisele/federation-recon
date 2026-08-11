@@ -42,6 +42,7 @@ pr-opener-canary.bats
 provider-probe-clock.bats
 review-tier0-ci.bats
 review-runner.bats
+review-kernel-bootstrap.bats
 review-verdict.bats
 schedule-watchdog.bats
 seatbelt-unit.bats

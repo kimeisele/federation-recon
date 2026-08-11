@@ -1,0 +1,137 @@
+{
+  "manifest_version": "r2-bootstrap-v2",
+  "evaluator_version": "r2-bootstrap-evaluator-1",
+  "oracle_role": "NON_AUTHORITATIVE_BOOTSTRAP_REFERENCE",
+  "files": [
+    "manifest.json",
+    "vectors.json",
+    "expected.json",
+    "digests.json",
+    "evaluator.py"
+  ],
+  "corpus_files": [
+    "manifest.json",
+    "vectors.json",
+    "expected.json",
+    "evaluator.py"
+  ],
+  "harness": "scripts/test/review-kernel-bootstrap.bats",
+  "outcome_enum": [
+    "APPROVE",
+    "REJECT",
+    "HOLD",
+    "STALE"
+  ],
+  "stored_verdict_enum": [
+    "APPROVE",
+    "REJECT",
+    "PARTIAL",
+    "STALE",
+    "HOLD"
+  ],
+  "properties": [
+    {
+      "id": "shape",
+      "vectors": [
+        "approve",
+        "legacy-v1",
+        "extra-field",
+        "missing-tasks",
+        "wrong-pr",
+        "wrong-findings-type"
+      ]
+    },
+    {
+      "id": "identity",
+      "vectors": [
+        "approve",
+        "stale",
+        "malformed-sha",
+        "unavailable-current",
+        "sha64"
+      ]
+    },
+    {
+      "id": "stored-verdict",
+      "vectors": [
+        "approve",
+        "partial-stored",
+        "unknown-stored"
+      ]
+    },
+    {
+      "id": "low-tier2-not-run",
+      "vectors": [
+        "approve"
+      ]
+    },
+    {
+      "id": "high-tier2-not-run",
+      "vectors": [
+        "high-tier2-not-run"
+      ]
+    },
+    {
+      "id": "tier2-evidence",
+      "vectors": [
+        "tier2-complete",
+        "tier2-error"
+      ]
+    },
+    {
+      "id": "severity-preservation",
+      "vectors": [
+        "blocking-confirmed",
+        "blocking-inconclusive",
+        "blocking-not-run",
+        "claimed-blocking-downgraded"
+      ]
+    },
+    {
+      "id": "mandatory-tasks",
+      "vectors": [
+        "tier0-fail",
+        "mandatory-incomplete",
+        "tier0-error",
+        "tier0-unavailable"
+      ]
+    },
+    {
+      "id": "budget-and-provider",
+      "vectors": [
+        "missing-reservation",
+        "provider-mismatch",
+        "usage-incomplete",
+        "cost-missing",
+        "tokens-boolean",
+        "fabricated-provenance"
+      ]
+    },
+    {
+      "id": "binding-integrity",
+      "vectors": [
+        "unknown-stored",
+        "tier0-error",
+        "finding-error",
+        "nonblocking-inconclusive",
+        "finding-unrun",
+        "duplicate-finding-id",
+        "wrong-finding-tier",
+        "run-date-mismatch",
+        "budget-run-mismatch",
+        "budget-head-mismatch",
+        "evidence-digest-mismatch",
+        "reservation-digest-mismatch",
+        "cost-negative"
+      ]
+    }
+  ],
+  "mutation_rules": [
+    "Removing reservation_id, changing a relational run_id/head binding, or mutating either canonical digest must change APPROVE to HOLD.",
+    "A finding with inconclusive, not_run, or error verification must change approval to HOLD; a confirmed effective blocking finding or tier0 fail produces REJECT, while tier0 error or unavailable produces HOLD.",
+    "Changing only provider/model attribution, with its canonical evidence and reservation digests recomputed, must not change the outcome.",
+    "The run_id date, timestamp UTC date, exact task map, finding identity, and task/tier binding are immutable acceptance inputs."
+  ],
+  "digest_algorithm": "sha256(name NUL bytes NUL, in files order; corpus excludes digests.json)",
+  "non_coverage": "Synthetic records prove structure, relations, and digest behavior only; they do not prove external provider or accounting authenticity. A later production adapter must obtain authoritative provider and accounting evidence and fail closed when it cannot. Provider changes alone are neutral. Initial Oracle adoption relies on Guard+Owner-Audit+adversarial review; after merge, a separate freeze/activation Guard-PR v2 must make the corpus immutable before candidate derivation."
+}

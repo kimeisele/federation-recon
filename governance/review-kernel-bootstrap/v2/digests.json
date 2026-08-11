@@ -1,0 +1,9 @@
+{
+  "digest_version": "sha256-name-nul-bytes-nul-v1",
+  "manifest.json_sha256": "c59e042ad2f96cec0b012103a298ca53d1ba1c2c6203670c6288af33150eaafb",
+  "vectors.json_sha256": "0ec76d83ec73ad4cc6033c653e4cfd73d44e183cbafe26f4ab634112f7902303",
+  "expected.json_sha256": "e980ee29007dc741e81582c4efa222324e11082df493f771737c539a71242716",
+  "evaluator.py_sha256": "828cf67e02186e852d34bc5befdf9609f1830b7db5d877d406756a2102d22664",
+  "harness_sha256": "9851024173becf4f5ababd44a1d4ef2e5c9ce4fd2b8f1ed1c79a768843ad57d8",
+  "corpus_sha256": "5cdcde83ec7152589490fa4f2ac67310b15f039e59cee268fffe36779c2e18d5"
+}
