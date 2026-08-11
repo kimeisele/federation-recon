@@ -34,6 +34,10 @@ make_change_diff() {
       printf 'diff --git a/%s b/%s\nsimilarity index 100%%\nrename from %s\nrename to %s\n' \
         "$path" "governance/review-kernel-bootstrap/v2/renamed.json" "$path" \
         'governance/review-kernel-bootstrap/v2/renamed.json' ;;
+    copy)
+      printf 'diff --git a/%s b/%s\nsimilarity index 100%%\ncopy from %s\ncopy to %s\n' \
+        "$path" "governance/review-kernel-bootstrap/v2/copied.json" "$path" \
+        'governance/review-kernel-bootstrap/v2/copied.json' ;;
     *) make_diff "$path" ;;
   esac
 }
@@ -121,19 +125,26 @@ write_consultation() {
     diff_text="$(make_diff "$path")"
     run check_consultation_gate 2 "$diff_text" "$BASE_SHA"
     [ "$status" -ne 0 ] || fail "protected path bypassed: $path"
-    [[ "$output" == *"audit record"* ]]
+    case "$path" in
+      governance/review-kernel-bootstrap/v2/*|scripts/test/review-kernel-bootstrap.bats)
+        [[ "$output" == *"Oracle v2"* ]]
+        ;;
+      *)
+        [[ "$output" == *"audit record"* ]]
+        ;;
+    esac
   done
 }
 
-@test "bootstrap PR narrow exception allows only oracle harness manifest and owner record" {
+@test "bootstrap PR first-generation exception cannot reopen frozen v2" {
   oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
   harness="$(make_diff scripts/test/review-kernel-bootstrap.bats)"
   manifest="$(make_manifest_registration_diff)"
   diff_text="$(printf '%s\n%s\n%s' "$oracle" "$harness" "$manifest")"
   write_owner_record 52 "$diff_text"
   run check_consultation_gate 52 "$diff_text" "$BASE_SHA"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"matches base SHA and complete PR diff"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Oracle v2"* ]]
 }
 
 @test "bootstrap PR exception rejects any additional guard surface" {
@@ -189,13 +200,14 @@ write_consultation() {
   done
 }
 
-@test "oracle plus exact manifest addition is the only manifest exception" {
+@test "oracle plus exact manifest registration is frozen" {
   oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
   exact="$(make_manifest_registration_diff)"
   diff_text="$(printf '%s\n%s' "$oracle" "$exact")"
   write_owner_record 55 "$diff_text"
   run check_consultation_gate 55 "$diff_text" "$BASE_SHA"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Oracle v2"* ]]
 
   bad="$(printf '%s\n' \
     'diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST' \
@@ -205,7 +217,7 @@ write_consultation() {
   write_owner_record 56 "$bad_diff"
   run check_consultation_gate 56 "$bad_diff" "$BASE_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+  [[ "$output" == *"Oracle v2"* ]]
 }
 
 @test "quoted oracle diff headers fail closed" {
@@ -252,6 +264,119 @@ rename to scripts/review.sh'
     [ "$status" -ne 0 ] || fail "anti-mixing bypassed for $kind"
     [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
   done
+}
+
+@test "frozen v2 paths fail closed for add modify delete rename and copy" {
+  local kind diff_text
+  for kind in add modify delete rename; do
+    diff_text="$(make_change_diff governance/review-kernel-bootstrap/v2/manifest.json "$kind")"
+    run check_consultation_gate 60 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "frozen v2 path bypassed for $kind"
+    [[ "$output" == *"Oracle v2"* ]]
+  done
+  diff_text="$(make_change_diff governance/review-kernel-bootstrap/v2/source.json copy)"
+  run check_consultation_gate 61 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Oracle v2"* ]]
+}
+
+@test "frozen harness paths fail closed for every change kind" {
+  local kind diff_text
+  for kind in add modify delete rename; do
+    diff_text="$(make_change_diff scripts/test/review-kernel-bootstrap.bats "$kind")"
+    run check_consultation_gate 62 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "frozen harness bypassed for $kind"
+    [[ "$output" == *"Oracle v2"* ]]
+  done
+}
+
+@test "deleting or altering the exact MANIFEST registration is frozen" {
+  local deletion alteration
+  deletion='diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -40,3 +40,2 @@
+ review-runner.bats
+-review-kernel-bootstrap.bats
+ review-verdict.bats'
+  alteration='diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -40,3 +40,3 @@
+ review-runner.bats
+-review-kernel-bootstrap.bats
++review-kernel-bootstrap-v3.bats
+ review-verdict.bats'
+  for diff_text in "$deletion" "$alteration"; do
+    write_owner_record 63 "$diff_text"
+    run check_consultation_gate 63 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Oracle v2"* ]]
+  done
+}
+
+@test "MANIFEST registration freeze normalizes CRLF and horizontal whitespace" {
+  local crlf whitespace
+  crlf="$(printf '%s\n' \
+    'diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST' \
+    '--- a/scripts/test/MANIFEST' '+++ b/scripts/test/MANIFEST' \
+    '@@ -40,1 +40,1 @@' $'-review-kernel-bootstrap.bats\r' $'+review-kernel-bootstrap.bats\r')"
+  whitespace="$(printf '%s\n' \
+    'diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST' \
+    '--- a/scripts/test/MANIFEST' '+++ b/scripts/test/MANIFEST' \
+    '@@ -40,1 +40,1 @@' $'-  review-kernel-bootstrap.bats  ' $'+ review-kernel-bootstrap.bats\t')"
+  for diff_text in "$crlf" "$whitespace"; do
+    write_owner_record 66 "$diff_text"
+    run check_consultation_gate 66 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Oracle v2"* ]]
+  done
+}
+
+@test "MANIFEST registration duplication and reorder are frozen" {
+  local duplicate reorder
+  duplicate='diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -40,2 +40,3 @@
+ review-runner.bats
+ review-kernel-bootstrap.bats
++review-kernel-bootstrap.bats
+ review-verdict.bats'
+  reorder='diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -40,3 +40,3 @@
+-review-kernel-bootstrap.bats
+ review-runner.bats
++review-kernel-bootstrap.bats
+ review-verdict.bats'
+  for diff_text in "$duplicate" "$reorder"; do
+    write_owner_record 67 "$diff_text"
+    run check_consultation_gate 67 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Oracle v2"* ]]
+  done
+}
+
+@test "ordinary MANIFEST additions and guard-only changes remain possible" {
+  local manifest_diff guard_diff
+  manifest_diff='diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST
+--- a/scripts/test/MANIFEST
++++ b/scripts/test/MANIFEST
+@@ -40,3 +40,4 @@
+ review-runner.bats
+ review-kernel-bootstrap.bats
++ordinary-extra.bats
+ review-verdict.bats'
+  write_owner_record 64 "$manifest_diff"
+  run check_consultation_gate 64 "$manifest_diff" "$BASE_SHA"
+  [ "$status" -eq 0 ]
+
+  guard_diff="$(make_diff scripts/lib/consultation-gate.sh)"
+  write_owner_record 65 "$guard_diff"
+  run check_consultation_gate 65 "$guard_diff" "$BASE_SHA"
+  [ "$status" -eq 0 ]
 }
 
 @test "valid audit record is bound to exact base and complete diff" {
@@ -419,6 +544,76 @@ rename to scripts/review.sh'
     [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
     cd "$WORKDIR"
   done
+}
+
+@test "git mode freezes MANIFEST delete rename and copy by NUL status" {
+  local kind repo base_sha digest pr
+  for kind in delete rename-to rename-from copy; do
+    repo="$WORKDIR/git-manifest-$kind"
+    mkdir -p "$repo/scripts/test"
+    cd "$repo"
+    git init -q
+    git config user.email test@example.invalid
+    git config user.name Test
+    case "$kind" in
+      rename-from)
+        printf 'review-kernel-bootstrap.bats\nother.bats\n' > scripts/test/OTHER-MANIFEST ;;
+      *)
+        printf 'review-kernel-bootstrap.bats\nother.bats\n' > scripts/test/MANIFEST ;;
+    esac
+    git add .
+    git commit -qm baseline
+    base_sha="$(git rev-parse HEAD)"
+    git update-ref refs/remotes/origin/main "$base_sha"
+    case "$kind" in
+      delete) git rm -q scripts/test/MANIFEST ;;
+      rename-to) git mv scripts/test/MANIFEST scripts/test/MANIFEST.old ;;
+      rename-from) git mv scripts/test/OTHER-MANIFEST scripts/test/MANIFEST ;;
+      copy) cp scripts/test/MANIFEST scripts/test/MANIFEST.copy; git add scripts/test/MANIFEST.copy ;;
+    esac
+    git commit -qm "$kind"
+    pr=$((140 + ${#kind}))
+    run check_consultation_gate "$pr"
+    [ "$status" -ne 0 ] || fail "MANIFEST $kind bypassed status freeze"
+    [[ "$output" == *"Oracle v2"* ]]
+    cd "$WORKDIR"
+  done
+}
+
+@test "git mode permits an unrelated MANIFEST entry with a valid audit record" {
+  local repo base_sha digest pr=150
+  repo="$WORKDIR/git-manifest-positive"
+  mkdir -p "$repo/scripts/test"
+  cd "$repo"
+  git init -q
+  git config user.email test@example.invalid
+  git config user.name Test
+  printf 'review-kernel-bootstrap.bats\nother.bats\n' > scripts/test/MANIFEST
+  git add .
+  git commit -qm baseline
+  base_sha="$(git rev-parse HEAD)"
+  git update-ref refs/remotes/origin/main "$base_sha"
+  printf 'ordinary-extra.bats\n' >> scripts/test/MANIFEST
+  git add scripts/test/MANIFEST
+  git commit -qm manifest-entry
+  digest="$(git diff --no-ext-diff --binary --find-renames --find-copies --find-copies-harder "$base_sha...HEAD" -- . ':(exclude)governance/owner-decisions/150.md' | shasum -a 256 | awk '{print $1}')"
+  mkdir -p governance/owner-decisions
+  printf '%s\n' \
+    'record_version: 1' \
+    'authority: AUDIT_ONLY' \
+    'owner: kimeisele' \
+    'decision: ADOPT' \
+    'decision_date: 2026-08-11' \
+    'decision_pr: 150' \
+    'decision_scope: review-control audit binding' \
+    "base_sha: ${base_sha}" \
+    "diff_sha256: ${digest}" > governance/owner-decisions/150.md
+  git add governance/owner-decisions/150.md
+  git commit -qm owner-record
+  run check_consultation_gate "$pr"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"matches base SHA and complete PR diff"* ]]
+  cd "$WORKDIR"
 }
 
 @test "git mode classifies an unprotected filename containing a tab" {
