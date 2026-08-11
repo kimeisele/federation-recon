@@ -227,7 +227,7 @@ At the end of every recovery session append one short entry below with:
 
 ---
 
-## RECOVERY-0 — forensic baseline — IN PROGRESS (2026-08-10, corrected)
+## RECOVERY-0 — forensic classification — READY FOR OWNER SIGN-OFF (2026-08-10)
 
 Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durable conclusions:
 
@@ -241,16 +241,14 @@ Detailed evidence and per-PR records: issue #236 (comments of 2026-08-10). Durab
 
 | PR | disposition |
 |---|---|
-| #215 token caps | rebuild (sound; shares the quarantined file; RECOVERY-3) |
+| #215 token caps | rebuild (intent appears bounded but is not independently verified; shares the quarantined file; RECOVERY-3) |
 | #223 provider-probe clock | retain (audit zone, not review control) |
 | #224 Tier 0 from CI | rebuild (verdict input; re-express fail-closed) |
 | #229 thinking-by-model | retain-with-audit (request shaping only) |
 | #231 base discrimination | rebuild (its downgrade feeds the fail-open) |
 | #232 confinement | rebuild (same coupling; runs as operator uid, #233) |
 
-The dispositions are the operator's; the accepted-vs-proposed distinction and baseline audit sign-off remain a reviewer decision.
-
-**RECOVERY-0 remains IN PROGRESS.** Baseline rejection is supported, but the macOS reproduction failure and the meaning of environment-dependent reproduction remain open. Sign-off is component- and property-specific.
+**RECOVERY-0 is ready for owner sign-off as a forensic classification, not as a repair or global trust decision.** The evidence supports rejecting the proposed baseline and using the quarantine dispositions for recovery planning, but the owner has not yet adopted that status transition in a durable repository artifact. The macOS reproduction failure is a confirmed residual with proposed disposition `REBUILD` in issue #248. Recon artifacts retain only the property-specific Linux fixpoint evidence stated above; all broader semantic trust remains out of scope.
 
 
 ### Correction 2026-08-10 (independent review)
@@ -260,3 +258,12 @@ The dispositions are the operator's; the accepted-vs-proposed distinction and ba
 - PR #242 is **REBUILD**: missing/unparseable diff counts default to LOW (fail-open); booleans/negatives not rejected. Invalid counts must be terminal PARTIAL/UNKNOWN, never LOW.
 - Both candidates rejected, not reopened; branches kept as evidence. RECOVERY-2 re-derived fresh.
 - Owner decisions (#236): independence procedurally mandatory (other provider optional); owner is root-of-trust and merges manually until a least-privilege integrator exists; baselines are component/property-specific.
+
+### Proposed RECOVERY-0 sign-off
+
+- `5b964a4` is rejected as a clean control-plane baseline.
+- There is no repository-wide trusted baseline.
+- The six incident PR dispositions above are proposed only as recovery routing decisions, not proof that retained code is semantically correct.
+- Environment-dependent reproduction and the partial-read crash are routed to #248 as `REBUILD`; no fix was attempted in RECOVERY-0.
+- PR #238 and #242 remain rejected candidates and must be re-derived in RECOVERY-2.
+- Next workstream: RECOVERY-1 Part B, prospective adoption of the executable trust contract.
