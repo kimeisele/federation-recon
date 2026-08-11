@@ -34,6 +34,14 @@ _path_is_bootstrap_oracle() {
   [ "$1" = "scripts/test/review-kernel-bootstrap.bats" ]
 }
 
+_path_is_frozen_bootstrap_v2() {
+  case "$1" in
+    governance/review-kernel-bootstrap/v2/*|scripts/test/review-kernel-bootstrap.bats)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _path_is_sealing_guard() {
   case "$1" in
     governance/review-kernel-bootstrap/*|scripts/test/review-kernel-bootstrap.bats|governance/owner-decisions/*.md)
@@ -60,6 +68,7 @@ _extract_diff_paths() {
   local diff_text="$1" line rest old new
   DIFF_OLD_PATHS=()
   DIFF_NEW_PATHS=()
+  DIFF_STATUSES=()
   while IFS= read -r line; do
     case "$line" in
       diff\ --git\ a\/*)
@@ -76,6 +85,7 @@ _extract_diff_paths() {
         [ -n "$old" ] && [ -n "$new" ] || return 1
         DIFF_OLD_PATHS+=("$old")
         DIFF_NEW_PATHS+=("$new")
+        DIFF_STATUSES+=("M")
         ;;
       'diff --git "'*) return 1 ;;
       diff\ --git\ *) return 1 ;;
@@ -91,6 +101,7 @@ _load_git_diff_paths() {
   local base_sha="$1" head_sha="$2" status old new path status_file
   DIFF_OLD_PATHS=()
   DIFF_NEW_PATHS=()
+  DIFF_STATUSES=()
   status_file=$(mktemp) || return 1
   if ! git diff --no-ext-diff --find-renames --find-copies --find-copies-harder \
       --name-status -z "$base_sha...$head_sha" -- . >"$status_file" 2>/dev/null; then
@@ -104,11 +115,13 @@ _load_git_diff_paths() {
         IFS= read -r -d '' new || { rm -f "$status_file"; return 1; }
         DIFF_OLD_PATHS+=("$old")
         DIFF_NEW_PATHS+=("$new")
+        DIFF_STATUSES+=("$status")
         ;;
       A|D|M|T|U|X|B)
         IFS= read -r -d '' path || { rm -f "$status_file"; return 1; }
         DIFF_OLD_PATHS+=("$path")
         DIFF_NEW_PATHS+=("$path")
+        DIFF_STATUSES+=("$status")
         ;;
       *) rm -f "$status_file"; return 1 ;;
     esac
@@ -156,8 +169,8 @@ PY
   fi
 }
 
-_diff_has_exact_manifest_registration() {
-  local diff_text="$1" line in_manifest=0 added=0 removed=0 index=-1
+_diff_touches_frozen_manifest_registration() {
+  local diff_text="$1" line in_manifest=0 index=-1
   while IFS= read -r line; do
     case "$line" in
       diff\ --git\ *)
@@ -168,52 +181,58 @@ _diff_has_exact_manifest_registration() {
           in_manifest=0
         fi
         ;;
-      +++\ *|---\ *) ;;
-      +*)
+      +*|-*)
         [ "$in_manifest" -eq 1 ] || continue
-        [ "$line" = "+review-kernel-bootstrap.bats" ] || return 1
-        added=$((added + 1))
-        ;;
-      -*)
-        [ "$in_manifest" -eq 1 ] && removed=$((removed + 1))
+        # Match the same semantic entry as suite-inventory.sh: surrounding
+        # whitespace (including a terminal CR) is not meaningful. Thus CRLF,
+        # whitespace-only edits, duplicate entries, removals, and reorders all
+        # freeze the adopted registration instead of falling through to an
+        # owner-record check.
+        local entry="${line#?}"
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [ "$entry" = "review-kernel-bootstrap.bats" ] && return 0
         ;;
     esac
   done <<< "$diff_text"
-  [ "$added" -eq 1 ] && [ "$removed" -eq 0 ]
+  return 1
+}
+
+_diff_has_frozen_manifest_path_status() {
+  local index status
+  for index in "${!DIFF_OLD_PATHS[@]}"; do
+    status="${DIFF_STATUSES[$index]-}"
+    case "$status" in
+      D|R[0-9]*|C[0-9]*)
+        if [ "${DIFF_OLD_PATHS[$index]}" = "scripts/test/MANIFEST" ] ||
+           [ "${DIFF_NEW_PATHS[$index]}" = "scripts/test/MANIFEST" ]; then
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
 }
 
 _classify_diff_paths() {
-  local index candidate
+  local diff_text="$1" index candidate
   DIFF_HAS_ORACLE=0
   DIFF_HAS_SEALING=0
   DIFF_HAS_REVIEW_CONTROL=0
   DIFF_HAS_MANIFEST=0
+  DIFF_HAS_FROZEN_ORACLE=0
+  DIFF_HAS_FROZEN_MANIFEST=0
   for index in "${!DIFF_OLD_PATHS[@]}"; do
     for candidate in "${DIFF_OLD_PATHS[$index]}" "${DIFF_NEW_PATHS[$index]}"; do
       _path_is_bootstrap_oracle "$candidate" && DIFF_HAS_ORACLE=1
+      _path_is_frozen_bootstrap_v2 "$candidate" && DIFF_HAS_FROZEN_ORACLE=1
       _path_is_sealing_guard "$candidate" && DIFF_HAS_SEALING=1
       _path_is_review_control "$candidate" && DIFF_HAS_REVIEW_CONTROL=1
       [ "$candidate" = "scripts/test/MANIFEST" ] && DIFF_HAS_MANIFEST=1
     done
   done
-}
-
-_is_narrow_bootstrap_exception() {
-  local pr_number="$1" diff_text="$2" index candidate
-  [ "$DIFF_HAS_ORACLE" -eq 1 ] || return 1
-  if [ "$DIFF_HAS_MANIFEST" -eq 1 ]; then
-    _diff_has_exact_manifest_registration "$diff_text" || return 1
-  fi
-
-  for index in "${!DIFF_OLD_PATHS[@]}"; do
-    for candidate in "${DIFF_OLD_PATHS[$index]}" "${DIFF_NEW_PATHS[$index]}"; do
-      _path_is_bootstrap_oracle "$candidate" && continue
-      [ "$candidate" = "scripts/test/MANIFEST" ] && continue
-      [ "$candidate" = "$(_owner_record_path "$pr_number")" ] && continue
-      return 1
-    done
-  done
-  return 0
+  _diff_touches_frozen_manifest_registration "$diff_text" && DIFF_HAS_FROZEN_MANIFEST=1
+  _diff_has_frozen_manifest_path_status && DIFF_HAS_FROZEN_MANIFEST=1
 }
 
 _check_owner_record() {
@@ -384,15 +403,20 @@ check_consultation_gate() {
       return 1
     fi
   fi
-  _classify_diff_paths
+  _classify_diff_paths "$protected_text"
 
-  if [ "$DIFF_HAS_ORACLE" -eq 1 ]; then
-    if [ "$DIFF_HAS_SEALING" -eq 1 ] || ! _is_narrow_bootstrap_exception "$pr_number" "$protected_text"; then
+  if [ "$DIFF_HAS_FROZEN_ORACLE" -eq 1 ] || [ "$DIFF_HAS_FROZEN_MANIFEST" -eq 1 ]; then
     [ -n "$diff_file" ] && rm -f "$diff_file"
     [ -n "$protected_file" ] && rm -f "$protected_file"
-    echo "FAIL — candidate kernel and bootstrap oracle cannot change in one PR" >&2
+    echo "FAIL — adopted RECOVERY-2 Oracle v2 and its manifest registration are frozen; candidate kernel and bootstrap oracle cannot change in one PR" >&2
     return 1
-    fi
+  fi
+
+  if [ "$DIFF_HAS_ORACLE" -eq 1 ]; then
+    [ -n "$diff_file" ] && rm -f "$diff_file"
+    [ -n "$protected_file" ] && rm -f "$protected_file"
+    echo "FAIL — bootstrap admission requires a separate prospective generation guard" >&2
+    return 1
   fi
 
   if [ "$DIFF_HAS_REVIEW_CONTROL" -eq 0 ]; then
