@@ -19,10 +19,17 @@ setup() {
     scripts/test/review-kernel-bootstrap.bats
     scripts/test/MANIFEST
   )
+  V2_SEAL_PATHS=(
+    governance/review-kernel-bootstrap/v2/manifest.json
+    governance/review-kernel-bootstrap/v2/vectors.json
+    governance/review-kernel-bootstrap/v2/expected.json
+    governance/review-kernel-bootstrap/v2/digests.json
+    governance/review-kernel-bootstrap/v2/evaluator.py
+  )
 }
 
 commit_seal_check() {
-  local root="$1" canonical="${2:-1}" head expected actual path
+  local root="$1" canonical="${2:-1}" head expected actual expected_v2 actual_v2 path
   root="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ "$canonical" -eq 0 ] || [ "$root" = "$REPO_ROOT" ] || return 1
   head="$(git -C "$root" rev-parse --verify HEAD 2>/dev/null)" || return 1
@@ -31,11 +38,36 @@ commit_seal_check() {
   expected="$(printf '%s\n' "${SEAL_PATHS[@]}" | LC_ALL=C sort)"
   actual="$(git -C "$root" ls-tree -r --name-only "$head" -- "${SEAL_PATHS[@]}" | LC_ALL=C sort)"
   [ "$actual" = "$expected" ] || return 1
+  expected_v2="$(printf '%s\n' "${V2_SEAL_PATHS[@]}" | LC_ALL=C sort)"
+  actual_v2="$(git -C "$root" ls-tree -r --name-only "$head" -- governance/review-kernel-bootstrap/v2 | LC_ALL=C sort)"
+  [ "$actual_v2" = "$expected_v2" ] || return 1
+  _head_manifest_has_single_oracle_registration "$root" "$head" || return 1
   for path in "${SEAL_PATHS[@]}"; do
     [ -f "$root/$path" ] && [ ! -L "$root/$path" ] || return 1
   done
   git -C "$root" diff --quiet "$head" -- "${SEAL_PATHS[@]}" || return 1
   printf '%s\n' "$head"
+}
+
+_head_manifest_has_single_oracle_registration() {
+  local root="$1" head="$2" blob line count=0
+  blob="$(mktemp "$BATS_TEST_TMPDIR/head-manifest.XXXXXX")" || return 1
+  if ! git -C "$root" show "$head:scripts/test/MANIFEST" >"$blob" 2>/dev/null; then
+    rm -f "$blob"
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Match suite-inventory semantics: comments are ignored and all leading /
+    # trailing POSIX whitespace is insignificant, including CRLF and vertical
+    # whitespace at a line edge.
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "$line" ]] || continue
+    [[ "$line" == "review-kernel-bootstrap.bats" ]] && count=$((count + 1))
+  done <"$blob"
+  rm -f "$blob"
+  [ "$count" -eq 1 ]
 }
 
 materialize_commit_snapshot() {
@@ -117,7 +149,11 @@ PY
 }
 
 @test "bootstrap oracle digests bind evaluator, corpus, and manifest" {
-  python3 - "$ORACLE" "$DIGESTS" <<'PY'
+  local head snapshot
+  head="$(git rev-parse --verify HEAD)"
+  snapshot="$BATS_TEST_TMPDIR/digest-snapshot-$head"
+  materialize_commit_snapshot "$REPO_ROOT" "$head" "$snapshot"
+  python3 - "$snapshot/governance/review-kernel-bootstrap/v2" "$snapshot/governance/review-kernel-bootstrap/v2/digests.json" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -150,6 +186,71 @@ PY
   head="$(commit_seal_check "$REPO_ROOT")"
   echo "SEALED_AT_COMMIT head_sha=$head"
   [[ "$head" =~ ^[0-9a-f]{40,64}$ ]]
+}
+
+@test "commit seal binds the HEAD MANIFEST registration, not worktree text" {
+  local fixture manifest
+
+  fixture="$BATS_TEST_TMPDIR/head-manifest-valid"
+  mkdir -p "$fixture"
+  make_seal_fixture "$fixture"
+  manifest="$fixture/scripts/test/MANIFEST"
+  printf 'not-the-head-registration\n' >"$manifest"
+  git -C "$fixture" update-index --assume-unchanged scripts/test/MANIFEST
+  run commit_seal_check "$fixture" 0
+  [ "$status" -eq 0 ]
+  git -C "$fixture" update-index --no-assume-unchanged scripts/test/MANIFEST
+
+  fixture="$BATS_TEST_TMPDIR/head-manifest-missing-registration"
+  mkdir -p "$fixture"
+  make_seal_fixture "$fixture"
+  grep -vF 'review-kernel-bootstrap.bats' "$fixture/scripts/test/MANIFEST" >"$fixture/scripts/test/MANIFEST.tmp"
+  mv "$fixture/scripts/test/MANIFEST.tmp" "$fixture/scripts/test/MANIFEST"
+  git -C "$fixture" add scripts/test/MANIFEST
+  git -C "$fixture" commit -qm missing-registration
+  run commit_seal_check "$fixture" 0
+  [ "$status" -ne 0 ]
+
+  fixture="$BATS_TEST_TMPDIR/head-manifest-renamed"
+  mkdir -p "$fixture"
+  make_seal_fixture "$fixture"
+  git -C "$fixture" mv scripts/test/MANIFEST scripts/test/MANIFEST.old
+  git -C "$fixture" commit -qm renamed-manifest
+  run commit_seal_check "$fixture" 0
+  [ "$status" -ne 0 ]
+
+  fixture="$BATS_TEST_TMPDIR/head-manifest-extra-v2-file"
+  mkdir -p "$fixture"
+  make_seal_fixture "$fixture"
+  printf 'unexpected\n' >"$fixture/governance/review-kernel-bootstrap/v2/extra.json"
+  git -C "$fixture" add governance/review-kernel-bootstrap/v2/extra.json
+  git -C "$fixture" commit -qm extra-v2-file
+  run commit_seal_check "$fixture" 0
+  [ "$status" -ne 0 ]
+}
+
+@test "commit seal accepts CRLF and POSIX whitespace but rejects duplicates" {
+  local fixture manifest
+
+  fixture="$BATS_TEST_TMPDIR/head-manifest-crlf-whitespace"
+  mkdir -p "$fixture"
+  make_seal_fixture "$fixture"
+  manifest="$fixture/scripts/test/MANIFEST"
+  python3 - "$manifest" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_bytes(b"\f  \treview-kernel-bootstrap.bats \t\v\r\n")
+PY
+  git -C "$fixture" add scripts/test/MANIFEST
+  git -C "$fixture" commit -qm crlf-whitespace
+  run commit_seal_check "$fixture" 0
+  [ "$status" -eq 0 ]
+
+  printf 'review-kernel-bootstrap.bats\n  review-kernel-bootstrap.bats\t\r\n' >"$manifest"
+  git -C "$fixture" add scripts/test/MANIFEST
+  git -C "$fixture" commit -qm duplicate-registration
+  run commit_seal_check "$fixture" 0
+  [ "$status" -ne 0 ]
 }
 
 @test "commit seal blocks corpus mutation and evaluator symlink before blob execution" {
