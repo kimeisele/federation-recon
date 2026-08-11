@@ -21,6 +21,27 @@ make_diff() {
     "$path" "$path" "$path" "$path"
 }
 
+make_change_diff() {
+  local path="$1" kind="${2:-modify}"
+  case "$kind" in
+    add)
+      printf 'diff --git a/%s b/%s\nnew file mode 100644\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1 @@\n+new\n' \
+        "$path" "$path" "$path" ;;
+    delete)
+      printf 'diff --git a/%s b/%s\ndeleted file mode 100644\n--- a/%s\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n' \
+        "$path" "$path" "$path" ;;
+    rename)
+      printf 'diff --git a/%s b/%s\nsimilarity index 100%%\nrename from %s\nrename to %s\n' \
+        "$path" "governance/review-kernel-bootstrap/v2/renamed.json" "$path" \
+        'governance/review-kernel-bootstrap/v2/renamed.json' ;;
+    *) make_diff "$path" ;;
+  esac
+}
+
+make_manifest_registration_diff() {
+  printf 'diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST\n--- a/scripts/test/MANIFEST\n+++ b/scripts/test/MANIFEST\n@@ -40,2 +40,3 @@\n review-runner.bats\n+review-kernel-bootstrap.bats\n review-verdict.bats\n'
+}
+
 write_owner_record() {
   local pr="$1" diff_text="$2" base="${3:-$BASE_SHA}"
   local digest
@@ -79,11 +100,20 @@ write_consultation() {
     docs/operator-handover.md \
     governance/adversarial-review.md \
     governance/consultation-prompt.md \
+    governance/review-kernel-bootstrap/v2/manifest.json \
+    governance/review-kernel-bootstrap/v2/vectors.json \
+    governance/review-kernel-bootstrap/v2/expected.json \
+    governance/review-kernel-bootstrap/v2/evaluator.py \
+    scripts/test/review-kernel-bootstrap.bats \
+    .github/workflows/ci.yml \
     docs/example-adr.md \
     governance/reviewers.md \
     scripts/ci-checks.sh \
     scripts/gate.sh \
     scripts/lib/consultation-gate.sh \
+    scripts/lib/suite-inventory.sh \
+    scripts/test/MANIFEST \
+    scripts/test/consultation-gate.bats \
     scripts/review.sh \
     scripts/review-verdict.sh \
     schemas/review-verdict.schema.json \
@@ -92,6 +122,135 @@ write_consultation() {
     run check_consultation_gate 2 "$diff_text" "$BASE_SHA"
     [ "$status" -ne 0 ] || fail "protected path bypassed: $path"
     [[ "$output" == *"audit record"* ]]
+  done
+}
+
+@test "bootstrap PR narrow exception allows only oracle harness manifest and owner record" {
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  harness="$(make_diff scripts/test/review-kernel-bootstrap.bats)"
+  manifest="$(make_manifest_registration_diff)"
+  diff_text="$(printf '%s\n%s\n%s' "$oracle" "$harness" "$manifest")"
+  write_owner_record 52 "$diff_text"
+  run check_consultation_gate 52 "$diff_text" "$BASE_SHA"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"matches base SHA and complete PR diff"* ]]
+}
+
+@test "bootstrap PR exception rejects any additional guard surface" {
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  harness="$(make_diff scripts/test/review-kernel-bootstrap.bats)"
+  manifest="$(make_manifest_registration_diff)"
+  extra="$(make_diff scripts/test/consultation-gate.bats)"
+  diff_text="$(printf '%s\n%s\n%s\n%s' "$oracle" "$harness" "$manifest" "$extra")"
+  write_owner_record 53 "$diff_text"
+  run check_consultation_gate 53 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+}
+
+@test "oracle paths cannot mix with any candidate guard surface" {
+  local guard oracle diff_text
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  for guard in \
+    scripts/review.sh \
+    scripts/review-verdict.sh \
+    schemas/review-verdict.schema.json \
+    scripts/lib/consultation-gate.sh \
+    scripts/ci-checks.sh \
+    scripts/gate.sh; do
+    diff_text="$(printf '%s\n%s' "$(make_diff "$guard")" "$oracle")"
+    run check_consultation_gate 50 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "candidate/oracle mix bypassed: $guard"
+    [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+  done
+}
+
+@test "oracle paths cannot mix with any sealing surface" {
+  local sealing oracle diff_text
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  for sealing in \
+    CLAUDE.md \
+    RECOVERY.md \
+    docs/recovery-1-contract.md \
+    docs/amendments.md \
+    .github/workflows/ci.yml \
+    scripts/lib/suite-inventory.sh \
+    scripts/test/consultation-gate.bats \
+    scripts/review.sh \
+    scripts/review-verdict.sh \
+    schemas/review-verdict.schema.json \
+    scripts/lib/consultation-gate.sh \
+    scripts/ci-checks.sh \
+    scripts/gate.sh; do
+    diff_text="$(printf '%s\n%s' "$(make_diff "$sealing")" "$oracle")"
+    run check_consultation_gate 54 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "sealing/oracle mix bypassed: $sealing"
+    [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+  done
+}
+
+@test "oracle plus exact manifest addition is the only manifest exception" {
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  exact="$(make_manifest_registration_diff)"
+  diff_text="$(printf '%s\n%s' "$oracle" "$exact")"
+  write_owner_record 55 "$diff_text"
+  run check_consultation_gate 55 "$diff_text" "$BASE_SHA"
+  [ "$status" -eq 0 ]
+
+  bad="$(printf '%s\n' \
+    'diff --git a/scripts/test/MANIFEST b/scripts/test/MANIFEST' \
+    '--- a/scripts/test/MANIFEST' '+++ b/scripts/test/MANIFEST' \
+    '@@ -40,2 +40,2 @@' '-review-runner.bats' '+review-kernel-bootstrap.bats')"
+  bad_diff="$(printf '%s\n%s' "$oracle" "$bad")"
+  write_owner_record 56 "$bad_diff"
+  run check_consultation_gate 56 "$bad_diff" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+}
+
+@test "quoted oracle diff headers fail closed" {
+  diff_text='diff --git "a/governance/review-kernel-bootstrap/v2/manifest.json" "b/governance/review-kernel-bootstrap/v2/manifest.json"
+--- "a/governance/review-kernel-bootstrap/v2/manifest.json"
++++ "b/governance/review-kernel-bootstrap/v2/manifest.json"
+@@ -1 +1 @@
+-old
++new'
+  run check_consultation_gate 57 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"diff header"* ]]
+}
+
+@test "ambiguous rename path with an embedded separator fails closed" {
+  diff_text='diff --git a/foo b/bar b/scripts/review.sh
+similarity index 100%
+rename from foo b/bar
+rename to scripts/review.sh'
+  run check_consultation_gate 58 "$diff_text" "$BASE_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"diff header"* ]]
+}
+
+@test "oracle rejects README CODEOWNERS unknown and foreign owner paths" {
+  local extra oracle diff_text
+  oracle="$(make_diff governance/review-kernel-bootstrap/v2/manifest.json)"
+  for extra in README.md CODEOWNERS unknown-control.txt governance/owner-decisions/other.md; do
+    diff_text="$(printf '%s\n%s' "$oracle" "$(make_diff "$extra")")"
+    write_owner_record 59 "$diff_text"
+    run check_consultation_gate 59 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "oracle allowed disallowed path: $extra"
+    [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+  done
+}
+
+@test "oracle/guard anti-mixing covers add, modify, delete, and rename" {
+  local kind diff_text
+  for kind in add modify delete rename; do
+    diff_text="$(printf '%s\n%s' \
+      "$(make_change_diff scripts/review-verdict.sh "$kind")" \
+      "$(make_change_diff governance/review-kernel-bootstrap/v2/manifest.json "$kind")")"
+    run check_consultation_gate 51 "$diff_text" "$BASE_SHA"
+    [ "$status" -ne 0 ] || fail "anti-mixing bypassed for $kind"
+    [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
   done
 }
 
@@ -207,7 +366,7 @@ write_consultation() {
   printf 'changed\n' > CLAUDE.md
   git add CLAUDE.md
   git commit -qm change
-  digest="$(git diff --no-ext-diff --binary "$base_sha...HEAD" -- . ':(exclude)governance/owner-decisions/11.md' | shasum -a 256 | awk '{print $1}')"
+  digest="$(git diff --no-ext-diff --binary --find-renames --find-copies --find-copies-harder "$base_sha...HEAD" -- . ':(exclude)governance/owner-decisions/11.md' | shasum -a 256 | awk '{print $1}')"
   mkdir -p governance/owner-decisions
   printf '%s\n' \
     'record_version: 1' \
@@ -223,6 +382,131 @@ write_consultation() {
   run check_consultation_gate 11
   [ "$status" -eq 0 ]
   [[ "$output" == *"matches base SHA and complete PR diff"* ]]
+}
+
+@test "git mode anti-mixing covers add delete rename and copy" {
+  local kind repo base_sha
+  for kind in add delete rename copy; do
+    repo="$WORKDIR/git-$kind"
+    mkdir -p "$repo/governance/review-kernel-bootstrap/v2" "$repo/scripts"
+    cd "$repo"
+    git init -q
+    git config user.email test@example.invalid
+    git config user.name Test
+    printf 'candidate\n' > scripts/review.sh
+    printf 'oracle\n' > governance/review-kernel-bootstrap/v2/base.json
+    git add .
+    git commit -qm baseline
+    base_sha="$(git rev-parse HEAD)"
+    git update-ref refs/remotes/origin/main "$base_sha"
+    case "$kind" in
+      add)
+        printf 'candidate-new\n' > scripts/review-verdict.sh
+        printf 'oracle-new\n' > governance/review-kernel-bootstrap/v2/added.json
+        git add . ;;
+      delete)
+        git rm -q scripts/review.sh governance/review-kernel-bootstrap/v2/base.json ;;
+      rename)
+        git mv scripts/review.sh scripts/review-verdict.sh
+        git mv governance/review-kernel-bootstrap/v2/base.json governance/review-kernel-bootstrap/v2/renamed.json ;;
+      copy)
+        cp scripts/review.sh governance/review-kernel-bootstrap/v2/copied.txt
+        git add governance/review-kernel-bootstrap/v2/copied.txt ;;
+    esac
+    git commit -qm "$kind"
+    run check_consultation_gate "$((100 + ${#kind}))"
+    [ "$status" -ne 0 ] || fail "git anti-mixing bypassed for $kind"
+    [[ "$output" == *"candidate kernel and bootstrap oracle"* ]]
+    cd "$WORKDIR"
+  done
+}
+
+@test "git mode classifies an unprotected filename containing a tab" {
+  local repo special
+  repo="$WORKDIR/git-tab"
+  special=$'notes\t[tab].txt'
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q
+  git config user.email test@example.invalid
+  git config user.name Test
+  printf 'baseline\n' > baseline.txt
+  git add .
+  git commit -qm baseline
+  base_sha="$(git rev-parse HEAD)"
+  git update-ref refs/remotes/origin/main "$base_sha"
+  printf 'unprotected\n' > "$special"
+  git add -- "$special"
+  git commit -qm tab-path
+  run check_consultation_gate 120
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no protected"* ]]
+  cd "$WORKDIR"
+}
+
+@test "git mode rejects a rename from a path containing b-slash to review.sh" {
+  local repo
+  repo="$WORKDIR/git-ambiguous-rename"
+  mkdir -p "$repo/scripts" "$repo/foo b"
+  cd "$repo"
+  git init -q
+  git config user.email test@example.invalid
+  git config user.name Test
+  printf 'review\n' > 'foo b/bar'
+  git add .
+  git commit -qm baseline
+  base_sha="$(git rev-parse HEAD)"
+  git update-ref refs/remotes/origin/main "$base_sha"
+  git mv 'foo b/bar' scripts/review.sh
+  git commit -qm rename-to-guard
+  run check_consultation_gate 121
+  [ "$status" -ne 0 ]
+  cd "$WORKDIR"
+}
+
+@test "git mode anchors every lookup to one captured HEAD SHA" {
+  local repo head_calls diff_calls base_sha head_sha range
+  repo="$WORKDIR/git-head-anchor"
+  head_calls="$WORKDIR/head-calls"
+  diff_calls="$WORKDIR/diff-calls"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q
+  git config user.email test@example.invalid
+  git config user.name Test
+  printf 'baseline\n' > note.txt
+  git add .
+  git commit -qm baseline
+  base_sha="$(git rev-parse HEAD)"
+  git update-ref refs/remotes/origin/main "$base_sha"
+  printf 'changed\n' > note.txt
+  git commit -qam change
+  head_sha="$(git rev-parse HEAD)"
+  range="${base_sha}...${head_sha}"
+
+  git() {
+    if [ "$1" = "rev-parse" ] && [ "$2" = "HEAD" ]; then
+      local calls
+      calls="$(wc -l < "$head_calls" 2>/dev/null || true)"
+      printf 'head\n' >> "$head_calls"
+      if [ "${calls:-0}" -gt 0 ]; then
+        printf '%040d\n' 0
+        return 0
+      fi
+    fi
+    if [ "$1" = "diff" ]; then
+      printf '%s\n' "$*" >> "$diff_calls"
+    fi
+    command git "$@"
+  }
+
+  run check_consultation_gate 122
+  unset -f git
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$head_calls")" -eq 1 ]
+  [ "$(grep -cF "$range" "$diff_calls")" -eq 3 ]
+  ! grep -qF '...HEAD' "$diff_calls"
+  cd "$WORKDIR"
 }
 
 # ---------------------------------------------------------------------------
