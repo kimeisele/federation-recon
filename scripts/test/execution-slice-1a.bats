@@ -716,7 +716,7 @@ with open('$WO', 'w') as f:
 # SIGKILL. Terminates on process exit too, so a run that finishes early fails
 # the caller's assertion rather than hanging here.
 _kill_at() {
-  local ev="$1" pid="$2" pat="$3" want="${4:-1}" waited=0 n
+  local ev="$1" pid="$2" pat="$3" want="${4:-1}" ready="${5:-}" release="${6:-}" waited=0 n
   while kill -0 "$pid" 2>/dev/null; do
     if [ -f "$ev" ]; then
       n="$(grep -c "$pat" "$ev" 2>/dev/null || true)"
@@ -731,19 +731,44 @@ _kill_at() {
       false "never reached $want x $pat within 60s"
     fi
   done
+  # A long sleep used to make these crash-window tests slow and timing-based.
+  # When a readiness file is supplied, the fixture has entered its blocking
+  # command; release it only after the runner is killed so no child is left
+  # behind and the test does not depend on a guessed duration.
+  if [ -n "$ready" ]; then
+    waited=0
+    while [ ! -f "$ready" ] && kill -0 "$pid" 2>/dev/null; do
+      sleep 0.05
+      waited=$((waited + 1))
+      if [ "$waited" -ge 1200 ]; then
+        kill -9 "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        false "blocking fixture never became ready within 60s"
+      fi
+    done
+  fi
   kill -9 "$pid" 2>/dev/null || true
+  [ -z "$release" ] || : >"$release"
   wait "$pid" 2>/dev/null || true
   sleep 0.2
+}
+
+_blocking_acceptance() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' \
+    'if [ ! -f "$BLOCK_READY" ]; then printf ready > "$BLOCK_READY"; while [ ! -f "$BLOCK_RELEASE" ]; do sleep 0.05; done; fi'
 }
 
 @test "execution-slice-1a: RESUME — a killed run runs to completion" {
   WORKDIR="$BATS_TEST_TMPDIR"
   WO="$WORKDIR/wo.json"
-  _wo "$WO" "wo-1-20" 1 '[]' '["true", "sleep 30"]'
+  BLOCK_READY="$WORKDIR/wo-1-20.ready"
+  BLOCK_RELEASE="$WORKDIR/wo-1-20.release"
+  export BLOCK_READY BLOCK_RELEASE
+  _wo "$WO" "wo-1-20" 1 '[]' "[\"true\", $(_blocking_acceptance)]"
   EVENTS_FILE="$RUN_ROOT/wo-1-20/events.jsonl"
 
   bash "$RUNNER" "$WO" & RUNNER_PID=$!
-  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1 "$BLOCK_READY" "$BLOCK_RELEASE"
 
   [ ! -f "$RUN_ROOT/wo-1-20/result.json" ]   # the crash was real
 
@@ -762,11 +787,14 @@ _kill_at() {
   # on the resume, and the builder none.
   WORKDIR="$BATS_TEST_TMPDIR"
   WO="$WORKDIR/wo.json"
-  _wo "$WO" "wo-1-21" 1 '[]' '["true", "true", "sleep 30", "true", "true"]'
+  BLOCK_READY="$WORKDIR/wo-1-21.ready"
+  BLOCK_RELEASE="$WORKDIR/wo-1-21.release"
+  export BLOCK_READY BLOCK_RELEASE
+  _wo "$WO" "wo-1-21" 1 '[]' "[\"true\", \"true\", $(_blocking_acceptance), \"true\", \"true\"]"
   EVENTS_FILE="$RUN_ROOT/wo-1-21/events.jsonl"
 
   bash "$RUNNER" "$WO" & RUNNER_PID=$!
-  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 2
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 2 "$BLOCK_READY" "$BLOCK_RELEASE"
 
   BEFORE="$(grep -c '"event":"acceptance_command_finished"' "$EVENTS_FILE")"
   [ "$BEFORE" -ge 2 ]
@@ -848,11 +876,14 @@ _kill_at() {
   # separately by its own file check.
   WORKDIR="$BATS_TEST_TMPDIR"
   WO="$WORKDIR/wo.json"
-  _wo "$WO" "wo-1-24" 1 '[]' '["sleep 30"]'
+  BLOCK_READY="$WORKDIR/wo-1-24.ready"
+  BLOCK_RELEASE="$WORKDIR/wo-1-24.release"
+  export BLOCK_READY BLOCK_RELEASE
+  _wo "$WO" "wo-1-24" 1 '[]' "[$(_blocking_acceptance)]"
   EVENTS_FILE="$RUN_ROOT/wo-1-24/events.jsonl"
 
   bash "$RUNNER" "$WO" & RUNNER_PID=$!
-  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1 "$BLOCK_READY" "$BLOCK_RELEASE"
 
   # The ledger says the snapshot was taken. Remove the file it wrote.
   grep -q '"event":"before_snapshot"' "$EVENTS_FILE"
@@ -870,11 +901,14 @@ _kill_at() {
   # crash would become invisible after one retry.
   WORKDIR="$BATS_TEST_TMPDIR"
   WO="$WORKDIR/wo.json"
-  _wo "$WO" "wo-1-25" 1 '[]' '["sleep 30"]'
+  BLOCK_READY="$WORKDIR/wo-1-25.ready"
+  BLOCK_RELEASE="$WORKDIR/wo-1-25.release"
+  export BLOCK_READY BLOCK_RELEASE
+  _wo "$WO" "wo-1-25" 1 '[]' "[$(_blocking_acceptance)]"
   EVENTS_FILE="$RUN_ROOT/wo-1-25/events.jsonl"
 
   bash "$RUNNER" "$WO" & RUNNER_PID=$!
-  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_started"' 1 "$BLOCK_READY" "$BLOCK_RELEASE"
 
   FIRST_LINE="$(head -1 "$EVENTS_FILE")"
   BEFORE="$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
@@ -973,11 +1007,14 @@ _kill_at() {
   # a second pull request and nothing downstream would notice.
   WORKDIR="$BATS_TEST_TMPDIR"
   WO="$WORKDIR/wo.json"
-  _wo "$WO" "wo-1-34" 1 '[]' '["true", "sleep 30"]' "$FAKE_PR"
+  BLOCK_READY="$WORKDIR/wo-1-34.ready"
+  BLOCK_RELEASE="$WORKDIR/wo-1-34.release"
+  export BLOCK_READY BLOCK_RELEASE
+  _wo "$WO" "wo-1-34" 1 '[]' "[\"true\", $(_blocking_acceptance)]" "$FAKE_PR"
   EVENTS_FILE="$RUN_ROOT/wo-1-34/events.jsonl"
 
   bash "$RUNNER" "$WO" & RUNNER_PID=$!
-  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1
+  _kill_at "$EVENTS_FILE" "$RUNNER_PID" '"event":"acceptance_command_finished"' 1 "$BLOCK_READY" "$BLOCK_RELEASE"
 
   run bash "$RUNNER" "$WO" --resume
   echo "$output"
