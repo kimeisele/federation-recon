@@ -42,9 +42,9 @@ if "WRONG_STATUS" in os.environ:
 if "WRONG_KIND" in os.environ:
     descriptor["kind"] = "forged_descriptor"
 manifests = {
-    "kimeisele/agent-world": b'''[project]\nname = "agent-world"\ndependencies = ["PyYAML>=6.0", "nadi-kit @ git+https://github.com/kimeisele/steward-federation.git"]\n[project.optional-dependencies]\ndev = ["pytest>=8.0"]\n''',
-    "kimeisele/agent-internet": b'''[project]\nname = "agent-internet"\ndependencies = ["nadi-kit @ git+https://github.com/kimeisele/steward-federation.git#egg=nadi-kit"]\n[project.optional-dependencies]\nsubstrate = ["steward-protocol[web,crypto]"]\n''',
-    "kimeisele/agent-city": b'''[project]\nname = "agent-city"\ndependencies = ["ecdsa>=0.18"]\n[project.optional-dependencies]\nkernel = ["steward-protocol[city]"]\nbrowser = ["agent-internet"]\n''',
+    "kimeisele/agent-world": b'''[project]\nname = "agent-world"\ndependencies = ["PyYAML>=6.0", "nadi-kit @ git+https://github.com/kimeisele/steward-federation.git"]\n[project.scripts]\nagent-world = "agent_world.cli:main"\n[project.optional-dependencies]\ndev = ["pytest>=8.0"]\n''',
+    "kimeisele/agent-internet": b'''[project]\nname = "agent-internet"\ndependencies = ["nadi-kit @ git+https://github.com/kimeisele/steward-federation.git#egg=nadi-kit"]\n[project.scripts]\nagent-internet = "agent_internet.cli:main"\n[project.optional-dependencies]\nsubstrate = ["steward-protocol[web,crypto]"]\n''',
+    "kimeisele/agent-city": b'''[project]\nname = "agent-city"\ndependencies = ["ecdsa>=0.18"]\n[project.optional-dependencies]\nkernel = ["steward-protocol[city]" ]\nbrowser = ["agent-internet"]\n''',
 }
 if "MALFORMED_MANIFEST" in os.environ:
     manifests[repo] = b'[project\nname = "broken"'
@@ -52,12 +52,14 @@ if "WRONG_DEPENDENCY_TYPE" in os.environ:
     manifests[repo] = b'[project]\nname = "broken"\ndependencies = "nadi-kit"\n'
 if "DYNAMIC_DEPENDENCIES" in os.environ:
     manifests[repo] = b'[project]\nname = "dynamic"\ndynamic = ["dependencies"]\n'
-if "UNKNOWN_GIT_TARGET" in os.environ:
-    manifests[repo] = b'''[project]\nname = "agent-world"\ndependencies = ["other @ git+https://github.com/kimeisele/other.git"]\n'''
+if "UNKNOWN_GIT_TARGET" in os.environ and repo == "kimeisele/agent-world":
+    manifests[repo] = b'''[project]\nname = "agent-world"\ndependencies = ["other @ git+https://github.com/kimeisele/other.git"]\n[project.scripts]\nagent-world = "agent_world.cli:main"\n'''
 payloads = {
     ".well-known/agent-federation.json": json.dumps(descriptor).encode(),
     "data/federation/authority-descriptor-seeds.json": json.dumps(seeds).encode(),
     "pyproject.toml": manifests[repo],
+    "agent_world/cli.py": b'def main(argv=None):\n    return 0\n',
+    "agent_internet/cli.py": b'def main(argv=None):\n    return 0\n',
 }
 blob_ids = {path: hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() for path, raw in payloads.items()}
 if "/git/commits/" in endpoint:
@@ -84,6 +86,8 @@ tree = [
         {"path": "package.json", "mode": "100644", "type": "blob", "sha": "3333333333333333333333333333333333333333", "size": 256},
         {"path": "src/main.py", "mode": "100644", "type": "blob", "sha": "4444444444444444444444444444444444444444", "size": 512},
         {"path": "pyproject.toml", "mode": "100644", "type": "blob", "sha": blob_ids["pyproject.toml"], "size": len(payloads["pyproject.toml"])},
+        *([{"path": "agent_world/cli.py", "mode": "100644", "type": "blob", "sha": blob_ids["agent_world/cli.py"], "size": len(payloads["agent_world/cli.py"])}] if repo == "kimeisele/agent-world" else []),
+        *([{"path": "agent_internet/cli.py", "mode": "100644", "type": "blob", "sha": blob_ids["agent_internet/cli.py"], "size": len(payloads["agent_internet/cli.py"])}] if repo == "kimeisele/agent-internet" else []),
         {"path": "src", "mode": "040000", "type": "tree", "sha": "5555555555555555555555555555555555555555"}
 ]
 if "MANY_ENTRIES" in __import__("os").environ:
@@ -130,7 +134,13 @@ assert all(n["tree"]["sha"] == "9999999999999999999999999999999999999999" for n 
 assert all(n["commit_sha"] == n["pin_sha"] for n in index["nodes"])
 assert all(n["dirty_state_assertion"] is False for n in index["nodes"])
 assert all("tree_entries" not in n for n in index["nodes"])
-assert all(n["tree"]["counts"]["blob_count"] == 6 for n in index["nodes"])
+assert {n["node_id"]: n["tree"]["counts"]["blob_count"] for n in index["nodes"]} == {
+    "kimeisele/agent-world": 7, "kimeisele/agent-internet": 7, "kimeisele/agent-city": 6
+}
+assert len(index["entrypoint_declarations"]) == 2
+assert {item["script"] for item in index["entrypoint_declarations"]} == {"agent-world", "agent-internet"}
+assert all(item["runtime_status"] == "not_evaluated" for item in index["entrypoint_declarations"])
+assert all(item["tree_sha"] == "9999999999999999999999999999999999999999" for item in index["entrypoint_declarations"])
 assert index["dependencies"]["observed_edges"] == []
 semantic_edge = next(edge for edge in index["relations"]["declared_edges"] if edge["kind"] == "declared_discovery_seed")
 assert len(index["relations"]["declared_edges"]) == 6
@@ -209,6 +219,8 @@ for item in index["nodes"] + index["evidence"] + index["semantic"]["observations
     item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
 for item in index["relations"]["manifest_observations"]:
     item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
+for item in index["entrypoint_declarations"]:
+    item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
 json.dump(index, open(path, "w"), indent=2)
 PY
     run env PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
@@ -273,6 +285,8 @@ for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 for manifest in index["relations"]["manifest_observations"]:
     manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+for declaration in index["entrypoint_declarations"]:
+    declaration["repository_pin"] = f"pins/v1-census/{declaration['node_id'].split('/')[-1]}.json"
 edge = next(edge for edge in index["relations"]["declared_edges"] if edge["kind"] == "declared_package_dependency" and edge["to_node"] == "kimeisele/agent-internet")
 edge["target_scope"] = "external_out_of_scope"
 edge["target_resolution"] = "direct_vcs_declaration"
@@ -299,6 +313,8 @@ for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 for manifest in index["relations"]["manifest_observations"]:
     manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+for declaration in index["entrypoint_declarations"]:
+    declaration["repository_pin"] = f"pins/v1-census/{declaration['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["evidence_refs"] = ["missing-evidence"]
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -323,6 +339,8 @@ for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 for manifest in index["relations"]["manifest_observations"]:
     manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+for declaration in index["entrypoint_declarations"]:
+    declaration["repository_pin"] = f"pins/v1-census/{declaration['node_id'].split('/')[-1]}.json"
 index["evidence"][0]["tree_sha"] = "8888888888888888888888888888888888888888"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -347,6 +365,8 @@ for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
 for manifest in index["relations"]["manifest_observations"]:
     manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+for declaration in index["entrypoint_declarations"]:
+    declaration["repository_pin"] = f"pins/v1-census/{declaration['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["sha"] = "7777777777777777777777777777777777777777"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -378,6 +398,32 @@ PY
     --validate-only --pins-root "$REPO_ROOT/pins/v1-census" --output "$WORKDIR/index.json"
   [ "$status" -ne 0 ]
   [[ "$output" == *"entrypoints[0].path is not a canonical POSIX path"* ]]
+}
+
+@test "validate-only rejects entrypoint declaration binding mutations" {
+  run run_index "$WORKDIR/index.json"
+  [ "$status" -eq 0 ]
+  python3 - "$WORKDIR/index.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+index = json.load(open(path))
+for node in index["nodes"]:
+    node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
+for evidence in index["evidence"]:
+    evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+item = index["entrypoint_declarations"][0]
+item["function"] = "nested"
+item["manifest_id"] = "wrong"
+item["sha"] = "7777777777777777777777777777777777777777"
+json.dump(index, open(path, "w"), indent=2)
+PY
+  run env PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+    --validate-only --pins-root "$REPO_ROOT/pins/v1-census" --output "$WORKDIR/index.json"
+  [ "$status" -ne 0 ]
 }
 
 @test "validate-only rejects an observed contract record" {
