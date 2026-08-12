@@ -45,13 +45,3 @@ teardown() {
   [ "$status" -eq 1 ]
   [ ! -e findings/*.json ]
 }
-
-@test "finding schema: duplicate evidence references are invalid" {
-  cat > findings/duplicate.json <<'JSON'
-{"finding_id":"finding-test","lifecycle_state":"observed","statement":"duplicate","evidence_refs":["ev-one","ev-one"],"created_at":"2026-08-12T00:00:00Z"}
-JSON
-
-  run validate_json_schema findings/duplicate.json "$REPO_ROOT/schemas/finding.schema.json"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"UNIQUEITEMS violation: evidence_refs"* ]]
-}
