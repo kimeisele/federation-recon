@@ -95,7 +95,6 @@ jobs:
         run: |
           RECON_PINS_DIR=pins bash scripts/recon-run.sh --reproduce
           RECON_PINS_DIR=pins bash scripts/node-census-run.sh --reproduce
-          python3 scripts/federation-intelligence.py
           RECON_PINS_DIR=pins bash scripts/consumption-run.sh --reproduce
           bash scripts/compose-digest.sh
 
