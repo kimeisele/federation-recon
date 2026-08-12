@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 
 PROCEDURE_ID = "federation-intelligence-v0"
@@ -49,6 +50,23 @@ SEMANTIC_TARGETS = (
     ("kimeisele/agent-internet", "data/federation/authority-descriptor-seeds.json", "authority_seeds"),
     ("kimeisele/agent-city", ".well-known/agent-federation.json", "city_descriptor"),
 )
+MANIFEST_TARGETS = tuple((repo, "pyproject.toml") for repo, _ in CLUSTER)
+PACKAGE_TARGETS = {
+    "nadi-kit": "kimeisele/steward-federation",
+    "steward-protocol": "kimeisele/steward-protocol",
+    "agent-internet": "kimeisele/agent-internet",
+}
+GIT_DEP_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)\s*@\s*git\+https://github\.com/(kimeisele/[A-Za-z0-9_.-]+)\.git(?:#.*)?$")
+DEP_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?(?:\s*(?:[<>=!~]=?|\^).*)?$")
+MANIFEST_EDGE_ALLOWLIST = (
+    ("kimeisele/agent-world", "runtime", "nadi-kit", "kimeisele/steward-federation"),
+    ("kimeisele/agent-internet", "runtime", "nadi-kit", "kimeisele/steward-federation"),
+    ("kimeisele/agent-internet", "substrate", "steward-protocol", "kimeisele/steward-protocol"),
+    ("kimeisele/agent-city", "kernel", "steward-protocol", "kimeisele/steward-protocol"),
+    ("kimeisele/agent-city", "browser", "agent-internet", "kimeisele/agent-internet"),
+)
+MANIFEST_EDGE_KIND = "declared_package_dependency"
+TARGET_CAVEAT = "target revision is unbound and target content is not verified"
 EXPECTED_CITY_URL = "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json"
 SEED_URL_RE = re.compile(r"^https://raw\.githubusercontent\.com/kimeisele/[a-z0-9][a-z0-9._-]*/main/\.well-known/agent-federation\.json$")
 
@@ -188,8 +206,8 @@ def read_tree(repo: str, commit_sha: str, tree_sha: str) -> dict:
     }
 
 
-def read_blob(repo: str, entry: dict) -> tuple[bytes, int, dict]:
-    """Read one allowlisted blob and bind every transport property."""
+def read_bound_blob(repo: str, entry: dict) -> tuple[bytes, int]:
+    """Read one allowlisted blob and bind its Git object SHA and size."""
     blob_sha = entry.get("sha")
     expected_size = entry.get("size")
     if entry.get("type") != "blob" or not isinstance(blob_sha, str) or not SHA_RE.fullmatch(blob_sha):
@@ -204,13 +222,115 @@ def read_blob(repo: str, entry: dict) -> tuple[bytes, int, dict]:
     try:
         raw = base64.b64decode("".join(response["content"].split()), validate=True)
         text = raw.decode("utf-8")
-        parsed = json.loads(text)
-    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+    except (ValueError, UnicodeError) as exc:
         raise InputError(f"semantic blob is not valid UTF-8 JSON for {repo}") from exc
     object_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-    if object_sha != blob_sha or len(raw) != expected_size or len(raw) > MAX_SEMANTIC_BLOB_BYTES or not isinstance(parsed, dict):
+    if object_sha != blob_sha or len(raw) != expected_size or len(raw) > MAX_SEMANTIC_BLOB_BYTES:
         raise InputError(f"semantic blob length or JSON shape is invalid for {repo}")
-    return raw, expected_size, parsed
+    return raw, expected_size
+
+
+def read_blob(repo: str, entry: dict) -> tuple[bytes, int, dict]:
+    raw, size = read_bound_blob(repo, entry)
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise InputError(f"semantic blob is not valid UTF-8 JSON for {repo}") from exc
+    if not isinstance(parsed, dict):
+        raise InputError(f"semantic blob JSON shape is invalid for {repo}")
+    return raw, size, parsed
+
+
+def manifest_dependency(value: object) -> tuple[str, str, str] | None:
+    if not isinstance(value, str) or len(value) > 512:
+        return None
+    direct = GIT_DEP_RE.fullmatch(value)
+    if direct:
+        name, target = direct.groups()
+        return name.lower(), target, "direct_vcs_declaration"
+    if not DEP_NAME_RE.fullmatch(value):
+        return None
+    name = re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*", value).group(0).lower()
+    target = PACKAGE_TARGETS.get(name)
+    return (name, target, "package_allowlist_mapping") if target else None
+
+
+def manifest_index(root: Path, pins_root: Path, trees: dict[str, dict]) -> dict:
+    observations = []
+    declarations = set()
+    for repo, path in MANIFEST_TARGETS:
+        pin_path = pins_root / f"{repo.split('/')[-1]}.json"
+        entry = next((item for item in trees[repo]["entries"] if item["path"] == path), None)
+        if entry is None:
+            raise InputError(f"manifest target is absent from pinned tree: {repo}:{path}")
+        raw, size = read_bound_blob(repo, entry)
+        try:
+            document = tomllib.loads(raw.decode("utf-8"))
+        except (tomllib.TOMLDecodeError, UnicodeError) as exc:
+            raise InputError(f"manifest is not valid TOML for {repo}") from exc
+        project = document.get("project")
+        if not isinstance(project, dict):
+            raise InputError(f"manifest has no project table for {repo}")
+        dynamic = project.get("dynamic", [])
+        if not isinstance(dynamic, list) or not all(isinstance(item, str) for item in dynamic):
+            raise InputError(f"manifest dynamic metadata is malformed for {repo}")
+        if "dependencies" in dynamic:
+            raise InputError(f"manifest dynamic dependencies are unsupported for {repo}")
+        values: list[tuple[str, str, str, str]] = []
+        dependency_values = project.get("dependencies", [])
+        if not isinstance(dependency_values, list) or not all(isinstance(item, str) for item in dependency_values):
+            raise InputError(f"manifest dependencies are not a string list for {repo}")
+        for item in dependency_values:
+            parsed = manifest_dependency(item)
+            if parsed:
+                values.append(("runtime", parsed[0], parsed[1], parsed[2]))
+        optional = project.get("optional-dependencies", {})
+        if not isinstance(optional, dict) or any(not isinstance(k, str) or not isinstance(v, list) or not all(isinstance(x, str) for x in v) for k, v in optional.items()):
+            raise InputError(f"manifest optional dependencies are malformed for {repo}")
+        for group, group_values in optional.items():
+            if len(group) > 128:
+                raise InputError(f"manifest optional dependency group is too long for {repo}")
+            for item in group_values:
+                parsed = manifest_dependency(item)
+                if parsed:
+                    values.append((group, parsed[0], parsed[1], parsed[2]))
+        manifest_id = "evidence-manifest-" + canonical_sha256({"repo": repo, "path": path, "sha": entry["sha"]})[:12]
+        for group, package, target, resolution in values:
+            declarations.add((repo, group, package, target, resolution))
+        observations.append({
+            "manifest_id": manifest_id,
+            "node_id": repo,
+            "repository_pin": pin_reference(root, pin_path),
+            "path": path,
+            "blob_sha": entry["sha"],
+            "blob_size": size,
+            "decoded_length": len(raw),
+            "declaration_count": len(values),
+            "declarations_sha256": canonical_sha256(sorted(values)),
+        })
+    edges = []
+    for source, group, package, target in MANIFEST_EDGE_ALLOWLIST:
+        if not any(item[:4] == (source, group, package, target) for item in declarations):
+            continue
+        resolution = next(item[4] for item in declarations if item[:4] == (source, group, package, target))
+        target_scope = "indexed_source" if target == "kimeisele/agent-internet" else "external_out_of_scope"
+        evidence = next(item["manifest_id"] for item in observations if item["node_id"] == source)
+        edges.append({
+            "from_node": source,
+            "to_node": target,
+            "kind": MANIFEST_EDGE_KIND,
+            "status": "declared",
+            "declaration": "pinned_pyproject_toml",
+            "target_ref_mutable": True,
+            "target_scope": target_scope,
+            "target_resolution": resolution,
+            "package": package,
+            "dependency_group": group,
+            "evidence_refs": [evidence],
+            "confidence": confidence("high", "direct_pinned_observation", "manifest declaration is not proof of installed or runtime use", TARGET_CAVEAT),
+        })
+    edges.sort(key=lambda item: (item["from_node"], item["dependency_group"], item["package"], item["to_node"]))
+    return {"observations": observations, "declared_edges": edges}
 
 
 def confidence(level: str, basis: str, *caveats: str) -> dict:
@@ -431,19 +551,56 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
             raise InputError("semantic observation: city descriptor fields are not exact")
         if seed_observation["matched_city_descriptor_url"] != EXPECTED_CITY_URL:
             raise InputError("semantic check: observed result lacks exact matched city URL")
-    require_keys(index["relations"], {"declared_edges"}, "relations")
-    if check["status"] != "observed" and index["relations"]["declared_edges"]:
+    require_keys(index["relations"], {"declared_edges", "manifest_observations"}, "relations")
+    if not isinstance(index["relations"]["manifest_observations"], list) or len(index["relations"]["manifest_observations"]) != len(MANIFEST_TARGETS):
+        raise InputError("relations: exact manifest observation set required")
+    manifest_ids = set()
+    for item in index["relations"]["manifest_observations"]:
+        require_keys(item, {"manifest_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "declaration_count", "declarations_sha256"}, "manifest observation")
+        if item["node_id"] not in expected_nodes or item["path"] != "pyproject.toml" or not SHA_RE.fullmatch(item["blob_sha"]):
+            raise InputError("manifest observation: invalid identity or blob binding")
+        expected_ref = pin_reference(root, pins_root / f"{item['node_id'].split('/')[-1]}.json")
+        if item["repository_pin"] != expected_ref or item["manifest_id"] in manifest_ids:
+            raise InputError("manifest observation: pin or identity mismatch")
+        manifest_ids.add(item["manifest_id"])
+        for field in ("blob_size", "decoded_length", "declaration_count"):
+            if isinstance(item[field], bool) or not isinstance(item[field], int) or item[field] < 0 or item[field] > (MAX_SEMANTIC_BLOB_BYTES if field != "declaration_count" else 128):
+                raise InputError("manifest observation: invalid bounded integer")
+        if item["decoded_length"] != item["blob_size"] or not re.fullmatch(r"^[0-9a-f]{64}$", item["declarations_sha256"]):
+            raise InputError("manifest observation: invalid digest or length")
+    if len(manifest_ids) != len(MANIFEST_TARGETS):
+        raise InputError("manifest observations: duplicate or missing target")
+    semantic_edges = [edge for edge in index["relations"]["declared_edges"] if edge.get("kind") == "declared_discovery_seed"]
+    manifest_edges = [edge for edge in index["relations"]["declared_edges"] if edge.get("kind") == MANIFEST_EDGE_KIND]
+    if len(semantic_edges) + len(manifest_edges) != len(index["relations"]["declared_edges"]):
+        raise InputError("relations: unknown declared edge kind")
+    if check["status"] != "observed" and semantic_edges:
         raise InputError("relations: no declared edge is allowed for a non-observed check")
     if check["status"] == "observed":
-        edges = index["relations"]["declared_edges"]
+        edges = semantic_edges
         if len(edges) != 1:
             raise InputError("semantic check: observed result requires one edge")
         edge = edges[0]
         require_keys(edge, {"from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "evidence_refs", "confidence"}, "dependency edge")
         if (edge["from_node"], edge["to_node"], edge["kind"], edge["status"], edge["declaration"], edge["target_ref_mutable"]) != ("kimeisele/agent-internet", "kimeisele/agent-city", "declared_discovery_seed", "observed", "historical_pinned_sources", True) or set(edge["evidence_refs"]) != set(semantic_by_id):
             raise InputError("dependency edge: semantic declaration binding invalid")
-    elif index["relations"]["declared_edges"]:
+    elif semantic_edges:
         raise InputError("relations: no edge is allowed for an unproven or mismatched semantic check")
+    for edge in manifest_edges:
+        require_keys(edge, {"from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "target_scope", "target_resolution", "package", "dependency_group", "evidence_refs", "confidence"}, "manifest dependency edge")
+        if (edge["kind"], edge["status"], edge["declaration"], edge["target_ref_mutable"]) != (MANIFEST_EDGE_KIND, "declared", "pinned_pyproject_toml", True):
+            raise InputError("manifest dependency edge: invalid declaration semantics")
+        if (edge["from_node"], edge["dependency_group"], edge["package"], edge["to_node"]) not in MANIFEST_EDGE_ALLOWLIST:
+            raise InputError("manifest dependency edge: target is not in versioned allowlist")
+        expected_scope = "indexed_source" if edge["to_node"] == "kimeisele/agent-internet" else "external_out_of_scope"
+        expected_resolution = "direct_vcs_declaration" if edge["package"] == "nadi-kit" else "package_allowlist_mapping"
+        if edge["target_scope"] != expected_scope or edge["target_resolution"] != expected_resolution:
+            raise InputError("manifest dependency edge: target scope or resolution is invalid")
+        if not isinstance(edge["evidence_refs"], list) or len(edge["evidence_refs"]) != 1 or edge["evidence_refs"][0] not in manifest_ids:
+            raise InputError("manifest dependency edge: invalid manifest evidence reference")
+        validate_confidence(edge["confidence"], "manifest dependency edge.confidence")
+        if TARGET_CAVEAT not in edge["confidence"]["caveats"]:
+            raise InputError("manifest dependency edge: target verification caveat is missing")
     if index["dependencies"]["observed_edges"] != []:
         raise InputError("dependencies: observed implementation/runtime edges must remain empty")
     if index["findings"] != [] or index["attention_items"] != []:
@@ -459,6 +616,7 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
         "findings": 0,
         "semantic_checks": 1,
         "declared_relations": len(index["relations"]["declared_edges"]),
+        "manifest_observations": len(index["relations"]["manifest_observations"]),
     }
     if index["summary"] != expected_summary:
         raise InputError("summary does not match indexed records")
@@ -632,6 +790,8 @@ def build_index(root: Path, pins_root: Path) -> dict:
             "evidence_refs": semantic_check["evidence_refs"],
             "confidence": semantic_check["confidence"],
         })
+    manifests = manifest_index(root, pins_root, trees)
+    observed_edges.extend(manifests["declared_edges"])
     return {
         "schema": "federation-intelligence-v0",
         "procedure": {"id": PROCEDURE_ID, "version": PROCEDURE_VERSION},
@@ -649,7 +809,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
         "contracts": {"observed": [], "candidates": contract_candidates},
         "dependencies": {"observed_edges": [], "candidates": dependency_candidates},
         "semantic": semantic,
-        "relations": {"declared_edges": observed_edges},
+        "relations": {"declared_edges": observed_edges, "manifest_observations": manifests["observations"]},
         "findings": [],
         "attention_items": [],
         "summary": {
@@ -663,6 +823,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
             "findings": 0,
             "semantic_checks": len(semantic["checks"]),
             "declared_relations": len(observed_edges),
+            "manifest_observations": len(manifests["observations"]),
         },
         "limitations": [
             "Tree metadata identifies candidate paths only; file contents and runtime wiring were not read.",

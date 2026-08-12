@@ -126,9 +126,9 @@
     },
     "relations": {
       "type": "object",
-      "required": ["declared_edges"],
+      "required": ["declared_edges", "manifest_observations"],
       "additionalProperties": false,
-      "properties": { "declared_edges": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/declared-edge" } } }
+      "properties": { "declared_edges": { "type": "array", "maxItems": 6, "items": { "oneOf": [{ "$ref": "#/$defs/declared-edge" }, { "$ref": "#/$defs/manifest-edge" }] } }, "manifest_observations": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/manifest-observation" } } }
     },
     "findings": {
       "type": "array",
@@ -149,7 +149,7 @@
     "attention_items": { "const": [] },
     "summary": {
       "type": "object",
-      "required": ["pins", "observed_nodes", "tree_entries", "blob_entries", "entrypoint_candidates", "contract_candidates", "dependency_candidates", "findings", "semantic_checks", "declared_relations"],
+      "required": ["pins", "observed_nodes", "tree_entries", "blob_entries", "entrypoint_candidates", "contract_candidates", "dependency_candidates", "findings", "semantic_checks", "declared_relations", "manifest_observations"],
       "additionalProperties": false,
       "properties": {
         "pins": { "type": "integer", "minimum": 0 },
@@ -161,7 +161,7 @@
         "dependency_candidates": { "type": "integer", "minimum": 0 },
         "findings": { "type": "integer", "minimum": 0 },
         "semantic_checks": { "const": 1 },
-        "declared_relations": { "type": "integer", "minimum": 0, "maximum": 1 }
+        "declared_relations": { "type": "integer", "minimum": 0, "maximum": 6 }, "manifest_observations": { "const": 3 }
       }
     },
     "limitations": { "type": "array", "items": { "type": "string", "maxLength": 256 } }
@@ -233,6 +233,20 @@
     "declared-edge": {
       "type": "object", "required": ["from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "evidence_refs", "confidence"], "additionalProperties": false,
       "properties": { "from_node": { "const": "kimeisele/agent-internet" }, "to_node": { "const": "kimeisele/agent-city" }, "kind": { "const": "declared_discovery_seed" }, "status": { "const": "observed" }, "declaration": { "const": "historical_pinned_sources" }, "target_ref_mutable": { "const": true }, "evidence_refs": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "string" } }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "manifest-edge": {
+      "type": "object", "required": ["from_node", "to_node", "kind", "status", "declaration", "target_ref_mutable", "target_scope", "target_resolution", "package", "dependency_group", "evidence_refs", "confidence"], "additionalProperties": false,
+      "properties": { "from_node": { "type": "string" }, "to_node": { "type": "string" }, "kind": { "const": "declared_package_dependency" }, "status": { "const": "declared" }, "declaration": { "const": "pinned_pyproject_toml" }, "target_ref_mutable": { "const": true }, "target_scope": { "enum": ["indexed_source", "external_out_of_scope"] }, "target_resolution": { "enum": ["direct_vcs_declaration", "package_allowlist_mapping"] }, "package": { "type": "string", "maxLength": 128 }, "dependency_group": { "type": "string", "maxLength": 128 }, "evidence_refs": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "string" } }, "confidence": { "$ref": "#/$defs/confidence" } },
+      "allOf": [
+        { "if": { "required": ["to_node"], "properties": { "to_node": { "const": "kimeisele/agent-internet" } } }, "then": { "properties": { "target_scope": { "const": "indexed_source" } } } },
+        { "if": { "required": ["to_node"], "properties": { "to_node": { "pattern": "^kimeisele/steward-" } } }, "then": { "properties": { "target_scope": { "const": "external_out_of_scope" } } } },
+        { "if": { "required": ["package"], "properties": { "package": { "const": "nadi-kit" } } }, "then": { "properties": { "target_resolution": { "const": "direct_vcs_declaration" } } } },
+        { "if": { "required": ["package"], "properties": { "package": { "enum": ["steward-protocol", "agent-internet"] } } }, "then": { "properties": { "target_resolution": { "const": "package_allowlist_mapping" } } } }
+      ]
+    },
+    "manifest-observation": {
+      "type": "object", "required": ["manifest_id", "node_id", "repository_pin", "path", "blob_sha", "blob_size", "decoded_length", "declaration_count", "declarations_sha256"], "additionalProperties": false,
+      "properties": { "manifest_id": { "type": "string" }, "node_id": { "type": "string" }, "repository_pin": { "type": "string" }, "path": { "const": "pyproject.toml" }, "blob_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "blob_size": { "type": "integer", "minimum": 0, "maximum": 16384 }, "decoded_length": { "type": "integer", "minimum": 0, "maximum": 16384 }, "declaration_count": { "type": "integer", "minimum": 0, "maximum": 128 }, "declarations_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
     }
   }
 }

@@ -20,5 +20,13 @@ entrypoints, contract files, and dependency manifests. A candidate is not an
 observed runtime contract or dependency edge. `dependencies.observed_edges`
 remains empty. Pinned content may produce at most one historical, mutable
 relation under `relations.declared_edges`; this is not a runtime or
-implementation dependency. Any missing, malformed, truncated, or mismatched
-pinned input fails the run without replacing an existing output.
+implementation dependency. The same relation set may contain bounded,
+allowlisted `declared_package_dependency` records derived from the three
+pinned `pyproject.toml` files; these record manifest declarations only, with
+mutable targets and no claim of installation or runtime use. Each edge records
+whether its target is `indexed_source` or `external_out_of_scope`, and whether
+the target came from a direct VCS declaration or the package allowlist. The
+target revision is unbound and target content is not verified. A dynamic
+`project.dependencies` declaration is unsupported and fails closed. Any missing,
+malformed, truncated, or mismatched pinned input fails the run without
+replacing an existing output.
