@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-ecb8392a3459",
+  "repository_pin": "pins/v0-boundary-drift/agent-world.json",
+  "procedure_id": "boundary-drift-recon-v0",
+  "procedure_version": "v0",
+  "observation_type": "manifest_field",
+  "value": "Control Plane + Projection", "paths": ["docs/REPO_BOUNDARIES.md"]
+}
