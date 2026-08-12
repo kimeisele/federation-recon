@@ -9,6 +9,7 @@ a contract is exposed or that a dependency is actually used.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import hashlib
 import json
@@ -25,6 +26,7 @@ PROCEDURE_ID = "federation-intelligence-v0"
 PROCEDURE_VERSION = "1"
 MAX_CANDIDATES_PER_KIND = 128
 MAX_SEMANTIC_BLOB_BYTES = 16 * 1024
+MAX_SOURCE_BLOB_BYTES = 256 * 1024
 CLUSTER = (
     ("kimeisele/agent-world", "agent-world"),
     ("kimeisele/agent-internet", "agent-internet"),
@@ -66,6 +68,10 @@ MANIFEST_EDGE_ALLOWLIST = (
     ("kimeisele/agent-city", "browser", "agent-internet", "kimeisele/agent-internet"),
 )
 MANIFEST_EDGE_KIND = "declared_package_dependency"
+ENTRYPOINT_EXPECTED = {
+    "kimeisele/agent-world": ("agent-world", "agent_world.cli:main"),
+    "kimeisele/agent-internet": ("agent-internet", "agent_internet.cli:main"),
+}
 TARGET_CAVEAT = "target revision is unbound and target content is not verified"
 EXPECTED_CITY_URL = "https://raw.githubusercontent.com/kimeisele/agent-city/main/.well-known/agent-federation.json"
 SEED_URL_RE = re.compile(r"^https://raw\.githubusercontent\.com/kimeisele/[a-z0-9][a-z0-9._-]*/main/\.well-known/agent-federation\.json$")
@@ -206,13 +212,13 @@ def read_tree(repo: str, commit_sha: str, tree_sha: str) -> dict:
     }
 
 
-def read_bound_blob(repo: str, entry: dict) -> tuple[bytes, int]:
+def read_bound_blob(repo: str, entry: dict, max_bytes: int = MAX_SEMANTIC_BLOB_BYTES) -> tuple[bytes, int]:
     """Read one allowlisted blob and bind its Git object SHA and size."""
     blob_sha = entry.get("sha")
     expected_size = entry.get("size")
     if entry.get("type") != "blob" or not isinstance(blob_sha, str) or not SHA_RE.fullmatch(blob_sha):
         raise InputError(f"semantic target is not a valid blob for {repo}")
-    if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size < 0 or expected_size > MAX_SEMANTIC_BLOB_BYTES:
+    if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size < 0 or expected_size > max_bytes:
         raise InputError(f"semantic blob size is unavailable or over limit for {repo}")
     response = read_api(repo, f"git/blobs/{blob_sha}")
     if response.get("sha") != blob_sha or response.get("encoding") != "base64" or not isinstance(response.get("content"), str):
@@ -225,7 +231,7 @@ def read_bound_blob(repo: str, entry: dict) -> tuple[bytes, int]:
     except (ValueError, UnicodeError) as exc:
         raise InputError(f"semantic blob is not valid UTF-8 JSON for {repo}") from exc
     object_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-    if object_sha != blob_sha or len(raw) != expected_size or len(raw) > MAX_SEMANTIC_BLOB_BYTES:
+    if object_sha != blob_sha or len(raw) != expected_size or len(raw) > max_bytes:
         raise InputError(f"semantic blob length or JSON shape is invalid for {repo}")
     return raw, expected_size
 
@@ -258,6 +264,7 @@ def manifest_dependency(value: object) -> tuple[str, str, str] | None:
 def manifest_index(root: Path, pins_root: Path, trees: dict[str, dict]) -> dict:
     observations = []
     declarations = set()
+    projects = {}
     for repo, path in MANIFEST_TARGETS:
         pin_path = pins_root / f"{repo.split('/')[-1]}.json"
         entry = next((item for item in trees[repo]["entries"] if item["path"] == path), None)
@@ -271,6 +278,10 @@ def manifest_index(root: Path, pins_root: Path, trees: dict[str, dict]) -> dict:
         project = document.get("project")
         if not isinstance(project, dict):
             raise InputError(f"manifest has no project table for {repo}")
+        scripts = project.get("scripts", {})
+        if not isinstance(scripts, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in scripts.items()):
+            raise InputError(f"manifest project.scripts is malformed for {repo}")
+        projects[repo] = scripts
         dynamic = project.get("dynamic", [])
         if not isinstance(dynamic, list) or not all(isinstance(item, str) for item in dynamic):
             raise InputError(f"manifest dynamic metadata is malformed for {repo}")
@@ -330,7 +341,7 @@ def manifest_index(root: Path, pins_root: Path, trees: dict[str, dict]) -> dict:
             "confidence": confidence("high", "direct_pinned_observation", "manifest declaration is not proof of installed or runtime use", TARGET_CAVEAT),
         })
     edges.sort(key=lambda item: (item["from_node"], item["dependency_group"], item["package"], item["to_node"]))
-    return {"observations": observations, "declared_edges": edges}
+    return {"observations": observations, "declared_edges": edges, "projects": projects}
 
 
 def confidence(level: str, basis: str, *caveats: str) -> dict:
@@ -355,6 +366,52 @@ def candidate(node_id: str, entry: dict, kind: str, evidence_id: str, basis: str
             "path metadata does not prove runtime exposure or use",
         ),
     }
+
+
+def entrypoint_declarations(trees: dict[str, dict], evidence_by_node: dict[str, str], manifests: dict) -> list[dict]:
+    declarations = []
+    for repo, (script, expected) in ENTRYPOINT_EXPECTED.items():
+        scripts = manifests["projects"].get(repo, {})
+        if scripts.get(script) != expected or len(scripts) != 1:
+            raise InputError(f"{repo}: project.scripts does not contain the exact expected declaration")
+        module, function = expected.split(":", 1)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*", module) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function):
+            raise InputError(f"{repo}: entrypoint declaration is not a canonical module:function")
+        path = module.replace(".", "/") + ".py"
+        entry = next((item for item in trees[repo]["entries"] if item["path"] == path), None)
+        if entry is None or entry.get("type") != "blob" or entry.get("mode") != "100644":
+            raise InputError(f"{repo}: declared entrypoint module is absent or not a regular blob")
+        raw, size = read_bound_blob(repo, entry, MAX_SOURCE_BLOB_BYTES)
+        try:
+            tree = ast.parse(raw.decode("utf-8"), filename=path)
+        except (UnicodeError, SyntaxError) as exc:
+            raise InputError(f"{repo}: declared entrypoint source is not valid Python") from exc
+        if not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function for node in tree.body):
+            raise InputError(f"{repo}: declared entrypoint function is not top-level")
+        manifest = next(item for item in manifests["observations"] if item["node_id"] == repo)
+        declarations.append({
+            "node_id": repo,
+            "repository_pin": manifest["repository_pin"],
+            "script": script,
+            "declaration": expected,
+            "module": module,
+            "path": path,
+            "function": function,
+            "kind": "project_script",
+            "manifest_id": manifest["manifest_id"],
+            "tree_sha": trees[repo]["sha"],
+            "sha": entry["sha"],
+            "size": size,
+            "mode": entry["mode"],
+            "runtime_status": "not_evaluated",
+            "inference_status": "observed_pinned_declaration",
+            "evidence_refs": [evidence_by_node[repo]],
+            "confidence": confidence("high", "direct_pinned_observation", "declaration is not proof of runtime execution"),
+        })
+    city_scripts = manifests["projects"].get("kimeisele/agent-city", {})
+    if city_scripts:
+        raise InputError("kimeisele/agent-city: project.scripts must be empty for this slice")
+    return declarations
 
 
 def pin_reference(root: Path, pin_path: Path) -> str:
@@ -411,7 +468,7 @@ def validate_candidate(value: object, evidence_by_id: dict, expected_nodes: set[
 
 def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
     index = read_json(index_path)
-    require_keys(index, {"schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "contracts", "dependencies", "semantic", "relations", "findings", "attention_items", "summary", "limitations"}, "index")
+    require_keys(index, {"schema", "procedure", "procedure_id", "procedure_version", "run_timestamp", "scope", "nodes", "evidence", "entrypoints", "entrypoint_declarations", "contracts", "dependencies", "semantic", "relations", "findings", "attention_items", "summary", "limitations"}, "index")
     if index["schema"] != "federation-intelligence-v0" or index["procedure_id"] != PROCEDURE_ID or index["procedure_version"] != PROCEDURE_VERSION or index["procedure"] != {"id": PROCEDURE_ID, "version": PROCEDURE_VERSION}:
         raise InputError("index: invalid procedure identity")
     expected_nodes = {repo for repo, _ in CLUSTER}
@@ -493,6 +550,39 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
             raise InputError(f"{label}: candidate cap or shape violation")
         for number, value in enumerate(values):
             validate_candidate(value, evidence_by_id, expected_nodes, f"{label}[{number}]")
+    manifest_observations = index.get("relations", {}).get("manifest_observations", [])
+    manifest_by_node = {item.get("node_id"): item for item in manifest_observations if isinstance(item, dict)}
+    declarations_by_node = {}
+    if len(index["entrypoint_declarations"]) != 2:
+        raise InputError("entrypoint_declarations: exact two records required")
+    for item in index["entrypoint_declarations"]:
+        require_keys(item, {"node_id", "repository_pin", "script", "declaration", "module", "path", "function", "kind", "manifest_id", "tree_sha", "sha", "size", "mode", "runtime_status", "inference_status", "evidence_refs", "confidence"}, "entrypoint declaration")
+        if item["node_id"] not in ENTRYPOINT_EXPECTED or item["script"] != ENTRYPOINT_EXPECTED[item["node_id"]][0] or item["declaration"] != ENTRYPOINT_EXPECTED[item["node_id"]][1] or item["runtime_status"] != "not_evaluated" or item["inference_status"] != "observed_pinned_declaration" or item["kind"] != "project_script":
+            raise InputError("entrypoint declaration: exact pinned declaration required")
+        if item["node_id"] in declarations_by_node:
+            raise InputError("entrypoint declaration: duplicate node")
+        declarations_by_node[item["node_id"]] = item
+        manifest = manifest_by_node.get(item["node_id"])
+        if not manifest or item["repository_pin"] != manifest.get("repository_pin") or item["manifest_id"] != manifest.get("manifest_id"):
+            raise InputError("entrypoint declaration: manifest binding mismatch")
+        canonical_posix_path(item["path"], "entrypoint declaration.path")
+        expected_script, expected_declaration = ENTRYPOINT_EXPECTED[item["node_id"]]
+        expected_module, expected_function = expected_declaration.split(":", 1)
+        if (item["module"], item["function"], item["path"], item["script"]) != (expected_module, expected_function, expected_module.replace(".", "/") + ".py", expected_script):
+            raise InputError("entrypoint declaration: module/function/path mismatch")
+        node = node_by_id[item["node_id"]]
+        if item["tree_sha"] != node["tree"]["sha"] or not SHA_RE.fullmatch(item["sha"]) or item["mode"] != "100644" or not isinstance(item["size"], int) or item["size"] < 0:
+            raise InputError("entrypoint declaration: invalid source binding")
+        candidate_match = next((candidate for candidate in index["entrypoints"] if candidate.get("node_id") == item["node_id"] and candidate.get("path") == item["path"]), None)
+        if not candidate_match or (item["sha"], item["size"], item["mode"]) != (candidate_match.get("sha"), candidate_match.get("size"), candidate_match.get("mode")):
+            raise InputError("entrypoint declaration: source does not match pinned candidate")
+        if not isinstance(item["evidence_refs"], list) or len(item["evidence_refs"]) != 1 or item["evidence_refs"][0] not in evidence_by_id:
+            raise InputError("entrypoint declaration: invalid evidence reference")
+        if evidence_by_id[item["evidence_refs"][0]]["node_id"] != item["node_id"]:
+            raise InputError("entrypoint declaration: evidence node mismatch")
+        validate_confidence(item["confidence"], "entrypoint declaration.confidence")
+    if set(declarations_by_node) != set(ENTRYPOINT_EXPECTED):
+        raise InputError("entrypoint declaration: exact node set required")
     require_keys(index["semantic"], {"observations", "checks"}, "semantic")
     semantic_by_id = {}
     known_semantic = {
@@ -611,6 +701,7 @@ def validate_index(index_path: Path, root: Path, pins_root: Path) -> None:
         "tree_entries": sum(node["tree"]["total_entry_count"] for node in index["nodes"]),
         "blob_entries": sum(node["tree"]["counts"]["blob_count"] for node in index["nodes"]),
         "entrypoint_candidates": len(index["entrypoints"]),
+        "entrypoint_declarations": len(index["entrypoint_declarations"]),
         "contract_candidates": len(index["contracts"]["candidates"]),
         "dependency_candidates": len(index["dependencies"]["candidates"]),
         "findings": 0,
@@ -792,6 +883,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
         })
     manifests = manifest_index(root, pins_root, trees)
     observed_edges.extend(manifests["declared_edges"])
+    entrypoint_records = entrypoint_declarations(trees, {item["node_id"]: item["evidence_id"] for item in evidence}, manifests)
     return {
         "schema": "federation-intelligence-v0",
         "procedure": {"id": PROCEDURE_ID, "version": PROCEDURE_VERSION},
@@ -806,6 +898,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
         "nodes": nodes,
         "evidence": evidence,
         "entrypoints": entrypoints,
+        "entrypoint_declarations": entrypoint_records,
         "contracts": {"observed": [], "candidates": contract_candidates},
         "dependencies": {"observed_edges": [], "candidates": dependency_candidates},
         "semantic": semantic,
@@ -818,6 +911,7 @@ def build_index(root: Path, pins_root: Path) -> dict:
             "tree_entries": total_entries,
             "blob_entries": total_blobs,
             "entrypoint_candidates": len(entrypoints),
+            "entrypoint_declarations": len(entrypoint_records),
             "contract_candidates": len(contract_candidates),
             "dependency_candidates": len(dependency_candidates),
             "findings": 0,

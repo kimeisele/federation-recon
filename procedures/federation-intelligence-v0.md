@@ -10,6 +10,19 @@
 - `--validate-only` checks offline structure, relations, and canonical digest integrity; it does not prove source membership.
 - `--verify-source` additionally performs fresh immutable commit-then-tree reads and compares the complete canonical index, including paths, modes, sizes, and blob SHAs.
 
+The top-level `entrypoint_declarations` contains exactly two pinned declarations:
+`agent-world = agent_world.cli:main` and `agent-internet =
+agent_internet.cli:main`. `agent-city` must declare no project scripts. Each
+record binds the manifest observation, repository pin, evidence record, commit
+tree SHA, source path, blob SHA, byte size, and regular-file mode. The module
+source is decoded and parsed with the standard-library AST parser; only a
+top-level synchronous or asynchronous function definition named `main` is
+accepted. No module is imported or executed, so `runtime_status` is always
+`not_evaluated`. Missing, malformed, nested, syntactically invalid, or
+ambiguous declarations fail closed. `--validate-only` checks the compact
+cross-record bindings without network access; `--verify-source` rebuilds them
+from fresh immutable source blobs.
+
 The semantic slice records one historical, mutable declared relation in
 `relations.declared_edges`. `dependencies.observed_edges` is intentionally
 always empty: zero runtime and zero implementation dependency edges are

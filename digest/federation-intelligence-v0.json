@@ -210,6 +210,62 @@
     ],
     "observed_edges": []
   },
+  "entrypoint_declarations": [
+    {
+      "confidence": {
+        "basis": "direct_pinned_observation",
+        "caveats": [
+          "declaration is not proof of runtime execution"
+        ],
+        "level": "high"
+      },
+      "declaration": "agent_world.cli:main",
+      "evidence_refs": [
+        "evidence-intel-55a33b1e98ef"
+      ],
+      "function": "main",
+      "inference_status": "observed_pinned_declaration",
+      "kind": "project_script",
+      "manifest_id": "evidence-manifest-4b61cfeeb8db",
+      "mode": "100644",
+      "module": "agent_world.cli",
+      "node_id": "kimeisele/agent-world",
+      "path": "agent_world/cli.py",
+      "repository_pin": "pins/v1-census/agent-world.json",
+      "runtime_status": "not_evaluated",
+      "script": "agent-world",
+      "sha": "00b2c4a679a572226c7f720d3e7059a648ef4f0c",
+      "size": 3422,
+      "tree_sha": "ee94afa3f721b1e6ae57e3b1a5c0d886773fc218"
+    },
+    {
+      "confidence": {
+        "basis": "direct_pinned_observation",
+        "caveats": [
+          "declaration is not proof of runtime execution"
+        ],
+        "level": "high"
+      },
+      "declaration": "agent_internet.cli:main",
+      "evidence_refs": [
+        "evidence-intel-dbdcbfa14ce7"
+      ],
+      "function": "main",
+      "inference_status": "observed_pinned_declaration",
+      "kind": "project_script",
+      "manifest_id": "evidence-manifest-827ddc79205e",
+      "mode": "100644",
+      "module": "agent_internet.cli",
+      "node_id": "kimeisele/agent-internet",
+      "path": "agent_internet/cli.py",
+      "repository_pin": "pins/v1-census/agent-internet.json",
+      "runtime_status": "not_evaluated",
+      "script": "agent-internet",
+      "sha": "ff44ba834ae154bbaf1edb2f2b4c4f65d2963493",
+      "size": 106718,
+      "tree_sha": "b570d737fd8700372b46487097de437bac6bb247"
+    }
+  ],
   "entrypoints": [
     {
       "confidence": {
@@ -680,6 +736,7 @@
     "declared_relations": 6,
     "dependency_candidates": 3,
     "entrypoint_candidates": 2,
+    "entrypoint_declarations": 2,
     "findings": 0,
     "manifest_observations": 3,
     "observed_nodes": 3,

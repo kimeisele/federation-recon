@@ -20,6 +20,7 @@
         "declared_relations": 6,
         "dependency_candidates": 3,
         "entrypoint_candidates": 2,
+        "entrypoint_declarations": 2,
         "findings": 0,
         "manifest_observations": 3,
         "observed_nodes": 3,

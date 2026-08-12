@@ -9,7 +9,7 @@
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
 | `node-census-v1` | `v1` | 2026-08-08T16:57 | - |
-| `federation-intelligence-v0` | `1` | 2026-08-08T16:57 | blob_entries=728, contract_candidates=7, declared_relations=6, dependency_candidates=3, entrypoint_candidates=2, findings=0, manifest_observations=3, observed_nodes=3, pins=3, semantic_checks=1, tree_entries=797 |
+| `federation-intelligence-v0` | `1` | 2026-08-08T16:57 | blob_entries=728, contract_candidates=7, declared_relations=6, dependency_candidates=3, entrypoint_candidates=2, entrypoint_declarations=2, findings=0, manifest_observations=3, observed_nodes=3, pins=3, semantic_checks=1, tree_entries=797 |
 | `v0-boundary-drift` | `v0` | 2026-08-08T16:57 | claims=30, coverage_records=7, drift_records=2, evidence=35, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
 | `v1-census` | `v1` | 2026-08-08T16:57 | coverage_records=7, error_nodes=0, evidence=77, findings=48, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
 | `v2-consumption` | `v2` | 2026-08-08T16:58 | coverage_records=6, cycle=11, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
