@@ -5,5 +5,5 @@
   "evidence_refs": ["cov-40f944af1c02", "cov-03a57479a742", "cov-d9dd87154fdb", "cov-f252eee570cf", "cov-3ba322239883", "cov-33711d354730", "cov-2a942153985f"],
   "domain": "recon_self_observation",
   "severity": "info",
-  "created_at": "2026-08-08T16:57:21Z"
+  "created_at": "2026-08-12T03:06:29Z"
 }
