@@ -23,6 +23,7 @@ count-procedure.bats
 cross-node-artifacts.bats
 dispatch-bridge.bats
 execution-slice-1a.bats
+artifact-identity.bats
 finding-retirement.bats
 gate-cleanup.bats
 gate-fixpoint-isolation.bats

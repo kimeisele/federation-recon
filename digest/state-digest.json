@@ -17,7 +17,7 @@
       "summary": {
         "pins": 7,
         "claims": 30,
-        "evidence": 35,
+        "evidence": 38,
         "drift_records": 2,
         "findings": 5,
         "coverage_records": 7,
@@ -31,7 +31,7 @@
       "run_timestamp": "2026-08-08T16:57:21Z",
       "summary": {
         "pins": 7,
-        "evidence": 77,
+        "evidence": 110,
         "findings": 48,
         "coverage_records": 7,
         "observed_nodes": 7,
@@ -77,7 +77,7 @@
       "headline": "Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec",
       "refs": [
         "findings/finding-5cd51c7f5fed.json",
-        "drift/drift-0064abff93ac.json"
+        "drift/drift-11720914c4c5.json"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",
@@ -90,7 +90,7 @@
       "headline": "Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/.",
       "refs": [
         "findings/finding-194863fb230b.json",
-        "drift/drift-d2d7cfe7156b.json"
+        "drift/drift-c53f2c886e6a.json"
       ],
       "non_peer": false,
       "procedure_id": "v0-boundary-drift",

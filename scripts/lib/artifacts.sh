@@ -81,7 +81,16 @@ ENDJSON
 # gen_evidence <pin_id> <obs_type> <value> [paths] [hashes]
 gen_evidence() {
   local pin_id="$1" obs_type="$2" value="$3" paths="${4:-}" hashes="${5:-}"
-  local ev_id; ev_id="$(make_id "ev" "${pin_id}:${obs_type}:$(sha256_of "${value}")")"
+  # The value alone is not the semantic subject.  For example, descriptor
+  # existence and charter existence are both `file_existence=true`, but they
+  # are distinct observations because their paths differ.  Bind every
+  # identity-bearing field before writing the artifact so one observation
+  # cannot silently replace another.
+  # Hash each field independently before combining fixed-width digests.  Raw
+  # delimiter concatenation is ambiguous (`a:b` + `c` vs `a` + `b:c`).
+  local identity
+  identity="$(sha256_of "$pin_id")$(sha256_of "$obs_type")$(sha256_of "$value")$(sha256_of "$paths")$(sha256_of "$hashes")"
+  local ev_id; ev_id="$(make_id "ev" "$identity")"
   local json_paths="" json_hashes=""
 
   if [ -n "$paths" ]; then
@@ -158,8 +167,16 @@ gen_finding() {
   # Build evidence_refs JSON array
   local ev_json='['
   local first=true IFS=',' r
+  local seen_refs=() seen
   IFS=',' read -ra ev_arr <<< "$evidence_refs"
   for r in "${ev_arr[@]}"; do
+    [ -n "$r" ] || { warn "Finding evidence_refs contains an empty reference"; return 1; }
+    for seen in "${seen_refs[@]}"; do
+      [ "$seen" = "$r" ] || continue
+      warn "Finding evidence_refs contains duplicate reference: $r"
+      return 1
+    done
+    seen_refs+=("$r")
     $first && ev_json+="$(json_val "$r")" || ev_json+=", $(json_val "$r")"
     first=false
   done
