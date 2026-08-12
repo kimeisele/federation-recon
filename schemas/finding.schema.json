@@ -9,7 +9,7 @@
     "finding_id": { "type": "string" },
     "lifecycle_state": { "type": "string", "enum": ["observed", "stale", "superseded"] },
     "statement": { "type": "string" },
-    "evidence_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "evidence_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
     "drift_refs": { "type": "array", "items": { "type": "string" } },
     "supersedes": { "type": "string", "description": "finding_id of the Finding this one replaces, if any" },
     "domain": { "type": "string" },
