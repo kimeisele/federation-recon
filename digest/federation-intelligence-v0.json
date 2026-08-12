@@ -445,6 +445,156 @@
         "status": "observed",
         "target_ref_mutable": true,
         "to_node": "kimeisele/agent-city"
+      },
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "manifest declaration is not proof of installed or runtime use",
+            "target revision is unbound and target content is not verified"
+          ],
+          "level": "high"
+        },
+        "declaration": "pinned_pyproject_toml",
+        "dependency_group": "browser",
+        "evidence_refs": [
+          "evidence-manifest-6b2f6268367d"
+        ],
+        "from_node": "kimeisele/agent-city",
+        "kind": "declared_package_dependency",
+        "package": "agent-internet",
+        "status": "declared",
+        "target_ref_mutable": true,
+        "target_resolution": "package_allowlist_mapping",
+        "target_scope": "indexed_source",
+        "to_node": "kimeisele/agent-internet"
+      },
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "manifest declaration is not proof of installed or runtime use",
+            "target revision is unbound and target content is not verified"
+          ],
+          "level": "high"
+        },
+        "declaration": "pinned_pyproject_toml",
+        "dependency_group": "kernel",
+        "evidence_refs": [
+          "evidence-manifest-6b2f6268367d"
+        ],
+        "from_node": "kimeisele/agent-city",
+        "kind": "declared_package_dependency",
+        "package": "steward-protocol",
+        "status": "declared",
+        "target_ref_mutable": true,
+        "target_resolution": "package_allowlist_mapping",
+        "target_scope": "external_out_of_scope",
+        "to_node": "kimeisele/steward-protocol"
+      },
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "manifest declaration is not proof of installed or runtime use",
+            "target revision is unbound and target content is not verified"
+          ],
+          "level": "high"
+        },
+        "declaration": "pinned_pyproject_toml",
+        "dependency_group": "runtime",
+        "evidence_refs": [
+          "evidence-manifest-827ddc79205e"
+        ],
+        "from_node": "kimeisele/agent-internet",
+        "kind": "declared_package_dependency",
+        "package": "nadi-kit",
+        "status": "declared",
+        "target_ref_mutable": true,
+        "target_resolution": "direct_vcs_declaration",
+        "target_scope": "external_out_of_scope",
+        "to_node": "kimeisele/steward-federation"
+      },
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "manifest declaration is not proof of installed or runtime use",
+            "target revision is unbound and target content is not verified"
+          ],
+          "level": "high"
+        },
+        "declaration": "pinned_pyproject_toml",
+        "dependency_group": "substrate",
+        "evidence_refs": [
+          "evidence-manifest-827ddc79205e"
+        ],
+        "from_node": "kimeisele/agent-internet",
+        "kind": "declared_package_dependency",
+        "package": "steward-protocol",
+        "status": "declared",
+        "target_ref_mutable": true,
+        "target_resolution": "package_allowlist_mapping",
+        "target_scope": "external_out_of_scope",
+        "to_node": "kimeisele/steward-protocol"
+      },
+      {
+        "confidence": {
+          "basis": "direct_pinned_observation",
+          "caveats": [
+            "manifest declaration is not proof of installed or runtime use",
+            "target revision is unbound and target content is not verified"
+          ],
+          "level": "high"
+        },
+        "declaration": "pinned_pyproject_toml",
+        "dependency_group": "runtime",
+        "evidence_refs": [
+          "evidence-manifest-4b61cfeeb8db"
+        ],
+        "from_node": "kimeisele/agent-world",
+        "kind": "declared_package_dependency",
+        "package": "nadi-kit",
+        "status": "declared",
+        "target_ref_mutable": true,
+        "target_resolution": "direct_vcs_declaration",
+        "target_scope": "external_out_of_scope",
+        "to_node": "kimeisele/steward-federation"
+      }
+    ],
+    "manifest_observations": [
+      {
+        "blob_sha": "6131ffb50a883185c94d35bb5a04f880bf67a819",
+        "blob_size": 854,
+        "declaration_count": 1,
+        "declarations_sha256": "cdfb152f8511be0cd9b55c8b7eabaac1db5219b66a6d6519cacfe952c2d53231",
+        "decoded_length": 854,
+        "manifest_id": "evidence-manifest-4b61cfeeb8db",
+        "node_id": "kimeisele/agent-world",
+        "path": "pyproject.toml",
+        "repository_pin": "pins/v1-census/agent-world.json"
+      },
+      {
+        "blob_sha": "8110b15595bae83d508b0f8ce0d5b4bf39e2d23e",
+        "blob_size": 899,
+        "declaration_count": 2,
+        "declarations_sha256": "c57a0c251818e7497472b2b69dd4a79f02c20e204f1d2146fdca73976b8ca2ee",
+        "decoded_length": 899,
+        "manifest_id": "evidence-manifest-827ddc79205e",
+        "node_id": "kimeisele/agent-internet",
+        "path": "pyproject.toml",
+        "repository_pin": "pins/v1-census/agent-internet.json"
+      },
+      {
+        "blob_sha": "6e8daf7e41e10acfafeaeaccf9371a92df9e5f90",
+        "blob_size": 1046,
+        "declaration_count": 2,
+        "declarations_sha256": "1f45870529dc55b95fd965fe610c12445603c870286d8689d359f2df30b8604e",
+        "decoded_length": 1046,
+        "manifest_id": "evidence-manifest-6b2f6268367d",
+        "node_id": "kimeisele/agent-city",
+        "path": "pyproject.toml",
+        "repository_pin": "pins/v1-census/agent-city.json"
       }
     ]
   },
@@ -527,10 +677,11 @@
   "summary": {
     "blob_entries": 728,
     "contract_candidates": 7,
-    "declared_relations": 1,
+    "declared_relations": 6,
     "dependency_candidates": 3,
     "entrypoint_candidates": 2,
     "findings": 0,
+    "manifest_observations": 3,
     "observed_nodes": 3,
     "pins": 3,
     "semantic_checks": 1,

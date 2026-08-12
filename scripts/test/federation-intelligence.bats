@@ -41,9 +41,23 @@ if "WRONG_STATUS" in os.environ:
     descriptor["status"] = "inactive"
 if "WRONG_KIND" in os.environ:
     descriptor["kind"] = "forged_descriptor"
+manifests = {
+    "kimeisele/agent-world": b'''[project]\nname = "agent-world"\ndependencies = ["PyYAML>=6.0", "nadi-kit @ git+https://github.com/kimeisele/steward-federation.git"]\n[project.optional-dependencies]\ndev = ["pytest>=8.0"]\n''',
+    "kimeisele/agent-internet": b'''[project]\nname = "agent-internet"\ndependencies = ["nadi-kit @ git+https://github.com/kimeisele/steward-federation.git#egg=nadi-kit"]\n[project.optional-dependencies]\nsubstrate = ["steward-protocol[web,crypto]"]\n''',
+    "kimeisele/agent-city": b'''[project]\nname = "agent-city"\ndependencies = ["ecdsa>=0.18"]\n[project.optional-dependencies]\nkernel = ["steward-protocol[city]"]\nbrowser = ["agent-internet"]\n''',
+}
+if "MALFORMED_MANIFEST" in os.environ:
+    manifests[repo] = b'[project\nname = "broken"'
+if "WRONG_DEPENDENCY_TYPE" in os.environ:
+    manifests[repo] = b'[project]\nname = "broken"\ndependencies = "nadi-kit"\n'
+if "DYNAMIC_DEPENDENCIES" in os.environ:
+    manifests[repo] = b'[project]\nname = "dynamic"\ndynamic = ["dependencies"]\n'
+if "UNKNOWN_GIT_TARGET" in os.environ:
+    manifests[repo] = b'''[project]\nname = "agent-world"\ndependencies = ["other @ git+https://github.com/kimeisele/other.git"]\n'''
 payloads = {
     ".well-known/agent-federation.json": json.dumps(descriptor).encode(),
     "data/federation/authority-descriptor-seeds.json": json.dumps(seeds).encode(),
+    "pyproject.toml": manifests[repo],
 }
 blob_ids = {path: hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() for path, raw in payloads.items()}
 if "/git/commits/" in endpoint:
@@ -69,6 +83,7 @@ tree = [
         {"path": "docs/PUBLIC_FEDERATION_SURFACE.md", "mode": "100644", "type": "blob", "sha": "2222222222222222222222222222222222222222", "size": 128},
         {"path": "package.json", "mode": "100644", "type": "blob", "sha": "3333333333333333333333333333333333333333", "size": 256},
         {"path": "src/main.py", "mode": "100644", "type": "blob", "sha": "4444444444444444444444444444444444444444", "size": 512},
+        {"path": "pyproject.toml", "mode": "100644", "type": "blob", "sha": blob_ids["pyproject.toml"], "size": len(payloads["pyproject.toml"])},
         {"path": "src", "mode": "040000", "type": "tree", "sha": "5555555555555555555555555555555555555555"}
 ]
 if "MANY_ENTRIES" in __import__("os").environ:
@@ -115,11 +130,11 @@ assert all(n["tree"]["sha"] == "9999999999999999999999999999999999999999" for n 
 assert all(n["commit_sha"] == n["pin_sha"] for n in index["nodes"])
 assert all(n["dirty_state_assertion"] is False for n in index["nodes"])
 assert all("tree_entries" not in n for n in index["nodes"])
-assert all(n["tree"]["counts"]["blob_count"] == 5 for n in index["nodes"])
+assert all(n["tree"]["counts"]["blob_count"] == 6 for n in index["nodes"])
 assert index["dependencies"]["observed_edges"] == []
-assert len(index["relations"]["declared_edges"]) == 1
-assert index["relations"]["declared_edges"][0]["kind"] == "declared_discovery_seed"
-assert index["relations"]["declared_edges"][0]["target_ref_mutable"] is True
+semantic_edge = next(edge for edge in index["relations"]["declared_edges"] if edge["kind"] == "declared_discovery_seed")
+assert len(index["relations"]["declared_edges"]) == 6
+assert semantic_edge["target_ref_mutable"] is True
 assert index["semantic"]["checks"][0]["status"] == "observed"
 seed = next(item for item in index["semantic"]["observations"] if item["record_type"] == "authority_seeds")
 assert "descriptor_urls" not in seed and seed["matched_city_descriptor_url"].endswith("agent-city/main/.well-known/agent-federation.json")
@@ -131,6 +146,17 @@ assert all(c["type"] == "blob" and isinstance(c["size"], int) and len(c["sha"]) 
 assert any(c["path"] == "src/main.py" for c in index["entrypoints"])
 assert any(c["path"] == ".well-known/agent-federation.json" for c in index["contracts"]["candidates"])
 assert all(e["value"] == "pinned_git_tree_metadata" for e in index["evidence"])
+assert len(index["relations"]["manifest_observations"]) == 3
+assert len(index["relations"]["declared_edges"]) == 6
+assert index["dependencies"]["observed_edges"] == []
+assert {e["package"] for e in index["relations"]["declared_edges"] if e["kind"] == "declared_package_dependency"} == {"nadi-kit", "steward-protocol", "agent-internet"}
+for edge in index["relations"]["declared_edges"]:
+    if edge["kind"] != "declared_package_dependency":
+        continue
+    assert edge["target_scope"] == ("indexed_source" if edge["to_node"] == "kimeisele/agent-internet" else "external_out_of_scope")
+    assert edge["target_resolution"] == ("direct_vcs_declaration" if edge["package"] == "nadi-kit" else "package_allowlist_mapping")
+    assert edge["target_ref_mutable"] is True
+    assert "target revision is unbound and target content is not verified" in edge["confidence"]["caveats"]
 PY
 }
 
@@ -181,6 +207,8 @@ path = sys.argv[1]
 index = json.load(open(path))
 for item in index["nodes"] + index["evidence"] + index["semantic"]["observations"]:
     item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
+for item in index["relations"]["manifest_observations"]:
+    item["repository_pin"] = f"pins/v1-census/{item['node_id'].split('/')[-1]}.json"
 json.dump(index, open(path, "w"), indent=2)
 PY
     run env PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
@@ -192,7 +220,7 @@ index, mode = json.load(open(sys.argv[1])), sys.argv[2]
 check = index["semantic"]["checks"][0]
 assert check["status"] == ("unproven" if mode == "MISSING_URL" else "mismatch")
 assert index["dependencies"]["observed_edges"] == []
-assert index["relations"]["declared_edges"] == []
+assert not any(edge["kind"] == "declared_discovery_seed" for edge in index["relations"]["declared_edges"])
 assert all("description" not in item for item in index["semantic"]["observations"])
 PY
   done
@@ -208,6 +236,54 @@ PY
   done
 }
 
+@test "manifest parser rejects malformed and typed dependency input" {
+  for mode in MALFORMED_MANIFEST WRONG_DEPENDENCY_TYPE DYNAMIC_DEPENDENCIES; do
+    printf 'sentinel\n' > "$WORKDIR/$mode.json"
+    run env "$mode=1" PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+      --pins-root "$WORKDIR/pins" --output "$WORKDIR/$mode.json"
+    [ "$status" -ne 0 ]
+    grep -qx 'sentinel' "$WORKDIR/$mode.json"
+  done
+}
+
+@test "unknown manifest git target produces no allowlist edge" {
+  run env UNKNOWN_GIT_TARGET=1 PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+    --pins-root "$WORKDIR/pins" --output "$WORKDIR/unknown.json"
+  [ "$status" -eq 0 ]
+  python3 - "$WORKDIR/unknown.json" <<'PY'
+import json, sys
+index = json.load(open(sys.argv[1]))
+assert not any(edge["from_node"] == "kimeisele/agent-world" and edge["kind"] == "declared_package_dependency" for edge in index["relations"]["declared_edges"])
+assert index["dependencies"]["observed_edges"] == []
+PY
+}
+
+@test "validate-only rejects manifest target scope and resolution mismatches" {
+  run run_index "$WORKDIR/index.json"
+  [ "$status" -eq 0 ]
+  python3 - "$WORKDIR/index.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+index = json.load(open(path))
+for node in index["nodes"]:
+    node["repository_pin"] = f"pins/v1-census/{node['node_id'].split('/')[-1]}.json"
+for evidence in index["evidence"]:
+    evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
+for observation in index["semantic"]["observations"]:
+    observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
+edge = next(edge for edge in index["relations"]["declared_edges"] if edge["kind"] == "declared_package_dependency" and edge["to_node"] == "kimeisele/agent-internet")
+edge["target_scope"] = "external_out_of_scope"
+edge["target_resolution"] = "direct_vcs_declaration"
+json.dump(index, open(path, "w"), indent=2)
+PY
+  run env PATH="$WORKDIR/bin:$PATH" python3 "$REPO_ROOT/scripts/federation-intelligence.py" \
+    --validate-only --pins-root "$REPO_ROOT/pins/v1-census" --output "$WORKDIR/index.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"target scope or resolution is invalid"* ]]
+}
+
 @test "validate-only rejects an evidence reference that does not resolve" {
   run run_index "$WORKDIR/index.json"
   [ "$status" -eq 0 ]
@@ -221,6 +297,8 @@ for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
 for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["evidence_refs"] = ["missing-evidence"]
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -243,6 +321,8 @@ for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
 for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
 index["evidence"][0]["tree_sha"] = "8888888888888888888888888888888888888888"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -265,6 +345,8 @@ for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
 for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["sha"] = "7777777777777777777777777777777777777777"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -287,6 +369,8 @@ for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
 for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
 index["entrypoints"][0]["path"] = "./src/main.py"
 json.dump(index, open(path, "w"), indent=2)
 PY
@@ -309,6 +393,8 @@ for evidence in index["evidence"]:
     evidence["repository_pin"] = f"pins/v1-census/{evidence['node_id'].split('/')[-1]}.json"
 for observation in index["semantic"]["observations"]:
     observation["repository_pin"] = f"pins/v1-census/{observation['node_id'].split('/')[-1]}.json"
+for manifest in index["relations"]["manifest_observations"]:
+    manifest["repository_pin"] = f"pins/v1-census/{manifest['node_id'].split('/')[-1]}.json"
 index["contracts"]["observed"].append({})
 json.dump(index, open(path, "w"), indent=2)
 PY

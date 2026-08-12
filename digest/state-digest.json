@@ -17,10 +17,11 @@
       "summary": {
         "blob_entries": 728,
         "contract_candidates": 7,
-        "declared_relations": 1,
+        "declared_relations": 6,
         "dependency_candidates": 3,
         "entrypoint_candidates": 2,
         "findings": 0,
+        "manifest_observations": 3,
         "observed_nodes": 3,
         "pins": 3,
         "semantic_checks": 1,
