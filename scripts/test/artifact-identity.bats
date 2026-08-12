@@ -24,6 +24,22 @@ teardown() {
   [ "$(python3 -c "import json; print(json.load(open('$second'))['paths'][0])")" = "charter.json" ]
 }
 
+@test "gen_evidence: semantic hashes distinguish equal paths and values" {
+  first="$(gen_evidence "pins/v1-census/node.json" manifest_field same "descriptor.json" "field=role")"
+  second="$(gen_evidence "pins/v1-census/node.json" manifest_field same "descriptor.json" "field=tier")"
+
+  [ "$first" != "$second" ]
+  [ -f "$first" ]
+  [ -f "$second" ]
+}
+
+@test "gen_evidence: field boundaries cannot collide through delimiters" {
+  first="$(gen_evidence "pin:a" b c d e)"
+  second="$(gen_evidence pin "a:b" c d e)"
+
+  [ "$first" != "$second" ]
+}
+
 @test "gen_finding: duplicate evidence references are refused" {
   run gen_finding "duplicate" "ev-one,ev-one" test_domain
   [ "$status" -eq 1 ]

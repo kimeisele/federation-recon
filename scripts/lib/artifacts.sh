@@ -86,7 +86,10 @@ gen_evidence() {
   # are distinct observations because their paths differ.  Bind every
   # identity-bearing field before writing the artifact so one observation
   # cannot silently replace another.
-  local identity="${pin_id}:${obs_type}:${value}:${paths}:${hashes}"
+  # Hash each field independently before combining fixed-width digests.  Raw
+  # delimiter concatenation is ambiguous (`a:b` + `c` vs `a` + `b:c`).
+  local identity
+  identity="$(sha256_of "$pin_id")$(sha256_of "$obs_type")$(sha256_of "$value")$(sha256_of "$paths")$(sha256_of "$hashes")"
   local ev_id; ev_id="$(make_id "ev" "$identity")"
   local json_paths="" json_hashes=""
 
