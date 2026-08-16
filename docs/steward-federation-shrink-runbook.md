@@ -1,8 +1,11 @@
 # steward-federation repo-shrink runbook (Phase 1 + Phase 2)
 
-> **⚠️ READ FIRST: `kimeisele/steward-federation-history` is LOAD-BEARING**
-> (8 repos pip/fetch from it by pinned commit). Never delete, rename, or
-> reduce it. See §13.
+> **ℹ️ Status 2026-08-16: NO LONGER LOAD-BEARING — kept as a safety copy.**
+> All consumers now pin `nadi-kit @ v0.1.2` in the live `steward-federation`
+> repo (org-wide verified: 0 archive references). This repo is no longer a
+> production dependency; it remains as the permanent, branch-protected
+> archive of the pre-collapse history. Do not delete it (rollback path for
+> any future Phase 1 execution), but nothing loads from it anymore.
 
 **Status: Phase 1 CANCELLED, Phase 2 REJECTED (owner decision 2026-08-16).**
 Phase 0 (shallow checkout) is executed and merged. Phase 1 was cancelled
@@ -244,22 +247,22 @@ Two alerting mechanisms now ship in the hub (steward-federation#1204):
 - **Dead-man check** (the important one): `heartbeat-watchdog.yml` runs
   hourly, independent of the heartbeat, and alerts when no successful run
   exists in the last 2 h — a disabled workflow, dead schedule, or stuck
-  runner all surface. It also closes the alert on recovery.
+  runner all surface.
 
 Both find alert issues by the dedicated `heartbeat-alert` label, never by
 title search (the first live run proved title search collides with unrelated
-issues; steward-federation#1205 fixed it and #1197 was reopened).
+issues; steward-federation#1205 fixed it and #1197 was reopened). Since
+steward-federation#1207 the automation **never closes issues** — alerts are
+opened/reused/commented only; closing is human-only.
 
 ## 13. Commit-SHA pins repointed to the archive (2026-08-16)
 
-> **⚠️ LOAD-BEARING — do NOT delete, archive, rename, or reduce this repo.**
-> `kimeisele/steward-federation-history` was created as a history archive, but
-> it is now a **production dependency**: 8 repositories install `nadi-kit`
-> from it by pinned commit (`pip install git+…steward-federation-history.git@…`)
-> or fetch `nadi_kit.py` from it by raw URL. If this repo is removed or its
-> `main` is force-pushed/rebased, those 8 repos' heartbeats break. It is
-> branch-protected (`main` read-only, no force-pushes, no deletions) — keep it
-> that way. In six months it will look like a leftover archive; it is not.
+> **ℹ️ Status 2026-08-16: NO LONGER LOAD-BEARING — safety copy only.**
+> All consumers were repointed to `nadi-kit @ v0.1.2` in the live repo
+> (org-wide scan: 0 references to this archive remain in any consumer). It
+> is no longer a production dependency. It stays as the permanent,
+> branch-protected archive of the pre-collapse history — never delete it
+> (rollback path), but it is not load-bearing anymore.
 
 The org-wide consumer scan found commit-SHA pins that a collapse would have
 broken: `nadi-kit @ git+…@<commit>` and one raw-URL pin. Because pip needs a
@@ -285,3 +288,25 @@ before repointing. One PR per repo, all merged:
 Also fixed while the hub was under maintenance: the pre-existing heartbeat
 race-recovery bug (`git pull --rebase` failed on unstaged changes since the
 2026-08-13 hub rework; fixed with `--autostash`, steward-federation#1202).
+
+## 14. Org-wide pin move to the v0.1.2 tag (2026-08-16, Block A)
+
+After the archive repoints (§13), a versioned-tag migration replaced every
+commit/blob/archive pin with the immutable annotated tag `v0.1.2` in the
+live `steward-federation` repo (commit `03008a5a`, `nadi_kit.py` blob
+`47d8e3bb…`). Content-identical — every prior pin already resolved to that
+blob — so the change is a pin-notation move, not a version change.
+
+**Result (org-wide scan, verified at remote heads):** 16 consumer repos,
+0 unpinned `main` fetches, 0 archive references; all pip/git/raw pins point
+to `@v0.1.2` or `/v0.1.2/`. `steward-federation` itself is the source (uses
+its own checked-out `nadi_kit.py`). `agent-arena` is the exception: it
+**vendors** `nadi_kit.py` 0.1.0 into the repo and is not on the tag
+`[UNBEKANNT: pending decision]`. `mahaclaw`/`vibe-agency`/`steward-test` are
+relay-only, no nadi_kit execution.
+
+**RING0 note:** `steward-protocol` changes RING0 files directly on main with
+a matching register re-bless (kernel_hashes.json); a PR touching a RING0
+file is structurally rejected by the TOTAL LOCKDOWN check. Since 2026-08-16
+a `.github/CODEOWNERS` names `federation-operator` for the register and RING0
+surface, so a second identity must approve those paths.
