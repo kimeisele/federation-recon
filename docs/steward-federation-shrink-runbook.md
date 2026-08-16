@@ -1,5 +1,9 @@
 # steward-federation repo-shrink runbook (Phase 1 + Phase 2)
 
+> **⚠️ READ FIRST: `kimeisele/steward-federation-history` is LOAD-BEARING**
+> (8 repos pip/fetch from it by pinned commit). Never delete, rename, or
+> reduce it. See §13.
+
 **Status: Phase 1 CANCELLED, Phase 2 REJECTED (owner decision 2026-08-16).**
 Phase 0 (shallow checkout) is executed and merged. Phase 1 was cancelled
 because the benefit was gone (Phase 0 removed the pain) and the org scan
@@ -228,7 +232,34 @@ occurs once a year. Instead:
   `steward-federation-history` already exists, is branch-protected, and holds
   the verified full mirror), then re-run the consumer scan from §6.
 
+**Update (2026-08-16, later): failure-alarm before size-alarm.** The real
+finding of this whole exercise was not repo size: the hub heartbeat had been
+failing since 2026-08-13 (race bug) and **nobody noticed** — it was only
+found because Phase 1 disabled and re-enabled the workflow. A failing run is
+only visible if someone looks, and a *missing* run raises nothing at all.
+Two alerting mechanisms now ship in the hub (steward-federation#1204):
+
+- **Failure alert**: `hub-heartbeat.yml` gains an `if: failure()` step that
+  opens or reuses a single alert issue.
+- **Dead-man check** (the important one): `heartbeat-watchdog.yml` runs
+  hourly, independent of the heartbeat, and alerts when no successful run
+  exists in the last 2 h — a disabled workflow, dead schedule, or stuck
+  runner all surface. It also closes the alert on recovery.
+
+Both find alert issues by the dedicated `heartbeat-alert` label, never by
+title search (the first live run proved title search collides with unrelated
+issues; steward-federation#1205 fixed it and #1197 was reopened).
+
 ## 13. Commit-SHA pins repointed to the archive (2026-08-16)
+
+> **⚠️ LOAD-BEARING — do NOT delete, archive, rename, or reduce this repo.**
+> `kimeisele/steward-federation-history` was created as a history archive, but
+> it is now a **production dependency**: 8 repositories install `nadi-kit`
+> from it by pinned commit (`pip install git+…steward-federation-history.git@…`)
+> or fetch `nadi_kit.py` from it by raw URL. If this repo is removed or its
+> `main` is force-pushed/rebased, those 8 repos' heartbeats break. It is
+> branch-protected (`main` read-only, no force-pushes, no deletions) — keep it
+> that way. In six months it will look like a leftover archive; it is not.
 
 The org-wide consumer scan found commit-SHA pins that a collapse would have
 broken: `nadi-kit @ git+…@<commit>` and one raw-URL pin. Because pip needs a
