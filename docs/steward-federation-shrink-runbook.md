@@ -1,9 +1,12 @@
 # steward-federation repo-shrink runbook (Phase 1 + Phase 2)
 
-**Status: NOT EXECUTED — owner decision pending.** This is the runbook for a
-one-time history collapse of `kimeisele/steward-federation` (Phase 1) and a
-periodic re-baseline job (Phase 2). It is written in advance so the operation
-is scripted, verifiable, and reversible — not improvised under pressure.
+**Status: Phase 1 CANCELLED, Phase 2 REJECTED (owner decision 2026-08-16).**
+Phase 0 (shallow checkout) is executed and merged. Phase 1 was cancelled
+because the benefit was gone (Phase 0 removed the pain) and the org scan
+proved the consumer model wrong (14+ repos, not 4). Phase 2 was replaced by
+a 1.5 GB size alert in the heartbeat. This runbook remains as the scripted,
+verifiable, reversible procedure **if the alert ever fires** — see §11–§13
+for the decision record.
 
 Do not execute this from an interactive agent session. It is a force-push
 against a live hub that ~96 GitHub Actions runs per day depend on, and it is
@@ -186,9 +189,68 @@ concurrent relay push).
 ## 10. Owner decision record
 
 | Decision | State |
-|---|---|
+|---|---|---|
 | Phase 0 (`fetch-depth: 1`) | **EXECUTED** 2026-08-16 (steward-federation#1201, merged) |
-| Phase 1 (in-place collapse + archive) | **PENDING** — blocked on §6 release conditions |
-| Phase 2 (periodic squash) | **PENDING** — blocked on the audit/reproducibility policy question |
+| Phase 1 (in-place collapse + archive) | **CANCELLED 2026-08-16** — benefit gone, not deferred. See §11. |
+| Phase 2 (periodic squash) | **REJECTED 2026-08-16** — would permanently destroy reproducibility; replaced by the 1.5 GB size alert (steward-federation#1203). See §12. |
 
 *Evidence: research brief (2026-08-16); Phase 0 merge; §4 pre/post SHA values.*
+
+## 11. Why Phase 1 is cancelled, not deferred (2026-08-16)
+
+Owner decision: the collapse is **cancelled**, and the reason is not caution —
+it is that the benefit is gone.
+
+- Phase 0 already eliminated the 0.5–0.7 GB checkout 96×/day — that *was*
+  the pain. What Phase 1 would still buy is only a smaller number on the
+  repo-size page.
+- Against that stands a force-push on a live hub with **8 active commit-SHA
+  pins** (now repointed to the archive, §13) and — the decisive finding —
+  proof that the consumer model was wrong: the org scan found **14+ consumer
+  repos**, not the 4 assumed. If the scan found that, the question is what it
+  did *not* find.
+- No cosmetic gain is worth an irreversible intervention into a system that
+  is demonstrably not fully known.
+
+Status: the hub stays as-is (731 MB, growing ~5–10 MB/day). The 1.5 GB alert
+(§12) is the tripwire; if it ever fires, this runbook and the now-routine
+consumer scan are the response.
+
+## 12. Phase-2 replacement: size alert (2026-08-16)
+
+Owner decision: **no** to the weekly squash — automated, recurring history
+destruction on a live hub is a permanently sharp knife for a problem that
+occurs once a year. Instead:
+
+- `hub-heartbeat.yml` gained a repo-size guard (steward-federation#1203):
+  `gh api …/size` > 1.5 GB → run fails with an alert referencing this runbook.
+- If it fires: run the manual, owner-gated Phase 1 from §5 (the archive repo
+  `steward-federation-history` already exists, is branch-protected, and holds
+  the verified full mirror), then re-run the consumer scan from §6.
+
+## 13. Commit-SHA pins repointed to the archive (2026-08-16)
+
+The org-wide consumer scan found commit-SHA pins that a collapse would have
+broken: `nadi-kit @ git+…@<commit>` and one raw-URL pin. Because pip needs a
+commit/tag/branch (a blob SHA does not work), the correct repoint target is
+the **immutable archive** `kimeisele/steward-federation-history` (permanent,
+read-only `main`, branch-protected) — strictly better than a pin on a mutable
+live repo, independent of any collapse. All three pinned commits
+(`c613577b…`, `1249eca2…`, `e1321e57…`) were verified present in the archive
+before repointing. One PR per repo, all merged:
+
+| Repo | PR |
+|---|---|
+| federation-hq | #64 |
+| agent-template | #24 |
+| agent-template-acceptance-node-02 | #1 |
+| agent-template-acceptance-node-03 | #2 |
+| agent-template-acceptance-node-04 | #2 |
+| agent-template-acceptance-node-05 | #4 |
+| agent-template-proof-node-01 | #342 |
+| agent-red-team | #374 |
+| agent-village | #405 |
+
+Also fixed while the hub was under maintenance: the pre-existing heartbeat
+race-recovery bug (`git pull --rebase` failed on unstaged changes since the
+2026-08-13 hub rework; fixed with `--autostash`, steward-federation#1202).
