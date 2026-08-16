@@ -301,8 +301,10 @@ blob — so the change is a pin-notation move, not a version change.
 0 unpinned `main` fetches, 0 archive references; all pip/git/raw pins point
 to `@v0.1.2` or `/v0.1.2/`. `steward-federation` itself is the source (uses
 its own checked-out `nadi_kit.py`). `agent-arena` is the exception: it
-**vendors** `nadi_kit.py` 0.1.0 into the repo and is not on the tag
-`[UNBEKANNT: pending decision]`. `mahaclaw`/`vibe-agency`/`steward-test` are
+**vendors** `nadi_kit.py` 0.1.0 into the repo and is not on the tag. This is
+a deliberate owner decision (2026-08-16): the vendored copy is stable — no
+fetch, no drift — and it will be migrated only when it needs 0.1.2, not for
+uniformity. `mahaclaw`/`vibe-agency`/`steward-test` are
 relay-only, no nadi_kit execution.
 
 **RING0 note:** `steward-protocol` changes RING0 files directly on main with
