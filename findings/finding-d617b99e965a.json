@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-d617b99e965a",
+  "lifecycle_state": "observed",
+  "statement": "Node kimeisele/agent-city is OK — descriptor present, role=city_runtime, tier=none, charter=false, last commit 2026-08-16T08:17:39Z",
+  "evidence_refs": ["ev-32dba1d9557d", "ev-2327a56380b7", "ev-3e85f78a2704", "ev-50b8c692a9b9", "ev-66e2feaea3de"],
+  "domain": "node_census",
+  "severity": "info",
+  "created_at": "2026-08-18T02:00:56Z"
+}
