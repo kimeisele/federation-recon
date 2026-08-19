@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-6c52d1d660ea",
+  "lifecycle_state": "observed",
+  "statement": "Node kimeisele/steward is OK — descriptor present, role=operator, tier=none, charter=true, last commit 2026-08-19T02:04:56Z",
+  "evidence_refs": ["ev-f74a55d781ba", "ev-5f27d2d870c0", "ev-18d9591e3bc5", "ev-05031704ff2b", "ev-1a3daf4f4e48"],
+  "domain": "node_census",
+  "severity": "info",
+  "created_at": "2026-08-19T02:05:14Z"
+}

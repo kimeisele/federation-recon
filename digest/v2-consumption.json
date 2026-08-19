@@ -1,12 +1,12 @@
 {
   "procedure_id": "v2-consumption",
   "procedure_version": "v2",
-  "run_timestamp": "2026-08-08T16:58:03Z",
+  "run_timestamp": "2026-08-19T02:06:05Z",
   "attention_items": [{
   "target": "kimeisele/*",
   "status": "observed",
   "attention_rank": 0,
-  "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 11 of 10 — F-02 falsifier is active if this persists across ten cycles.",
+  "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 12 of 10 — F-02 falsifier is active if this persists across ten cycles.",
   "refs": ["consumption/"]
 }],
   "summary": {
@@ -17,7 +17,7 @@
   "coverage_records": 6,
   "observed_repositories": 6,
   "partial_failures": 0,
-  "cycle": 11
+  "cycle": 12
 },
   "budget": {
   "total_bytes": 3959,
