@@ -2,8 +2,8 @@
   "finding_id": "finding-bf1ed7ca6fd4",
   "lifecycle_state": "observed",
   "statement": "Coverage: 7/7 repositories successfully observed",
-  "evidence_refs": ["evidence/ev-dce07804115e.json", "evidence/ev-7805d3e46d11.json", "evidence/ev-c540d54134fe.json", "evidence/ev-c7441bfb363b.json", "evidence/ev-ea0e1243b194.json", "evidence/ev-7cd8f74e844b.json", "evidence/ev-d5dddffb2ac5.json"],
+  "evidence_refs": ["evidence/ev-dce07804115e.json", "evidence/ev-7805d3e46d11.json", "evidence/ev-c540d54134fe.json", "evidence/ev-c7441bfb363b.json", "evidence/ev-ea19380fd2d1.json", "evidence/ev-7cd8f74e844b.json", "evidence/ev-d5dddffb2ac5.json"],
   "domain": "recon_coverage",
   "severity": "info",
-  "created_at": "2026-08-08T16:57:39Z"
+  "created_at": "2026-08-20T02:04:02Z"
 }
