@@ -1,47 +1,47 @@
 {
-  "run_timestamp": "2026-08-08T16:57:21Z",
+  "run_timestamp": "2026-08-21T02:09:40Z",
   "procedure_id": "node-census-v1",
   "procedure_version": "v1",
   "candidates": [
     {
       "slug": "agent-music",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "agent-red-team",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "agent-research",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "agent-template-proof-node-01",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "agent-village",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "federation-hq",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "hermes-sankhya-25",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     },
     {
       "slug": "steward-test",
       "discovery_source": "topic-search",
-      "observation_date": "2026-08-08T16:57:21Z"
+      "observation_date": "2026-08-21T02:09:40Z"
     }
   ]
 }
