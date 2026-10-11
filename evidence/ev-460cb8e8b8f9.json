@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-460cb8e8b8f9",
+  "repository_pin": "pins/v1-census/steward-federation.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-10-11T06:18:35Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}
