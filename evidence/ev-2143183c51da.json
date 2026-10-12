@@ -1,0 +1,8 @@
+{
+  "evidence_id": "ev-2143183c51da",
+  "repository_pin": "pins/v1-census/agent-world.json",
+  "procedure_id": "node-census-v1",
+  "procedure_version": "v1",
+  "observation_type": "manifest_field",
+  "value": "2026-08-16T08:14:04Z", "paths": ["/ (repo root)"], "hashes": {"field": "last_commit_date"}
+}
