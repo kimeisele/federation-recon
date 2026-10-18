@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-f5dcff675a70",
+  "lifecycle_state": "stale",
+  "statement": "Node kimeisele/agent-world is STALE — last commit older than 60 days (2026-08-16T08:14:04Z)",
+  "evidence_refs": ["ev-d6c76abd38ac", "ev-b5e520a04d8f", "ev-e9dced8d09ec", "ev-5e39a473a704", "ev-2143183c51da"],
+  "domain": "node_census",
+  "severity": "warning",
+  "created_at": "2026-10-18T05:02:02Z"
+}
