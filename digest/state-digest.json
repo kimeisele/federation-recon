@@ -1,19 +1,19 @@
 {
   "digest_type": "composed_federation",
   "composer_version": "v2",
-  "composed_at": "2026-08-08T16:58:03Z",
+  "composed_at": "2026-10-20T05:11:09Z",
   "procedure_count": 4,
   "procedures": [
     {
       "procedure_id": "node-census-v1",
       "procedure_version": "v1",
-      "run_timestamp": "2026-08-08T16:57:21Z",
+      "run_timestamp": "2026-10-20T05:10:16Z",
       "summary": {}
     },
     {
       "procedure_id": "v0-boundary-drift",
       "procedure_version": "v0",
-      "run_timestamp": "2026-08-08T16:57:39Z",
+      "run_timestamp": "2026-10-20T05:10:40Z",
       "summary": {
         "pins": 7,
         "claims": 30,
@@ -28,15 +28,15 @@
     {
       "procedure_id": "v1-census",
       "procedure_version": "v1",
-      "run_timestamp": "2026-08-08T16:57:21Z",
+      "run_timestamp": "2026-10-20T05:10:16Z",
       "summary": {
         "pins": 7,
-        "evidence": 110,
-        "findings": 48,
+        "evidence": 117,
+        "findings": 54,
         "coverage_records": 7,
         "observed_nodes": 7,
-        "stale_nodes": 1,
-        "ok_nodes": 6,
+        "stale_nodes": 4,
+        "ok_nodes": 3,
         "error_nodes": 0,
         "staleness_threshold_days": 60
       }
@@ -44,7 +44,7 @@
     {
       "procedure_id": "v2-consumption",
       "procedure_version": "v2",
-      "run_timestamp": "2026-08-08T16:58:03Z",
+      "run_timestamp": "2026-10-20T05:11:09Z",
       "summary": {
         "pins": 6,
         "finding_references": 0,
@@ -53,7 +53,7 @@
         "coverage_records": 6,
         "observed_repositories": 6,
         "partial_failures": 0,
-        "cycle": 11
+        "cycle": 12
       }
     }
   ],
@@ -62,7 +62,7 @@
       "target": "kimeisele/*",
       "status": "observed",
       "attention_rank": 0,
-      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 11 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
+      "headline": "ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 12 of 10 \u2014 F-02 falsifier is active if this persists across ten cycles.",
       "refs": [
         "consumption/"
       ],
@@ -97,6 +97,42 @@
       "procedure_version": "v0"
     },
     {
+      "target": "kimeisele/agent-internet",
+      "status": "stale",
+      "attention_rank": 1,
+      "headline": "Node kimeisele/agent-internet is stale \u2014 last commit > 60d ago (last commit: 2026-08-16)",
+      "refs": [
+        "findings/finding-08c8a81e60f4.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    },
+    {
+      "target": "kimeisele/agent-world",
+      "status": "stale",
+      "attention_rank": 1,
+      "headline": "Node kimeisele/agent-world is stale \u2014 last commit > 60d ago (last commit: 2026-08-16)",
+      "refs": [
+        "findings/finding-f5dcff675a70.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    },
+    {
+      "target": "kimeisele/steward-protocol",
+      "status": "stale",
+      "attention_rank": 1,
+      "headline": "Node kimeisele/steward-protocol is stale \u2014 last commit > 60d ago (last commit: 2026-08-16)",
+      "refs": [
+        "findings/finding-da1caaf30869.json"
+      ],
+      "non_peer": false,
+      "procedure_id": "v1-census",
+      "procedure_version": "v1"
+    },
+    {
       "target": "kimeisele/agent-world",
       "status": "stale",
       "attention_rank": 2,
@@ -125,7 +161,7 @@
     }
   ],
   "summary": {
-    "total_attention_items": 4,
+    "total_attention_items": 7,
     "total_observatory_items": 1,
     "total_procedures": 4
   }
