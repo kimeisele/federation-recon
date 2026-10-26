@@ -1,26 +1,30 @@
 # Federation Digest
 
-**Composed:** 2026-08-08T16:58:03Z
+**Composed:** 2026-10-26T05:12:17Z
 **Procedures:** 4 (see digest/ for per-procedure details)
-**Attention items:** 4 (1 observatory)
+**Attention items:** 8 (1 observatory)
 
 ## Procedure Summary
 
 | Procedure | Version | Timestamp | Summary |
 |---|---|---|---|
-| `node-census-v1` | `v1` | 2026-08-08T16:57 | - |
-| `v0-boundary-drift` | `v0` | 2026-08-08T16:57 | claims=30, coverage_records=7, drift_records=2, evidence=38, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
-| `v1-census` | `v1` | 2026-08-08T16:57 | coverage_records=7, error_nodes=0, evidence=110, findings=48, observed_nodes=7, ok_nodes=6, pins=7, stale_nodes=1, staleness_threshold_days=60 |
-| `v2-consumption` | `v2` | 2026-08-08T16:58 | coverage_records=6, cycle=11, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
+| `node-census-v1` | `v1` | 2026-10-26T05:11 | - |
+| `v0-boundary-drift` | `v0` | 2026-10-26T05:11 | claims=30, coverage_records=7, drift_records=2, evidence=38, findings=5, observed_repositories=7, partial_failures=0, pins=7 |
+| `v1-census` | `v1` | 2026-10-26T05:11 | coverage_records=7, error_nodes=0, evidence=117, findings=54, observed_nodes=7, ok_nodes=2, pins=7, stale_nodes=5, staleness_threshold_days=60 |
+| `v2-consumption` | `v2` | 2026-10-26T05:12 | coverage_records=6, cycle=12, finding_references=0, observed_repositories=6, partial_failures=0, pins=6, repo_references=0, total_consumption_records=0 |
 
 ## Ranked Attention (needs operator decision)
 
 | # | Target | Status | Procedure | Headline | Evidence |
 |---|---|---|---|---|---|
-| 1 | `kimeisele/*` | ✅ observed | `v2-consumption` | ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 11 of 10 — F-02 falsifier is active if this persists across ten cycles. | consumption/ |
+| 1 | `kimeisele/*` | ✅ observed | `v2-consumption` | ZERO Finding consumption: No external repository references any federation-recon Finding ID. 0 repo-mentions (weaker evidence). Cycle 12 of 10 — F-02 falsifier is active if this persists across ten cycles. | consumption/ |
 | 2 | `kimeisele/steward` | ✅ observed | `v0-boundary-drift` | Boundary drift: Role mismatch: REPO_BOUNDARIES.md asserts role: Autonomous Engine but steward/.well-known/agent-federation.json self-dec | findings/finding-5cd51c7f5fed.json, drift/drift-11720914c4c5.json |
 | 3 | `kimeisele/agent-internet` | ✅ observed | `v0-boundary-drift` | Boundary drift: Absent self-declaration: REPO_BOUNDARIES.md asserts agent-internet role: Control Plane + Projection but agent-internet/. | findings/finding-194863fb230b.json, drift/drift-c53f2c886e6a.json |
-| 4 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
+| 4 | `kimeisele/agent-city` | ⚠️ stale | `v1-census` | Node kimeisele/agent-city is stale — last commit > 60d ago (last commit: 2026-08-22) | findings/finding-5e4fe186346f.json |
+| 5 | `kimeisele/agent-internet` | ⚠️ stale | `v1-census` | Node kimeisele/agent-internet is stale — last commit > 60d ago (last commit: 2026-08-16) | findings/finding-08c8a81e60f4.json |
+| 6 | `kimeisele/agent-world` | ⚠️ stale | `v1-census` | Node kimeisele/agent-world is stale — last commit > 60d ago (last commit: 2026-08-16) | findings/finding-f5dcff675a70.json |
+| 7 | `kimeisele/steward-protocol` | ⚠️ stale | `v1-census` | Node kimeisele/steward-protocol is stale — last commit > 60d ago (last commit: 2026-08-16) | findings/finding-da1caaf30869.json |
+| 8 | `kimeisele/agent-world` | ⚠️ stale | `v0-boundary-drift` | REPO_BOUNDARIES.md last audited 2026-03-15 — boundary source may be stale | findings/, claims/ |
 
 ## Constitutional Observatory
 
