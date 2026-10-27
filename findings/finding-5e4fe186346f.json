@@ -1,0 +1,9 @@
+{
+  "finding_id": "finding-5e4fe186346f",
+  "lifecycle_state": "stale",
+  "statement": "Node kimeisele/agent-city is STALE — last commit older than 60 days (2026-08-22T20:33:58Z)",
+  "evidence_refs": ["ev-32dba1d9557d", "ev-2327a56380b7", "ev-3e85f78a2704", "ev-50b8c692a9b9", "ev-4bf011c2cb74"],
+  "domain": "node_census",
+  "severity": "warning",
+  "created_at": "2026-10-27T05:29:12Z"
+}
