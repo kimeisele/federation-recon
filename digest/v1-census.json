@@ -1,32 +1,50 @@
 {
   "procedure_id": "v1-census",
   "procedure_version": "v1",
-  "run_timestamp": "2026-08-08T16:57:21Z",
+  "run_timestamp": "2026-11-01T06:43:24Z",
   "attention_items": [{
   "target": "kimeisele/federation-recon",
   "status": "observed",
   "attention_rank": 90, "non_peer": true,
   "headline": "Constitutional non-peer kimeisele/federation-recon — no descriptor expected (§5)",
   "refs": ["findings/finding-a6dcd59a8492.json"]
+},{
+  "target": "kimeisele/agent-city",
+  "status": "stale",
+  "attention_rank": 1,
+  "headline": "Node kimeisele/agent-city is stale — last commit > 60d ago (last commit: 2026-08-22)",
+  "refs": ["findings/finding-5e4fe186346f.json"]
+},{
+  "target": "kimeisele/agent-internet",
+  "status": "stale",
+  "attention_rank": 1,
+  "headline": "Node kimeisele/agent-internet is stale — last commit > 60d ago (last commit: 2026-08-16)",
+  "refs": ["findings/finding-08c8a81e60f4.json"]
+},{
+  "target": "kimeisele/agent-world",
+  "status": "stale",
+  "attention_rank": 1,
+  "headline": "Node kimeisele/agent-world is stale — last commit > 60d ago (last commit: 2026-08-16)",
+  "refs": ["findings/finding-f5dcff675a70.json"]
 }],
   "summary": {
   "pins": 7,
-  "evidence": 110,
-  "findings": 48,
+  "evidence": 117,
+  "findings": 54,
   "coverage_records": 7,
   "observed_nodes": 7,
-  "stale_nodes": 1,
-  "ok_nodes": 6,
+  "stale_nodes": 4,
+  "ok_nodes": 3,
   "error_nodes": 0,
   "staleness_threshold_days": 60
 },
   "budget": {
-  "total_bytes": 17054,
+  "total_bytes": 16897,
   "warn_threshold": 256000,
   "hard_abort": 1048576,
   "warned": false,
   "breached": false,
-  "checkpoints": " [discovery:0] [pins:1828] [evidence:11353] [findings:14385] [coverage:16612] [self-observation:17054]"
+  "checkpoints": " [discovery:0] [pins:1828] [evidence:11353] [findings:14228] [coverage:16455] [self-observation:16897]"
 },
   "self_observation": {"run_completed":true,"outputs_complete":true,"digest_fresh":true,"issues":null}
 }
